@@ -1,0 +1,118 @@
+export type JobState =
+  | "queued"
+  | "preparing"
+  | "running"
+  | "pausing"
+  | "rotating"
+  | "waiting"
+  | "paused"
+  | "needs_attention"
+  | "completed"
+  | "cancelled";
+export interface WindowQuota {
+  usedPercent: number;
+  windowDurationMins: number | null;
+  resetsAt: number | null;
+}
+export interface Quota {
+  primary: WindowQuota | null;
+  secondary: WindowQuota | null;
+  limitId: string;
+  observedAt: number;
+  reached: boolean;
+  unlimited?: boolean;
+}
+export interface Account {
+  id: string;
+  identity: string;
+  label: string;
+  email: string;
+  plan: string;
+  enabled: boolean;
+  status: "ready" | "unknown" | "limited" | "reauth" | "offline";
+  quotas: Record<string, Quota>;
+  blockedUntil: number | null;
+  failureCount: number;
+  lastError?: string;
+}
+export interface Job {
+  id: string;
+  title: string;
+  prompt: string;
+  cwd: string;
+  mode: "cli" | "desktop";
+  model: string;
+  effort: string;
+  bucket: string;
+  state: JobState;
+  threadId?: string;
+  turnId?: string;
+  accountId?: string;
+  recoveryRequired?: boolean;
+  nextWakeAt?: number;
+  rotations: number;
+  createdAt: number;
+  updatedAt: number;
+  lastError?: string;
+  approvalPolicy: "on-request" | "never";
+  sandbox: "workspaceWrite" | "readOnly" | "dangerFullAccess";
+}
+export interface Approval {
+  id: string;
+  jobId: string;
+  method: string;
+  params: unknown;
+  kind: "command" | "file" | "input" | "unsupported";
+}
+export interface Log {
+  id: string;
+  at: number;
+  level: "info" | "warning" | "error" | "output";
+  message: string;
+  jobId?: string;
+}
+export interface Settings {
+  cliPath: string;
+  desktopPath: string;
+  pollSeconds: number;
+  retrySeconds: number;
+  resumePrompt: string;
+  desktop: {
+    editorSelector: string;
+    sendSelector: string;
+    stopSelector: string;
+    threadSelector: string;
+    projectSelector: string;
+  };
+}
+export interface AppState {
+  version: 1;
+  accounts: Account[];
+  jobs: Job[];
+  logs: Log[];
+  settings: Settings;
+  cursor: number;
+}
+export interface Snapshot extends AppState {
+  approvals: Approval[];
+  login?: { accountId: string; url: string; code?: string };
+  loginError?: string;
+  platform: string;
+}
+export type NewJob = Pick<
+  Job,
+  | "title"
+  | "prompt"
+  | "cwd"
+  | "mode"
+  | "model"
+  | "effort"
+  | "bucket"
+  | "approvalPolicy"
+  | "sandbox"
+>;
+export interface Bridge {
+  snapshot(): Promise<Snapshot>;
+  command(name: string, args?: unknown): Promise<unknown>;
+  onSnapshot(fn: (snapshot: Snapshot) => void): () => void;
+}

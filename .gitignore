@@ -1,0 +1,12 @@
+node_modules/
+dist/
+release/
+coverage/
+*.log
+.env*
+auth.json
+*.vault
+runtime/
+state.json
+ipc-token
+*.age

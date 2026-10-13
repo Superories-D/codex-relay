@@ -1,0 +1,181 @@
+#!/usr/bin/env node
+const net = require("node:net");
+const fs = require("node:fs");
+const path = require("node:path");
+const os = require("node:os");
+const crypto = require("node:crypto");
+const argv = process.argv.slice(2);
+const operation = argv[0] || "help";
+const options = {};
+for (let i = 1; i < argv.length; i++) {
+  if (argv[i].startsWith("--")) {
+    const key = argv[i].slice(2);
+    options[key] =
+      argv[i + 1] && !argv[i + 1].startsWith("--") ? argv[++i] : true;
+  }
+}
+if (operation === "help") {
+  console.log(`Codex Relay CLI — keep the desktop app running first.
+  node scripts/relay.cjs run --cwd C:\\Project --prompt "Finish the task" [--model MODEL] [--effort high] [--mode cli|desktop]
+  node scripts/relay.cjs run --cwd C:\\Project --prompt-file task.txt
+  node scripts/relay.cjs status
+  node scripts/relay.cjs watch [--id JOB_ID]
+  node scripts/relay.cjs pause|resume|cancel --id JOB_ID
+  Ctrl+C disconnects the viewer; the task continues in the desktop app.
+  --data-dir PATH overrides the default app data location.`);
+  process.exit(0);
+}
+const base =
+  process.platform === "win32"
+    ? process.env.APPDATA
+    : process.platform === "darwin"
+      ? path.join(os.homedir(), "Library", "Application Support")
+      : process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config");
+const root = options["data-dir"] || path.join(base, "Codex Relay");
+const key = crypto
+  .createHash("sha256")
+  .update(root.toLowerCase())
+  .digest("hex")
+  .slice(0, 20);
+const endpoint =
+  process.platform === "win32"
+    ? `\\\\.\\pipe\\codex-relay-${key}`
+    : path.join(root, "relay.sock");
+let token;
+try {
+  token = fs.readFileSync(path.join(root, "ipc-token"), "utf8");
+} catch {
+  console.error("请先启动 Codex Relay 桌面程序。");
+  process.exit(1);
+}
+const socket = net.createConnection(endpoint);
+let buffer = "";
+let watching = false;
+let jobId = options.id;
+let lastLogs = new Map();
+let shownApprovals = new Set();
+const send = (id, command, args) =>
+  socket.write(JSON.stringify({ id, token, command, args }) + "\n");
+socket.on("connect", () => {
+  if (operation === "run") {
+    let prompt = options.prompt || "";
+    try {
+      if (options["prompt-file"])
+        prompt = fs.readFileSync(path.resolve(options["prompt-file"]), "utf8");
+    } catch (e) {
+      console.error(e.message);
+      socket.end();
+      process.exitCode = 1;
+      return;
+    }
+    send(1, "job.add", {
+      title: options.title || prompt.slice(0, 60) || "CLI task",
+      prompt,
+      cwd: path.resolve(options.cwd || process.cwd()),
+      mode: options.mode || "cli",
+      model: options.model || "",
+      effort: options.effort || "",
+      bucket: options.bucket || "codex",
+      approvalPolicy: "on-request",
+      sandbox: "workspaceWrite",
+    });
+  } else if (operation === "status") send(1, "snapshot");
+  else if (operation === "watch") {
+    watching = true;
+    send(2, "watch");
+  } else if (["pause", "resume", "cancel"].includes(operation))
+    send(1, "job.control", { id: jobId, action: operation });
+  else {
+    console.error("Unknown command; use help");
+    socket.end();
+    process.exitCode = 1;
+  }
+});
+function show(snapshot) {
+  if (!snapshot?.jobs) return;
+  if (operation === "status") {
+    console.table(
+      snapshot.jobs.map((j) => ({
+        id: j.id,
+        title: j.title,
+        state: j.state,
+        rotations: j.rotations,
+      })),
+    );
+    socket.end();
+    return;
+  }
+  for (const log of snapshot.logs.filter((l) => !jobId || l.jobId === jobId)) {
+    const before = lastLogs.get(log.id) || "";
+    if (before !== log.message) {
+      const delta = log.message.startsWith(before)
+        ? log.message.slice(before.length)
+        : log.message;
+      process.stdout.write(delta + (log.level === "output" ? "" : "\n"));
+      lastLogs.set(log.id, log.message);
+    }
+  }
+  if (lastLogs.size > 2000) lastLogs = new Map([...lastLogs].slice(-1000));
+  const j = snapshot.jobs.find((j) => j.id === jobId);
+  for (const a of snapshot.approvals.filter((a) => a.jobId === jobId)) {
+    const key = a.jobId + ":" + a.id;
+    if (!shownApprovals.has(key)) {
+      shownApprovals.add(key);
+      process.stderr.write("\n需要审批：请在 Codex Relay 窗口中处理。\n");
+    }
+  }
+  if (
+    j &&
+    ["completed", "cancelled", "needs_attention", "paused"].includes(j.state)
+  ) {
+    console.log(`\n[${j.state}] ${j.lastError || ""}`);
+    socket.end();
+    process.exitCode = j.state === "completed" ? 0 : 2;
+  }
+}
+socket.setEncoding("utf8");
+socket.on("data", (data) => {
+  buffer += data;
+  if (buffer.length > 32 * 1024 * 1024) {
+    socket.destroy(new Error("Frame too large"));
+    return;
+  }
+  let i;
+  while ((i = buffer.indexOf("\n")) >= 0) {
+    const line = buffer.slice(0, i);
+    buffer = buffer.slice(i + 1);
+    let m;
+    try {
+      m = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (m.error) {
+      console.error(m.error);
+      socket.end();
+      process.exitCode = 1;
+      return;
+    }
+    if (m.event === "snapshot" || m.id === 2) show(m.data || m.result);
+    else if (m.id === 1) {
+      if (operation === "run") {
+        jobId = m.result.id;
+        console.log(`Task ${jobId}`);
+        watching = true;
+        send(2, "watch");
+      } else if (operation === "status") show(m.result);
+      else {
+        console.log("OK");
+        socket.end();
+      }
+    }
+  }
+});
+socket.on("error", (e) => {
+  console.error(`连接失败：${e.message}。请保持桌面程序运行。`);
+  process.exitCode = 1;
+});
+process.on("SIGINT", () => {
+  socket.end();
+  process.exit(130);
+});

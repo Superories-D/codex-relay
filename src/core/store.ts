@@ -1,0 +1,97 @@
+import { promises as fs } from "node:fs";
+import path from "node:path";
+import { randomUUID } from "node:crypto";
+import type { AppState } from "../shared/types";
+export const defaults: AppState = {
+  version: 1,
+  accounts: [],
+  jobs: [],
+  logs: [],
+  cursor: 0,
+  settings: {
+    cliPath: "codex",
+    desktopPath: "",
+    pollSeconds: 30,
+    retrySeconds: 60,
+    resumePrompt:
+      "继续之前的任务。先检查工作目录与已完成的操作，从中断处继续，避免重复提交、发布或其他已完成的外部操作。完成原始任务后说明结果。",
+    desktop: {
+      editorSelector: '[contenteditable="true"][role="textbox"], textarea',
+      sendSelector:
+        'button[aria-label="Send"], button[aria-label="Send message"], button[aria-label="发送"]',
+      stopSelector:
+        'button[aria-label="Stop"], button[aria-label="Stop generating"], button[aria-label="停止"]',
+      threadSelector: '[data-thread-id="{threadId}"]',
+      projectSelector: "",
+    },
+  },
+};
+export async function atomicWrite(
+  file: string,
+  value: string | Buffer,
+): Promise<void> {
+  await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
+  const tmp = `${file}.${randomUUID()}.tmp`;
+  const handle = await fs.open(tmp, "wx", 0o600);
+  try {
+    await handle.writeFile(value);
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  try {
+    await fs.rename(tmp, file);
+  } catch (error) {
+    await fs.rm(tmp, { force: true });
+    throw error;
+  }
+}
+export class Store {
+  data = structuredClone(defaults);
+  private chain: Promise<void> = Promise.resolve();
+  constructor(readonly root: string) {}
+  async load() {
+    try {
+      const raw = JSON.parse(
+        await fs.readFile(path.join(this.root, "state.json"), "utf8"),
+      ) as AppState;
+      if (
+        raw.version !== 1 ||
+        !Array.isArray(raw.accounts) ||
+        !Array.isArray(raw.jobs) ||
+        !Array.isArray(raw.logs)
+      )
+        throw new Error("Unsupported state format");
+      this.data = {
+        ...raw,
+        settings: {
+          ...defaults.settings,
+          ...raw.settings,
+          desktop: { ...defaults.settings.desktop, ...raw.settings?.desktop },
+        },
+      };
+      for (const j of this.data.jobs)
+        if (["running", "preparing", "pausing", "rotating"].includes(j.state)) {
+          j.recoveryRequired = true;
+          j.state = "needs_attention";
+          j.lastError =
+            "上次进程意外退出。确认原进程停止后点击继续，恢复已有会话。";
+        }
+    } catch (error: any) {
+      if (error.code !== "ENOENT") throw error;
+    }
+  }
+  save(): Promise<void> {
+    const content = JSON.stringify(this.data, null, 2);
+    this.chain = this.chain
+      .catch(() => {})
+      .then(() => atomicWrite(path.join(this.root, "state.json"), content));
+    return this.chain;
+  }
+  jobHome(id: string) {
+    return path.join(this.root, "runtime", "jobs", id);
+  }
+  profileHome(id: string) {
+    return path.join(this.root, "runtime", "accounts", id);
+  }
+}

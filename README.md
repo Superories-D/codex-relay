@@ -1,0 +1,85 @@
+# Codex Relay
+
+面向 Windows 的 Codex 账户接力工具。一个任务保持同一条本机会话，在 5 小时或每周额度耗尽时确认停止、切换账户、从原会话继续。所有账户耗尽时等待服务器公布的重置时间，再核实额度并恢复。
+
+**当前交付：v0.1.0 源码版。** CLI 协议接入为主路径；官方桌面客户端适配是实验功能。已进行 Linux 上的构建、状态机/适配器测试和界面检查，尚未进行 Windows 真机、真实账户登录或实际耗尽额度的端到端验证。不要把本文的设计行为当作这些场景已经实测的声明。
+
+![工作台，使用合成演示数据](docs/ui-dashboard.png)
+
+## 功能
+
+- 官方 Codex 浏览器登录、设备码登录、导入现有 `auth.json`；不收集账户密码。
+- 5 小时、每周及其他服务端额度窗口；缺失窗口显示未知，不误认为剩余为零。
+- 有序账户池、启用/禁用、调整顺序、任务队列、手动暂停/继续/取消。
+- 额度中断优先于 `completed` 状态：结构化额度错误、额度事件及最终复查都会参与判断。
+- `turn/interrupt` 只是停止请求，等待终止事件并关闭原进程后才允许切号。
+- 所有账户耗尽：同一账户取所有受限窗口中最晚的恢复时间，账户间取最早可恢复时间；到点重新读服务器额度。没有重置时间时退避重试。
+- 持久化 thread ID、turn ID、任务状态；继续时保留原始任务上下文和工作目录。刷新令牌由单一账户配置负责，避免多个进程竞争刷新。
+- Windows DPAPI 加密账户库，受管目录 ACL；渲染页面没有 Node 权限。本机命名管道为 CLI 提供入口。
+- 托盘驻留、运行时防休眠、唤醒后重新核实额度、脱敏诊断日志。
+
+## 在 Windows 构建
+
+环境：Windows 10/11 x64、Node.js 22 或更新的受支持 LTS、官方 Codex CLI。客户端模式还需要安装官方 Codex Windows 应用。研究时 npm 的 Codex 版本为 `0.162.1`；采用了实验性外部账户令牌接口，旧版本可能不兼容，详见 [兼容性与研究记录](docs/RESEARCH.md)。
+
+```powershell
+npm install -g @openai/codex@0.162.1
+npm ci
+npm run check
+npm run dev
+```
+
+在界面“设置”中确认 `codex` 可找到；也可选择 `codex.exe` 或 npm 的 `codex.cmd`。自定义任意批处理文件不是受支持的 CLI 路径。首次运行受管任务时，Relay 请求官方 CLI 配置非提权 Windows 沙盒；配置失败会保留任务，不会自动放开权限。
+
+生成安装包：
+
+```powershell
+npm run package:win
+```
+
+产物位于 `release/`，含 NSIS 安装版和便携版。仓库中的 Windows Actions 会执行类型检查、测试、PowerShell 解析和打包，产物在 Actions 的 `Codex-Relay-Windows` artifact；本次 Linux 环境没有生成或签名 Windows 安装包。
+
+## 第一次使用
+
+1. 添加你有权使用的 ChatGPT 账户，通过官方页面完成登录。添加后等待额度核实。重复添加多个账户，并按需要排序。
+2. 创建任务，选择真实工作目录，填写原始任务目标。默认使用 CLI 模式、工作目录读写和必要时请求审批。
+3. 模型可留空采用账户默认值，首次创建会话后固定实际模型。也可读取模型列表并选取所有账户都能访问的模型；权限不一致时任务会要求处理，不擅自替换模型。
+4. 任务运行中，如遇额度耗尽，状态会依次经过暂停、轮换、继续。若全部耗尽，界面显示“等待额度恢复”和下次核实时间；这不是完成状态。
+5. 文件/命令审批与模型追问在 Relay 中处理；客户端模式的审批在官方客户端中处理。无人值守任务可选“不请求审批”，超出沙盒权限的操作会被拒绝。
+6. 关闭窗口后仍在托盘运行。需要退出时使用托盘“暂停任务并退出”。
+
+账户认证信息留在本机；Codex 本身仍按其产品行为与 OpenAI 服务通信。默认不改写你现有的 `%USERPROFILE%\.codex`。受管目录位于 `%APPDATA%\Codex Relay`，安装版和便携版默认共用这个目录。
+
+## 从终端创建或查看任务
+
+先保持 Relay 桌面程序运行：
+
+```powershell
+node scripts/relay.cjs run --cwd "C:\Projects\demo" --prompt "完成账户管理功能并验证"
+node scripts/relay.cjs run --cwd "C:\Projects\demo" --prompt-file "C:\Tasks\task.txt"
+node scripts/relay.cjs status
+node scripts/relay.cjs watch --id <任务UUID>
+node scripts/relay.cjs pause --id <任务UUID>
+node scripts/relay.cjs resume --id <任务UUID>
+node scripts/relay.cjs cancel --id <任务UUID>
+```
+
+打包安装后脚本在程序的 `resources\relay.cjs` 中。Ctrl+C 只断开终端查看器，任务继续由 Relay 管理。审批可在 Relay 窗口中完成。CLI 入口管理的是由 Relay 启动的官方 `codex app-server`，不会接管你已经在其他终端启动的任意交互式 Codex 进程。
+
+## 官方客户端模式
+
+在新任务中选择“官方客户端（实验适配）”。Relay 用隔离的 Codex 配置和 Electron 数据目录启动单独的官方客户端实例，定位专属任务会话，通过可见输入/发送/停止控件操作，并读取该会话的真实 rollout 事件确认执行状态。
+
+如果客户端忽略隔离目录、禁用调试端口、修改页面结构、出现多个候选页面或没有唯一匹配控件，会停止自动操作并保留任务。可以在设置中调整 CSS 选择器。**无法保证所有官方客户端版本都可自动控制；请先完成 [Windows 验收清单](docs/WINDOWS-ACCEPTANCE.md)。** 不会操作你原本打开的普通客户端窗口，也不会把其他会话当作目标。
+
+## 恢复、数据与限制
+
+- 异常退出后任务进入“需要处理”，全队列暂时冻结。点击继续/取消时验证原实例；CLI 旧进程仍存活则拒绝重复启动，需先结束对应进程。客户端使用 PID、可执行文件路径、独立 profile 和启动回执共同校验，只操作已确认归属的实例。
+- DPAPI 凭据通常绑定 Windows 用户。不要直接把账户库复制给另一个用户或电脑；请重新登录。Codex 必需的临时 `auth.json` 仅在受限目录内出现，刷新后先加密落盘再清理；崩溃时可能保留用于恢复。
+- Relay 保持会话和文件，不提供外部操作的 exactly-once 保证。恢复提示会让 Codex 检查现有结果，避免重复提交或发布；重要外部操作仍应使用审批。
+- “完成”指 Codex 正常结束该轮、且没有额度中断证据。它不是对自然语言验收标准的形式化证明，也不会绕过用户输入或审批。
+- 未实现并行任务、云端 Codex 任务接管、任意现有客户端会话接管或系统服务模式。顺序执行用于保证一个任务工作目录只有一个受管写入进程。
+- 不创建新账户、不修改服务器额度；只调度已登录且服务器确认可用的账户。
+- 日志可能包含任务输出、路径与代码。导出前应按自身项目保密要求检查。
+
+代码结构、状态迁移和校验结果见 [架构说明](docs/ARCHITECTURE.md)、[验证记录](docs/VALIDATION.md)。参考项目为 [cockpit-tools](https://github.com/jlcodes99/cockpit-tools)，本项目按其机制与官方公开协议独立实现；研究定位见 [RESEARCH.md](docs/RESEARCH.md)。
