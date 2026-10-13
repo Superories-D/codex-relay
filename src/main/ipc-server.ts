@@ -27,9 +27,10 @@ export async function startCommandServer(
     let buffer = "";
     let authenticated = false;
     let watching = false;
+    let pendingCommands = 0;
     socket.setEncoding("utf8");
     socket.setTimeout(30_000, () => {
-      if (!watching) socket.destroy();
+      if (!watching && pendingCommands === 0) socket.destroy();
     });
     const send = (value: unknown) => {
       if (!socket.destroyed) {
@@ -51,7 +52,12 @@ export async function startCommandServer(
       while ((index = buffer.indexOf("\n")) >= 0) {
         const line = buffer.slice(0, index);
         buffer = buffer.slice(index + 1);
+        pendingCommands++;
         chain = chain.then(async () => {
+          if (socket.destroyed) {
+            pendingCommands--;
+            return;
+          }
           let msg: any;
           try {
             msg = JSON.parse(line);
@@ -91,6 +97,8 @@ export async function startCommandServer(
               id: msg?.id,
               error: redact(error instanceof Error ? error.message : error),
             });
+          } finally {
+            pendingCommands--;
           }
         });
       }

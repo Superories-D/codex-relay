@@ -39,6 +39,19 @@ const account = (id: string, quota = q()): Account => ({
   failureCount: 0,
 });
 describe("quota selection", () => {
+  it("retains the legacy quota when the per-limit map is empty", () => {
+    const quota = parseQuotas(
+      {
+        rateLimits: { primary: { usedPercent: 100 } },
+        rateLimitsByLimitId: {},
+      },
+      now,
+    ).codex;
+    expect(isExhausted(quota)).toBe(true);
+  });
+  it("does not trust observations from before a backwards system-clock jump", () => {
+    expect(eligible(account("future", q()), "codex", now - 1000)).toBe(false);
+  });
   it("interprets usedPercent, not remainingPercent, and seconds not milliseconds", () => {
     const parsed = parseQuotas(
       {

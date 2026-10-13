@@ -15,7 +15,8 @@
 克隆调查定位：
 
 - cockpit-tools：`915e7a20b432546660c3cd15e90f9fa527490ecc`，重点查看 `src-tauri/src/modules/codex*`、`process_codex_windows_launch*`、账户/实例配置。
-- openai/codex：`6fbfc352cafb50332d62dbdc8720cb5d7fe3b7c7`，重点查看 `codex-rs/app-server-protocol/schema`、`codex-rs/protocol/src/protocol.rs`、`codex-rs/app-server/src/thread_processor.rs`。
+- openai/codex：`6fbfc352cafb50332d62dbdc8720cb5d7fe3b7c7`，重点查看 `codex-rs/app-server-protocol/schema`、`codex-rs/protocol/src/protocol.rs`、`codex-rs/app-server/src/request_processors/thread_processor.rs`。
+- 本轮进一步核对 `rust-v0.162.1` 标签（`7a078f6bb4ce0dc2a81408b334ce52979d92c603`）：`thread_archive_impl` 会先持久化尚未发送首轮的新线程；archive 卸载线程后必须 resume 才能继续发送。
 - 额外用 npm 官方 `@openai/codex@0.162.1` 在 Linux 隔离临时目录进行匿名本地协议核验，没有使用真实账户或执行用户任务。
 
 ### 不能假设的事情
@@ -23,7 +24,7 @@
 - 某个任务不再输出 ≠ 完成。额度限制常以错误或自动中断表现。
 - 窗口名称不能只按 primary/secondary 写死为 5h/周；界面依据实际 windowDurationMins 显示。
 - `resetsAt` 是秒，内部统一转换成毫秒。账户中两个耗尽窗口必须都恢复。
-- 新线程在首轮前可能不落盘；客户端选取线程前显式持久化。
+- 新线程在首轮前可能不落盘；CLI/客户端均在 checkpoint 前显式持久化并重新载入。
 - App Server 的 `SandboxMode` 线格式使用 `workspace-write/read-only/danger-full-access`；UI 内部名称不能原样发送。
 - 外部令牌登录是实验性接口；当前版本启用 experimentalApi，不保证未来兼容。
 - 客户端没有稳定公共 DOM，CSS 选择器需要按实际版本校验。

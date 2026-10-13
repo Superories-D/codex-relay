@@ -7,6 +7,7 @@ import path from "node:path";
 import { promises as fs } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { atomicWrite } from "./store";
+import { ProcessSafetyError } from "./process-safety-error";
 export interface RpcMessage {
   id?: number | string;
   method?: string;
@@ -31,6 +32,7 @@ export class Rpc extends EventEmitter {
   >();
   private dead = false;
   private closing = false;
+  private closeInFlight?: Promise<void>;
   private constructor(
     readonly child: ChildProcessWithoutNullStreams,
     private home: string,
@@ -61,7 +63,11 @@ export class Rpc extends EventEmitter {
       } else if (msg.id !== undefined && msg.method) this.emit("request", msg);
       else if (msg.method) {
         this.emit("notification", msg);
-        this.emit(msg.method, msg.params);
+        // EventEmitter reserves "error": wire errors are ordinary protocol data.
+        this.emit(
+          msg.method === "error" ? "rpc:error" : msg.method,
+          msg.params,
+        );
       }
     });
     child.stderr.on("data", (chunk) =>
@@ -70,17 +76,18 @@ export class Rpc extends EventEmitter {
     child.once("error", (error) => this.fail(error));
     child.once("close", (code) => {
       this.fail(new Error(`Codex app-server exited (${code})`));
-      if (!this.closing) this.emit("disconnected", code);
     });
     child.stdin.on("error", (error) => this.fail(error));
   }
   private fail(error: Error) {
+    const firstFailure = !this.dead;
     this.dead = true;
     for (const p of this.pending.values()) {
       clearTimeout(p.timer);
       p.reject(error);
     }
     this.pending.clear();
+    if (firstFailure && !this.closing) this.emit("disconnected", error);
   }
   static async open(cli: string, home: string): Promise<Rpc> {
     await Rpc.assertHomeIdle(home);
@@ -110,14 +117,21 @@ export class Rpc extends EventEmitter {
         clientInfo: {
           name: "codex_relay",
           title: "Codex Relay",
-          version: "0.1.0",
+          version: "0.1.1",
         },
         capabilities: { experimentalApi: true },
       });
       rpc.notify("initialized", {});
       return rpc;
     } catch (error) {
-      await rpc.close().catch(() => {});
+      try {
+        await rpc.close();
+      } catch (cleanupError) {
+        throw new ProcessSafetyError(
+          "初始化失败且未能确认 Codex 进程已停止",
+          cleanupError,
+        );
+      }
       throw error;
     }
   }
@@ -175,7 +189,15 @@ export class Rpc extends EventEmitter {
   reject(id: number | string, message: string) {
     this.send({ id, error: { code: -32601, message } });
   }
-  async close() {
+  close(): Promise<void> {
+    if (!this.closeInFlight)
+      this.closeInFlight = this.closeOnce().catch((error) => {
+        this.closeInFlight = undefined;
+        throw error;
+      });
+    return this.closeInFlight;
+  }
+  private async closeOnce() {
     this.closing = true;
     await terminateTree(this.child);
     this.fail(new Error("RPC closed"));

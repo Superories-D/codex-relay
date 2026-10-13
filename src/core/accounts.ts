@@ -4,8 +4,9 @@ import { randomUUID } from "node:crypto";
 import type { Account, Quota } from "../shared/types";
 import { Store, atomicWrite } from "./store";
 import { Rpc } from "./rpc";
-import { errorKind, isExhausted, parseQuotas } from "./quota";
+import { errorKind, hasQuotaEvidence, isExhausted, parseQuotas } from "./quota";
 import { redact } from "./redact";
+import { ProcessSafetyError } from "./process-safety-error";
 export interface Cipher {
   encrypt(value: string): Buffer;
   decrypt(value: Buffer): string;
@@ -80,6 +81,32 @@ export class Accounts {
     private cipher: Cipher,
     private changed: () => void,
   ) {}
+  private available(id: string) {
+    if (this.busy.has(id)) throw new Error("该账户由客户端独占，暂停后再操作");
+    if (!this.store.data.accounts.some((a) => a.id === id))
+      throw new Error("账户不存在");
+  }
+  async drain() {
+    for (;;) {
+      const pending = [...this.locks.values()];
+      await Promise.allSettled(pending);
+      if ([...this.locks.values()].every((p) => pending.includes(p))) return;
+    }
+  }
+  async acquireDesktop(id: string): Promise<AuthCache> {
+    return this.serial(id, async () => {
+      this.available(id);
+      const home = this.store.profileHome(id);
+      await this.stage(id, home);
+      const auth = parseAuth(
+        await fs.readFile(path.join(home, "auth.json"), "utf8"),
+      ).auth;
+      await this.put(id, auth);
+      await fs.rm(path.join(home, "auth.json"), { force: true });
+      this.busy.add(id);
+      return auth;
+    });
+  }
   private vault(id: string) {
     return path.join(this.store.root, "vault", `${id}.vault`);
   }
@@ -105,8 +132,9 @@ export class Accounts {
       if (pending.tokens.account_id !== auth.tokens.account_id)
         throw new Error("残留凭据与账户身份不匹配");
       if (
+        !Number.isFinite(Date.parse(pending.last_refresh ?? "")) ||
         Date.parse(pending.last_refresh ?? "") >=
-        Date.parse(auth.last_refresh ?? "1970-01-01")
+          Date.parse(auth.last_refresh ?? "1970-01-01")
       ) {
         auth = pending;
         await this.put(id, auth);
@@ -119,6 +147,7 @@ export class Accounts {
   async refreshTokens(id: string): Promise<AuthCache> {
     if (this.busy.has(id)) throw new Error("客户端负责刷新该账户");
     return this.serial(id, async () => {
+      this.available(id);
       const home = this.store.profileHome(id);
       await this.stage(id, home);
       let rpc: Rpc | undefined;
@@ -156,8 +185,16 @@ export class Accounts {
     this.locks.set(id, next);
     return next;
   }
-  async import(text: string, label?: string): Promise<Account> {
+  import(text: string, label?: string): Promise<Account> {
     const parsed = parseAuth(text);
+    return this.serial(`identity:${parsed.identity}`, () =>
+      this.importOnce(parsed, label),
+    );
+  }
+  private async importOnce(
+    parsed: ReturnType<typeof parseAuth>,
+    label?: string,
+  ): Promise<Account> {
     let account = this.store.data.accounts.find(
       (a) => a.identity === parsed.identity,
     );
@@ -179,7 +216,14 @@ export class Accounts {
       await this.put(account.id, parsed.auth);
       this.store.data.accounts.push(account);
     } else {
-      await this.serial(account.id, () => this.put(account!.id, parsed.auth));
+      await this.serial(account.id, async () => {
+        this.available(account!.id);
+        const home = this.store.profileHome(account!.id);
+        await Rpc.assertHomeIdle(home);
+        await this.put(account!.id, parsed.auth);
+        // An explicit new login supersedes an old, abandoned refresh cache.
+        await fs.rm(path.join(home, "auth.json"), { force: true });
+      });
       Object.assign(account, {
         email: parsed.email,
         plan: parsed.plan,
@@ -207,12 +251,14 @@ export class Accounts {
     if (this.busy.has(id))
       throw new Error("客户端正在使用该账户，监控改由客户端凭据执行");
     return this.serial(id, async () => {
+      this.available(id);
       const account = this.store.data.accounts.find((a) => a.id === id);
       if (!account) throw new Error("账户不存在");
       const home = this.store.profileHome(id);
       await fs.mkdir(home, { recursive: true, mode: 0o700 });
       await this.stage(id, home);
       let rpc: Rpc | undefined;
+      let processUncertain = false;
       try {
         rpc = await Rpc.open(this.store.data.settings.cliPath, home);
         const read = await rpc.call("account/read", {
@@ -240,10 +286,15 @@ export class Accounts {
         account.quotas = quotas;
         account.status = Object.values(quotas).some(isExhausted)
           ? "limited"
-          : "ready";
+          : Object.values(quotas).some(hasQuotaEvidence)
+            ? "ready"
+            : "unknown";
         account.failureCount = 0;
         account.lastError = undefined;
-        if ((account.blockedUntil ?? 0) <= Date.now())
+        if (
+          (account.blockedUntil ?? 0) <= Date.now() ||
+          account.status === "ready"
+        )
           account.blockedUntil = null;
         await rpc.close();
         rpc = undefined;
@@ -254,6 +305,7 @@ export class Accounts {
           throw new Error("凭据身份不匹配，拒绝写回");
         return { auth, quotas, models };
       } catch (error) {
+        processUncertain = error instanceof ProcessSafetyError;
         const kind = errorKind(error);
         account.status = kind === "auth" ? "reauth" : "offline";
         account.failureCount++;
@@ -266,21 +318,26 @@ export class Accounts {
         throw error;
       } finally {
         if (rpc) await rpc.close();
-        // Never remove a rotated refresh token until its encrypted write succeeds.
-        const latest = parseAuth(
-          await fs.readFile(path.join(home, "auth.json"), "utf8"),
-        ).auth;
-        if (latest.tokens.account_id !== account.identity)
-          throw new Error("凭据身份变化，保留原始文件等待检查");
-        await this.put(id, latest);
-        await fs.rm(path.join(home, "auth.json"), { force: true });
+        if (!processUncertain) {
+          // Never remove a rotated refresh token until its encrypted write succeeds.
+          const latest = parseAuth(
+            await fs.readFile(path.join(home, "auth.json"), "utf8"),
+          ).auth;
+          if (latest.tokens.account_id !== account.identity)
+            throw new Error("凭据身份变化，保留原始文件等待检查");
+          await this.put(id, latest);
+          await fs.rm(path.join(home, "auth.json"), { force: true });
+        }
         await this.store.save();
         this.changed();
       }
     });
   }
-  async beginLogin(label: string, device: boolean) {
-    await this.cancelLogin();
+  beginLogin(label: string, device: boolean) {
+    return this.serial("$login", () => this.beginLoginOnce(label, device));
+  }
+  private async beginLoginOnce(label: string, device: boolean) {
+    await this.cancelLoginOnce();
     this.loginError = undefined;
     const id = randomUUID();
     const home = this.store.profileHome(id);
@@ -288,7 +345,9 @@ export class Accounts {
     const rpc = await Rpc.open(this.store.data.settings.cliPath, home);
     let early: any;
     const finish = (event: any) =>
-      void this.finishLogin(event, label).catch((error) => {
+      void this.serial("$login", () =>
+        this.finishLogin(event, label, rpc),
+      ).catch((error) => {
         this.loginDisplay = undefined;
         this.loginError = redact(error);
         this.changed();
@@ -309,7 +368,10 @@ export class Accounts {
         rpc,
         loginId: result.loginId,
         timer: setTimeout(
-          () => void this.cancelLogin().catch(() => {}),
+          () =>
+            void this.serial("$login", () => this.cancelLoginOnce(rpc)).catch(
+              () => {},
+            ),
           15 * 60_000,
         ),
       };
@@ -327,9 +389,15 @@ export class Accounts {
       throw error;
     }
   }
-  private async finishLogin(event: any, label: string) {
+  private async finishLogin(event: any, label: string, rpc: Rpc) {
     const login = this.login;
-    if (!login) return;
+    if (
+      !login ||
+      login.rpc !== rpc ||
+      (event.loginId && event.loginId !== login.loginId)
+    )
+      return;
+    let imported = false;
     clearTimeout(login.timer);
     this.login = undefined;
     this.loginDisplay = undefined;
@@ -343,18 +411,24 @@ export class Accounts {
         ),
         label,
       );
+      imported = true;
       await this.inspect(account.id).catch(() => {});
     } finally {
       await login.rpc.close();
-      await fs.rm(this.store.profileHome(login.id), {
-        recursive: true,
-        force: true,
-      });
+      if (imported || !event.success)
+        await fs.rm(this.store.profileHome(login.id), {
+          recursive: true,
+          force: true,
+        });
       this.changed();
     }
   }
-  async cancelLogin() {
+  cancelLogin() {
+    return this.serial("$login", () => this.cancelLoginOnce());
+  }
+  private async cancelLoginOnce(expected?: Rpc) {
     const login = this.login;
+    if (expected && login?.rpc !== expected) return;
     this.login = undefined;
     this.loginDisplay = undefined;
     if (login) {
@@ -373,6 +447,8 @@ export class Accounts {
   async remove(id: string) {
     if (this.busy.has(id)) throw new Error("该账户正在使用");
     await this.serial(id, async () => {
+      this.available(id);
+      await Rpc.assertHomeIdle(this.store.profileHome(id));
       await fs.rm(this.vault(id), { force: true });
       await fs.rm(this.store.profileHome(id), { recursive: true, force: true });
       this.store.data.accounts = this.store.data.accounts.filter(

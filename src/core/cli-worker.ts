@@ -1,6 +1,13 @@
 import { EventEmitter } from "node:events";
+import { prepareThread } from "./thread";
 import { Rpc, type RpcMessage } from "./rpc";
-import { errorKind, isExhausted, isQuotaNotice, parseQuotas } from "./quota";
+import {
+  errorKind,
+  hasQuotaEvidence,
+  isExhausted,
+  isQuotaNotice,
+  parseQuotas,
+} from "./quota";
 import {
   approvalFrom,
   type Outcome,
@@ -71,12 +78,7 @@ export class CliWorker extends EventEmitter implements Worker {
       }[this.ctx.job.sandbox],
       ...(this.ctx.job.model ? { model: this.ctx.job.model } : {}),
     };
-    const result = this.ctx.job.threadId
-      ? await this.rpc.call("thread/resume", {
-          threadId: this.ctx.job.threadId,
-          ...config,
-        })
-      : await this.rpc.call("thread/start", config);
+    const result = await prepareThread(this.rpc, this.ctx.job.threadId, config);
     this.threadId = result.thread.id;
     if (!this.ctx.job.model && typeof result.model === "string")
       this.ctx.job.model = result.model;
@@ -137,7 +139,8 @@ export class CliWorker extends EventEmitter implements Worker {
     if (msg.method === "item/agentMessage/delta")
       this.emit("output", p.delta ?? "");
     if (msg.method === "item/completed" && p.item?.type === "agentMessage") {
-      this.finalText += p.item.text ?? "";
+      if (p.item.phase == null || p.item.phase === "final_answer")
+        this.finalText += p.item.text ?? "";
       if (isQuotaNotice(p.item.text)) this.quotaSeen = true;
     }
     if (msg.method === "item/commandExecution/outputDelta")
@@ -160,9 +163,10 @@ export class CliWorker extends EventEmitter implements Worker {
       // Drain already queued quota notifications, then ask the server again. The final
       // turn status alone is NOT a completion signal when quota has been exhausted.
       await new Promise((resolve) => setTimeout(resolve, 750));
-      let quotaKnown = true;
+      let quotaKnown = false;
       try {
         const quotas = await this.quota();
+        quotaKnown = hasQuotaEvidence(quotas[this.ctx.job.bucket]);
         if (isExhausted(quotas[this.ctx.job.bucket])) this.quotaSeen = true;
       } catch {
         quotaKnown = false;
@@ -177,7 +181,7 @@ export class CliWorker extends EventEmitter implements Worker {
           kind: "error",
           error: error ?? new Error(`Unexpected turn status: ${p.turn.status}`),
         });
-      else if (!quotaKnown && !this.finalText.trim())
+      else if (!quotaKnown || !this.finalText.trim())
         this.finish({
           kind: "error",
           error: new Error("终止原因不明确，需核查额度后继续"),

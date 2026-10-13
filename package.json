@@ -1,7 +1,7 @@
 {
   "name": "codex-relay",
   "productName": "Codex Relay",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Windows Codex account and resumable task supervisor",
   "private": true,
   "license": "MIT",

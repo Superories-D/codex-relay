@@ -44,6 +44,7 @@ export async function spawnCodex(
   args: string[],
   home: string,
 ): Promise<ChildProcessWithoutNullStreams> {
+  await fs.mkdir(home, { recursive: true, mode: 0o700 });
   const resolved = await resolveCli(cli);
   const env: NodeJS.ProcessEnv = Object.fromEntries(
     Object.entries(process.env).filter(
@@ -55,6 +56,7 @@ export async function spawnCodex(
   delete env.OPENAI_API_KEY;
   return spawn(resolved.executable, [...resolved.prefix, ...args], {
     env,
+    cwd: home,
     shell: false,
     windowsHide: true,
     stdio: ["pipe", "pipe", "pipe"],
@@ -63,7 +65,7 @@ export async function spawnCodex(
 export async function terminateTree(
   proc: ChildProcessWithoutNullStreams,
 ): Promise<void> {
-  if (proc.exitCode !== null || !proc.pid) return;
+  if (proc.exitCode !== null || proc.signalCode != null || !proc.pid) return;
   if (process.platform === "win32") {
     await new Promise<void>((resolve, reject) => {
       const killer = spawn(
@@ -79,7 +81,7 @@ export async function terminateTree(
       );
     });
   } else proc.kill("SIGTERM");
-  if (proc.exitCode === null)
+  if (proc.exitCode === null && proc.signalCode == null)
     await new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(
         () => reject(new Error("Codex process did not exit")),

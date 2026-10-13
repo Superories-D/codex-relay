@@ -9,11 +9,11 @@ stateDiagram-v2
     [*] --> queued
     queued --> preparing: 可用账户
     queued --> waiting: 全部受限或未知
-    waiting --> queued: 到点且服务器确认恢复
+    waiting --> queued: 到点或新账户确认可用
     preparing --> running: 原会话已恢复
     running --> pausing: 任一额度窗口耗尽
     pausing --> queued: 终止确认与进程退出后轮换
-    running --> completed: 正常终止且无额度中断证据
+    running --> completed: 最终答复与额度复查通过
     pausing --> paused: 手动暂停
     running --> needs_attention: 原因不明或适配失败
     pausing --> needs_attention: 未确认停止
@@ -32,10 +32,12 @@ stateDiagram-v2
 6. 每个账户只有一个刷新令牌管理者；加密写回成功后才能删掉更新后的暂存文件。
 7. 每个受管 app-server 目录保存 PID/nonce 占用标记，活进程标记不被自动清除。异常重启先处理旧任务，再执行队列中任何新任务。
 8. 手动暂停/取消优先于自动额度轮换；用户主动暂停后不会自己恢复。
+9. 新线程在首次发送前执行 start → archive → unarchive → resume，确认可恢复后才保存 thread ID。准备中暂停不能留下不可恢复的空线程 ID。
+10. completed/cancelled 是终态。关闭应用等待正在查询的账户、运行任务和凭据写回；初始化清理失败同样持久化全局恢复门禁。
 
 ## 客户端适配边界
 
-客户端没有供任意外部程序控制现有 UI 任务的稳定公开接口。本适配器创建专属会话，必要时先 archive/unarchive 让空线程落盘，设置唯一标题，再启动独立客户端实例。命中唯一会话控件、唯一空输入框和唯一发送按钮后才发送内容。之后以该目录、该 thread 的 rollout 为准，检测 task_started、task_complete、turn_aborted、error 和 token_count。
+客户端没有供任意外部程序控制现有 UI 任务的稳定公开接口。本适配器创建专属会话，先 archive/unarchive/resume 让新线程落盘并重新载入，设置唯一标题，再启动独立客户端实例。点击唯一会话控件后，还要验证 URL 中的线程 ID 或该控件的活动状态，再匹配唯一空输入框和唯一发送按钮。之后以该目录、该 thread 的 rollout 为准，检测 task_started、task_complete、turn_aborted、error 和 token_count。
 
 每 10 秒检查 CDP 连接，每 500 毫秒增量读取 rollout；JSONL 跨块 UTF-8/半行缓冲，文件截断拒绝继续。停止按钮仅发出请求，仍等待真实终止记录。客户端关闭后先持久化它更新的凭据，再允许下一账户。
 
@@ -43,4 +45,4 @@ CDP 仅绑定本机环回地址和专属 profile。它不是隔离同一 Windows
 
 ## 完成的含义
 
-只认正常结束且无额度中断证据的一轮 Codex turn。完成目标的语义依赖 Codex 和用户描述的验收标准。暂停、断网、错误、缺少选择器、需要审批、需要重新登录都不会被标记为任务完成。网络错误有退避；未知错误保留任务等待处理，防止盲目重复外部操作。
+只认正常结束、有最终答复、终止时核实到所选额度桶且无额度中断证据的一轮 Codex turn。仅有 commentary 不算最终答复。客户端还要求观察到本轮 task_started，终止记录的 turn_id 必须一致。完成目标的语义依赖 Codex 和用户描述的验收标准。暂停、断网、错误、缺少选择器、需要审批、需要重新登录都不会被标记为任务完成。网络错误有退避；未知错误保留任务等待处理，防止盲目重复外部操作。

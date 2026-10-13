@@ -204,7 +204,7 @@ function App() {
         </nav>
         <div className="sidebar-bottom">
           <span className="status-dot" /> 本地运行 · 凭据加密保存
-          <small>Windows companion / v0.1.0</small>
+          <small>Windows companion / v0.1.1</small>
           <button className="text-button" onClick={() => act("data.open")}>
             打开数据目录 ↗
           </button>

@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Scheduler } from "../src/core/scheduler";
 import { Store } from "../src/core/store";
+import { ProcessSafetyError } from "../src/core/process-safety-error";
 import type { Worker, WorkerContext, Outcome } from "../src/core/worker";
 import type { Account, NewJob } from "../src/shared/types";
 class FakeWorker extends EventEmitter implements Worker {
@@ -210,4 +211,113 @@ describe("supervisor state transitions", () => {
     );
     expect(persisted.jobs[0].state).toBe("paused");
   });
+});
+
+// These regressions exercise public controls while asynchronous preparation is pending.
+it("completed jobs cannot be resurrected through pause then resume", async () => {
+  store.data.jobs.push({
+    ...input,
+    id: "done",
+    state: "completed",
+    rotations: 0,
+    createdAt: 0,
+    updatedAt: 0,
+  });
+  await expect(scheduler.control("done", "pause")).rejects.toThrow();
+  expect(store.data.jobs[0].state).toBe("completed");
+});
+it("shutdown waits for an idle quota probe and never starts a worker afterwards", async () => {
+  let release!: () => void;
+  let entered = false;
+  const gate = new Promise<void>((r) => {
+    release = r;
+  });
+  const inspect = scheduler.accounts.inspect.bind(scheduler.accounts);
+  vi.spyOn(scheduler.accounts, "inspect").mockImplementationOnce(async (id) => {
+    entered = true;
+    await gate;
+    return inspect(id);
+  });
+  await scheduler.add({ ...input, cwd: root });
+  await until(() => entered);
+  const ended = vi.fn();
+  const shutdown = scheduler.shutdown().then(ended);
+  await new Promise((r) => setTimeout(r, 10));
+  const returnedBeforeProbeEnded = ended.mock.calls.length > 0;
+  release();
+  await shutdown;
+  await until(() => (scheduler as any).ticking === false);
+  expect(returnedBeforeProbeEnded).toBe(false);
+  expect(workers).toHaveLength(0);
+});
+
+it("a newly available account wakes a job before the old reset deadline", async () => {
+  for (const a of store.data.accounts)
+    a.quotas.codex.primary!.usedPercent = 100;
+  const job = await scheduler.add({ ...input, cwd: root });
+  await until(() => job.state === "waiting");
+  await (scheduler as any).tick();
+  job.nextWakeAt = Date.now() + 7 * 86400000;
+  store.data.accounts.push(account("new"));
+  await (scheduler as any).tick();
+  await until(() => workers[0]?.started);
+  expect(job.accountId).toBe("new");
+});
+it("failed close persists the global recovery gate across restart", async () => {
+  const job = await scheduler.add({ ...input, cwd: root });
+  await until(() => workers[0]?.started);
+  workers[0].failClose = true;
+  workers[0].settle({ kind: "quota" });
+  await (scheduler as any).currentRun;
+  const restored = new Store(root);
+  await restored.load();
+  expect(restored.data.jobs[0].recoveryRequired).toBe(true);
+  workers[0].failClose = false;
+});
+it("an unconfirmed process left by preparation freezes the entire queue", async () => {
+  const original = vi
+    .mocked(scheduler.accounts.inspect)
+    .getMockImplementation()!;
+  vi.spyOn(scheduler.accounts, "inspect").mockImplementation(
+    async (id, force) => {
+      if (force)
+        throw new ProcessSafetyError(
+          "cannot stop initialization process",
+          new Error("test"),
+        );
+      return original(id, force);
+    },
+  );
+  const job = await scheduler.add({ ...input, cwd: root });
+  await until(() => job.state === "needs_attention");
+  await (scheduler as any).currentRun;
+  expect(job.recoveryRequired).toBe(true);
+  await (scheduler as any).tick();
+  expect(workers).toHaveLength(0);
+});
+it("shutdown waits for completion persistence without trying to pause a terminal job", async () => {
+  const job = await scheduler.add({ ...input, cwd: root });
+  await until(() => workers[0]?.started);
+  const originalSave = store.save.bind(store);
+  let release!: () => void;
+  let entered = false;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  vi.spyOn(store, "save").mockImplementation(async () => {
+    if (job.state === "completed") {
+      entered = true;
+      await gate;
+    }
+    return originalSave();
+  });
+  workers[0].settle({ kind: "completed" });
+  await until(() => entered);
+  const result = scheduler.shutdown().then(
+    () => "ok",
+    (error) => error,
+  );
+  release();
+  expect(await result).toBe("ok");
+  expect(job.state).toBe("completed");
 });

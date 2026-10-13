@@ -49,6 +49,17 @@ try {
   process.exit(1);
 }
 const socket = net.createConnection(endpoint);
+let expectedClose = false;
+const disconnect = () => {
+  expectedClose = true;
+  socket.end();
+};
+socket.on("close", () => {
+  if (!expectedClose) {
+    console.error("连接中断，任务状态未知；请重新连接查看，不能视为任务完成。");
+    process.exitCode = 1;
+  }
+});
 let buffer = "";
 let watching = false;
 let jobId = options.id;
@@ -64,7 +75,7 @@ socket.on("connect", () => {
         prompt = fs.readFileSync(path.resolve(options["prompt-file"]), "utf8");
     } catch (e) {
       console.error(e.message);
-      socket.end();
+      disconnect();
       process.exitCode = 1;
       return;
     }
@@ -87,7 +98,7 @@ socket.on("connect", () => {
     send(1, "job.control", { id: jobId, action: operation });
   else {
     console.error("Unknown command; use help");
-    socket.end();
+    disconnect();
     process.exitCode = 1;
   }
 });
@@ -102,7 +113,7 @@ function show(snapshot) {
         rotations: j.rotations,
       })),
     );
-    socket.end();
+    disconnect();
     return;
   }
   for (const log of snapshot.logs.filter((l) => !jobId || l.jobId === jobId)) {
@@ -129,7 +140,7 @@ function show(snapshot) {
     ["completed", "cancelled", "needs_attention", "paused"].includes(j.state)
   ) {
     console.log(`\n[${j.state}] ${j.lastError || ""}`);
-    socket.end();
+    disconnect();
     process.exitCode = j.state === "completed" ? 0 : 2;
   }
 }
@@ -152,7 +163,7 @@ socket.on("data", (data) => {
     }
     if (m.error) {
       console.error(m.error);
-      socket.end();
+      disconnect();
       process.exitCode = 1;
       return;
     }
@@ -166,7 +177,7 @@ socket.on("data", (data) => {
       } else if (operation === "status") show(m.result);
       else {
         console.log("OK");
-        socket.end();
+        disconnect();
       }
     }
   }
@@ -176,6 +187,6 @@ socket.on("error", (e) => {
   process.exitCode = 1;
 });
 process.on("SIGINT", () => {
-  socket.end();
+  disconnect();
   process.exit(130);
 });

@@ -6,10 +6,17 @@ import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
 import { Accounts, parseAuth } from "./accounts";
 import { Store, atomicWrite } from "./store";
+import { prepareThread } from "./thread";
 import { Rpc } from "./rpc";
 import { Cdp } from "./cdp";
 import { findTranscript, TranscriptTail } from "./transcript";
-import { errorKind, isExhausted, isQuotaNotice, parseQuotas } from "./quota";
+import {
+  errorKind,
+  hasQuotaEvidence,
+  isExhausted,
+  isQuotaNotice,
+  parseQuotas,
+} from "./quota";
 import type { Outcome, Worker, WorkerContext } from "./worker";
 import type { Quota } from "../shared/types";
 import { ensureWindowsSandbox } from "./windows-sandbox";
@@ -22,6 +29,13 @@ export class DesktopWorker extends EventEmitter implements Worker {
   private receipt?: string;
   private polling = false;
   private terminal = false;
+  private completing = false;
+  private closing = false;
+  private finalText = "";
+  private closeInFlight?: Promise<void>;
+  private bootstrap?: Rpc;
+  private leased = false;
+  private launchNonce?: string;
   private quotaSeen = false;
   private turnStarted = false;
   private lastError?: unknown;
@@ -78,10 +92,11 @@ export class DesktopWorker extends EventEmitter implements Worker {
     if (process.platform !== "win32")
       throw new Error("官方客户端模式需要 Windows；CLI 模式可跨平台开发检查");
     const id = this.ctx.job.accountId!;
-    this.accounts.busy.add(id);
+    const leasedAuth = await this.accounts.acquireDesktop(id);
+    this.leased = true;
     await atomicWrite(
       path.join(this.ctx.home, "auth.json"),
-      JSON.stringify(await this.accounts.auth(id)),
+      JSON.stringify(leasedAuth),
     );
     const job = this.ctx.job;
     // Only a dedicated profile is changed; the user's default ~/.codex is untouched.
@@ -90,41 +105,36 @@ export class DesktopWorker extends EventEmitter implements Worker {
       `cli_auth_credentials_store = "file"\n${job.model ? `model = ${JSON.stringify(job.model)}\n` : ""}${job.effort ? `model_reasoning_effort = ${JSON.stringify(job.effort)}\n` : ""}approval_policy = ${JSON.stringify(job.approvalPolicy)}\nsandbox_mode = ${JSON.stringify({ workspaceWrite: "workspace-write", readOnly: "read-only", dangerFullAccess: "danger-full-access" }[job.sandbox])}\n[features]\nsecret_auth_storage = false\n`,
     );
     const bootstrap = await Rpc.open(this.ctx.cli, this.ctx.home);
+    this.bootstrap = bootstrap;
     const title = `Relay ${job.id.slice(0, 8)} · ${job.title}`;
     try {
       await bootstrap.call("account/login/start", {
         type: "chatgptAuthTokens",
-        ...auth,
+        accessToken: leasedAuth.tokens.access_token,
+        chatgptAccountId: leasedAuth.tokens.account_id,
+        chatgptPlanType: auth.chatgptPlanType,
       });
       await ensureWindowsSandbox(bootstrap, job.cwd, job.sandbox);
-      const fresh = !job.threadId;
-      const response = await bootstrap.call(
-        job.threadId ? "thread/resume" : "thread/start",
-        {
-          ...(job.threadId ? { threadId: job.threadId } : {}),
-          cwd: job.cwd,
-          approvalPolicy: job.approvalPolicy,
-          sandbox: {
-            workspaceWrite: "workspace-write",
-            readOnly: "read-only",
-            dangerFullAccess: "danger-full-access",
-          }[job.sandbox],
-          ...(job.model ? { model: job.model } : {}),
-        },
-      );
+      const response = await prepareThread(bootstrap, job.threadId, {
+        cwd: job.cwd,
+        approvalPolicy: job.approvalPolicy,
+        sandbox: {
+          workspaceWrite: "workspace-write",
+          readOnly: "read-only",
+          dangerFullAccess: "danger-full-access",
+        }[job.sandbox],
+        ...(job.model ? { model: job.model } : {}),
+      });
+      if (!job.model && typeof response.model === "string")
+        job.model = response.model;
       await this.ctx.checkpoint(response.thread.id);
-      // Upstream defers the first rollout until a turn. Archive explicitly
-      // materializes an empty persistent thread; unarchive makes it selectable.
-      if (fresh) {
-        await bootstrap.call("thread/archive", { threadId: job.threadId });
-        await bootstrap.call("thread/unarchive", { threadId: job.threadId });
-      }
       await bootstrap.call("thread/name/set", {
         threadId: job.threadId,
         name: title,
       });
     } finally {
       await bootstrap.close();
+      this.bootstrap = undefined;
     }
     if (!this.ctx.shouldStart()) {
       this.finish({ kind: "interrupted" });
@@ -154,6 +164,7 @@ export class DesktopWorker extends EventEmitter implements Worker {
     await fs.rm(this.receipt, { force: true });
     const request = path.join(this.ctx.home, "desktop-launch.json");
     const nonce = randomUUID();
+    this.launchNonce = nonce;
     await atomicWrite(
       request,
       JSON.stringify({
@@ -211,7 +222,12 @@ export class DesktopWorker extends EventEmitter implements Worker {
       throw new Error(
         "客户端未显示受管会话；请检查客户端适配选择器，不会发送到其他会话",
       );
-    await delay(500);
+    let verifiedThread = false;
+    for (let i = 0; i < 20 && !verifiedThread; i++) {
+      verifiedThread = await this.cdp.isThreadSelected(job.threadId!, selector);
+      if (!verifiedThread) await delay(500);
+    }
+    if (!verifiedThread) throw new Error("无法验证客户端当前会话，未发送任务");
     if (!this.ctx.shouldStart()) {
       this.finish({ kind: "interrupted" });
       return;
@@ -220,6 +236,10 @@ export class DesktopWorker extends EventEmitter implements Worker {
       selectors.editorSelector,
       job.turnId ? this.ctx.resumePrompt : job.prompt,
     );
+    if (!this.ctx.shouldStart()) {
+      this.finish({ kind: "interrupted" });
+      return;
+    }
     if (!(await this.cdp.click(selectors.sendSelector)))
       throw new Error("未找到唯一的发送按钮，任务未发送");
     this.timer = setInterval(() => void this.readTranscript(), 500);
@@ -231,7 +251,7 @@ export class DesktopWorker extends EventEmitter implements Worker {
       );
   }
   private async readTranscript() {
-    if (this.polling || !this.tail || this.terminal) return;
+    if (this.polling || !this.tail || this.terminal || this.closing) return;
     this.polling = true;
     try {
       if (Date.now() - this.heartbeatAt > 10_000) {
@@ -246,12 +266,16 @@ export class DesktopWorker extends EventEmitter implements Worker {
         if (record.type !== "event_msg") continue;
         const p = record.payload ?? {};
         if (p.type === "task_started" || p.type === "turn_started") {
+          if (this.turnStarted && p.turn_id !== this.ctx.job.turnId)
+            throw new Error("受管会话出现另一轮任务，停止自动操作");
           this.turnStarted = true;
           if (!p.turn_id) throw new Error("客户端未提供真实 turn_id");
           await this.ctx.checkpoint(this.ctx.job.threadId!, p.turn_id);
         }
         if (p.type === "agent_message") {
           this.emit("output", p.message ?? "");
+          if (p.phase == null || p.phase === "final_answer")
+            this.finalText = p.message ?? "";
           if (isQuotaNotice(p.message)) this.quotaSeen = true;
         }
         if (p.type === "error") {
@@ -294,11 +318,17 @@ export class DesktopWorker extends EventEmitter implements Worker {
           p.type === "turn_complete" ||
           p.type === "turn_aborted"
         ) {
-          if (p.turn_id && p.turn_id !== this.ctx.job.turnId) continue;
+          if (!this.turnStarted) continue;
+          if (!p.turn_id)
+            throw new Error("终止记录缺少 turn_id，无法确认任务结束");
+          if (p.turn_id !== this.ctx.job.turnId) continue;
+          this.completing = true;
           this.lastError = p.error ?? this.lastError;
           await delay(750);
+          let quotaKnown = false;
           try {
             const q = await this.quota();
+            quotaKnown = hasQuotaEvidence(q[this.ctx.job.bucket]);
             if (isExhausted(q[this.ctx.job.bucket])) this.quotaSeen = true;
           } catch {}
           if (
@@ -311,6 +341,14 @@ export class DesktopWorker extends EventEmitter implements Worker {
             this.finish({ kind: "interrupted" });
           else if (this.lastError)
             this.finish({ kind: "error", error: this.lastError });
+          else if (
+            !quotaKnown ||
+            !String(p.last_agent_message ?? this.finalText).trim()
+          )
+            this.finish({
+              kind: "error",
+              error: new Error("终止原因不明确，缺少额度核实或最终答复"),
+            });
           else this.finish({ kind: "completed" });
         }
       }
@@ -354,7 +392,12 @@ export class DesktopWorker extends EventEmitter implements Worker {
       this.emit("quota", q);
       if (isExhausted(q[this.ctx.job.bucket])) {
         this.quotaSeen = true;
-        if (this.turnStarted && !this.terminal)
+        if (
+          this.turnStarted &&
+          !this.terminal &&
+          !this.completing &&
+          !this.closing
+        )
           void this.stop().catch((e) => this.emit("stopError", e));
       }
       return q;
@@ -366,7 +409,7 @@ export class DesktopWorker extends EventEmitter implements Worker {
     throw new Error("客户端模式请在官方客户端处理审批和输入");
   }
   async stop(): Promise<void> {
-    if (this.terminal || !this.turnStarted) return;
+    if (this.terminal || this.completing || !this.turnStarted) return;
     if (this.stopping) return this.stopping;
     this.stopping = (async () => {
       await this.cdp?.click(this.store.data.settings.desktop.stopSelector);
@@ -387,14 +430,30 @@ export class DesktopWorker extends EventEmitter implements Worker {
     });
     return this.stopping;
   }
-  async close() {
+  close(): Promise<void> {
+    if (!this.closeInFlight)
+      this.closeInFlight = this.closeOnce().catch((error) => {
+        this.closeInFlight = undefined;
+        throw error;
+      });
+    return this.closeInFlight;
+  }
+  private async closeOnce() {
+    this.closing = true;
     if (this.timer) clearInterval(this.timer);
     this.cdp?.close();
+    if (this.bootstrap) {
+      await this.bootstrap.close();
+      this.bootstrap = undefined;
+    }
+    if (this.leased) await Rpc.assertHomeIdle(this.ctx.home);
     await this.probeInFlight?.catch(() => {});
     if (this.receipt && this.launchAttempted) {
       const receipt = JSON.parse(
         (await fs.readFile(this.receipt, "utf8")).replace(/^\uFEFF/, ""),
       );
+      if (receipt.nonce !== this.launchNonce)
+        throw new Error("客户端退出回执不匹配，保留进程等待检查");
       if (receipt.started !== false)
         await this.powershell("desktop-control.ps1", [
           "-RequestPath",
@@ -403,6 +462,7 @@ export class DesktopWorker extends EventEmitter implements Worker {
           "stop",
         ]);
     }
+    if (!this.leased) return;
     const id = this.ctx.job.accountId!;
     try {
       const auth = parseAuth(
@@ -414,9 +474,12 @@ export class DesktopWorker extends EventEmitter implements Worker {
       await this.accounts.put(id, auth);
       await fs.rm(path.join(this.ctx.home, "auth.json"), { force: true });
       this.accounts.busy.delete(id);
+      this.leased = false;
     } catch (error: any) {
-      if (error.code === "ENOENT") this.accounts.busy.delete(id);
-      else throw error;
+      if (error.code === "ENOENT") {
+        this.accounts.busy.delete(id);
+        this.leased = false;
+      } else throw error;
     }
   }
 }

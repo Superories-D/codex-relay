@@ -190,6 +190,7 @@ async function boot() {
       case "accounts.reorder": {
         const ids = z.array(idSchema).parse(args);
         if (
+          ids.length !== store.data.accounts.length ||
           new Set(ids).size !== store.data.accounts.length ||
           ids.some((id) => !store.data.accounts.some((a) => a.id === id))
         )

@@ -110,6 +110,15 @@ export class Cdp {
       if(e.length !== 1) return false; e[0].click(); return true;
     })()`);
   }
+  async isThreadSelected(threadId: string, selector: string): Promise<boolean> {
+    return this.evaluate(`(() => {
+      const id = ${JSON.stringify(threadId)};
+      const route = location.pathname + location.search + location.hash;
+      if (route.includes(id) || route.includes(encodeURIComponent(id))) return true;
+      const nodes = [...document.querySelectorAll(${JSON.stringify(selector)})].filter(x => x.getClientRects().length);
+      return nodes.length === 1 && (['true','page'].includes(nodes[0].getAttribute('aria-current')) || nodes[0].getAttribute('aria-selected') === 'true' || nodes[0].getAttribute('data-state') === 'active');
+    })()`);
+  }
   async fill(selector: string, text: string) {
     const focused = await this.evaluate<boolean>(`(() => {
       const e = [...document.querySelectorAll(${JSON.stringify(selector)})].filter(x => x.getClientRects().length && !x.disabled);

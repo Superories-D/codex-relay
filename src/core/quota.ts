@@ -17,11 +17,12 @@ export function parseQuotas(
   previous: Record<string, Quota> = {},
   sparse = false,
 ): Record<string, Quota> {
-  const buckets =
-    raw?.rateLimitsByLimitId ??
-    (raw?.rateLimits
+  const buckets = {
+    ...(raw?.rateLimits
       ? { [raw.rateLimits.limitId ?? "codex"]: raw.rateLimits }
-      : {});
+      : {}),
+    ...(raw?.rateLimitsByLimitId ?? {}),
+  };
   return Object.fromEntries(
     Object.entries(buckets)
       .filter(
@@ -75,6 +76,11 @@ export function resetDeadline(
     return now + fallbackMs;
   return Math.max(...blocked.map((w) => w.resetsAt!)) + 2000;
 }
+export function hasQuotaEvidence(q?: Quota): boolean {
+  return (
+    !!q && (q.primary != null || q.secondary != null || q.unlimited === true)
+  );
+}
 export function eligible(
   account: Account,
   bucket: string,
@@ -89,7 +95,8 @@ export function eligible(
   const q = account.quotas[bucket];
   return (
     !!q &&
-    (q.primary !== null || q.secondary !== null || q.unlimited === true) &&
+    hasQuotaEvidence(q) &&
+    now >= q.observedAt &&
     now - q.observedAt <= 120_000 &&
     !isExhausted(q)
   );

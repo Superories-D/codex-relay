@@ -48,7 +48,14 @@ beforeEach(() => {
   );
   w.cdp = { call: vi.fn(async () => ({})), click: vi.fn(async () => true) };
   w.turnStarted = true;
-  w.quota = vi.fn(async () => ({}));
+  w.quota = vi.fn(async () => ({
+    codex: {
+      primary: { usedPercent: 10 },
+      secondary: null,
+      observedAt: Date.now(),
+      reached: false,
+    },
+  }));
 });
 afterEach(() => vi.useRealTimers());
 function records(...payloads: any[]) {
@@ -116,4 +123,42 @@ describe("desktop rollout completion guard", () => {
     expect(await stop).toBeInstanceOf(Error);
     expect((await w.done).kind).toBe("error");
   });
+});
+
+it("an empty successful-looking terminal without quota evidence stays unresolved", async () => {
+  w.quota.mockResolvedValue({});
+  records({
+    type: "task_complete",
+    turn_id: "turn",
+    last_agent_message: "Some output",
+  });
+  const read = w.readTranscript();
+  await vi.advanceTimersByTimeAsync(1000);
+  await read;
+  expect((await w.done).kind).toBe("error");
+});
+it("a terminal record without a started turn cannot complete a job", async () => {
+  w.turnStarted = false;
+  records({
+    type: "task_complete",
+    turn_id: "turn",
+    last_agent_message: "old final",
+  });
+  const done = vi.fn();
+  w.done.then(done);
+  await w.readTranscript();
+  expect(done).not.toHaveBeenCalled();
+});
+it("does not release credentials while the bootstrap process is unconfirmed", async () => {
+  const busy = new Set(["account"]);
+  w.accounts = { busy };
+  w.bootstrap = {
+    close: vi.fn(async () => {
+      throw new Error("still running");
+    }),
+  };
+  w.cdp.close = vi.fn();
+  w.leased = true;
+  await expect(w.close()).rejects.toThrow("still running");
+  expect(busy.has("account")).toBe(true);
 });

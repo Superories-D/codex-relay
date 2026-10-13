@@ -228,3 +228,28 @@ describe("CLI completion and interruption protocol", () => {
     expect(() => w.respond("12", { decision: "accept" })).toThrow("过期");
   });
 });
+
+it("unknown final quota does not turn commentary into task completion", async () => {
+  const w = worker();
+  await w.start(auth);
+  rpc.notify("item/completed", {
+    threadId: "thread-1",
+    item: { type: "agentMessage", phase: "commentary", text: "Working on it" },
+  });
+  rpc.call.mockImplementation(async () => ({}));
+  rpc.notify("turn/completed", {
+    threadId: "thread-1",
+    turn: { id: "turn-2", status: "completed" },
+  });
+  await vi.advanceTimersByTimeAsync(800);
+  expect((await w.done).kind).toBe("error");
+});
+it("a new thread is materialized before a task can pause during preparation", async () => {
+  const w = worker();
+  await w.start(auth);
+  expect(rpc.calls.indexOf("thread/archive")).toBeLessThan(
+    rpc.calls.indexOf("turn/start"),
+  );
+  expect(rpc.calls).toContain("thread/unarchive");
+  expect(rpc.calls).toContain("thread/resume");
+});

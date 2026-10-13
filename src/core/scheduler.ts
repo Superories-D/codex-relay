@@ -13,6 +13,7 @@ import { Accounts } from "./accounts";
 import { Store } from "./store";
 import {
   errorKind,
+  hasQuotaEvidence,
   isExhausted,
   nextWake,
   pickAccount,
@@ -20,6 +21,7 @@ import {
 } from "./quota";
 import type { Outcome, Worker, WorkerFactory } from "./worker";
 import { redact } from "./redact";
+import { ProcessSafetyError } from "./process-safety-error";
 export class Scheduler extends EventEmitter {
   approvals: Approval[] = [];
   private active?: {
@@ -30,6 +32,8 @@ export class Scheduler extends EventEmitter {
   };
   private timer?: NodeJS.Timeout;
   private ticking = false;
+  private tickInFlight?: Promise<void>;
+  private controls: Promise<unknown> = Promise.resolve();
   private closing = false;
   private currentRun?: Promise<void>;
   private probes = new Map<string, number>();
@@ -93,10 +97,11 @@ export class Scheduler extends EventEmitter {
     this.store.data.jobs.push(job);
     await this.store.save();
     this.changed();
-    void this.tick();
+    void this.tick().catch((error) => this.log(error, "error"));
     return job;
   }
   start() {
+    if (this.timer) clearInterval(this.timer);
     this.timer = setInterval(
       () => void this.tick().catch((error) => this.log(error, "error")),
       1000,
@@ -130,18 +135,37 @@ export class Scheduler extends EventEmitter {
       if (this.closing) return;
     }
   }
-  private async tick() {
+  private tick(): Promise<void> {
+    if (this.tickInFlight) return this.tickInFlight;
+    this.tickInFlight = this.tickOnce().finally(() => {
+      this.tickInFlight = undefined;
+    });
+    return this.tickInFlight;
+  }
+  private async tickOnce() {
     if (this.ticking || this.closing) return;
     this.ticking = true;
     try {
       const now = Date.now();
       if (this.store.data.jobs.some((j) => j.recoveryRequired)) return;
       if (!this.active) await this.refreshDue(now);
-      if (this.active) return;
+      if (
+        this.active ||
+        this.closing ||
+        this.store.data.jobs.some((j) => j.recoveryRequired)
+      )
+        return;
       const job = this.store.data.jobs.find(
         (j) =>
           j.state === "queued" ||
-          (j.state === "waiting" && (j.nextWakeAt ?? 0) <= now),
+          (j.state === "waiting" &&
+            ((j.nextWakeAt ?? 0) <= now ||
+              pickAccount(
+                this.store.data.accounts,
+                this.store.data.cursor,
+                j.bucket,
+                Date.now(),
+              ) !== null)),
       );
       if (!job) return;
       const selection = pickAccount(
@@ -171,6 +195,7 @@ export class Scheduler extends EventEmitter {
       this.active = { job };
       this.currentRun = this.run(job, selection.account).catch((error) => {
         job.state = "needs_attention";
+        job.recoveryRequired = true;
         job.lastError = redact(error);
         if (this.active) this.active.failedStop = true;
         this.log(error, "error", job.id);
@@ -185,7 +210,9 @@ export class Scheduler extends EventEmitter {
     account.quotas = { ...account.quotas, ...quotas };
     account.status = Object.values(account.quotas).some(isExhausted)
       ? "limited"
-      : "ready";
+      : Object.values(account.quotas).some(hasQuotaEvidence)
+        ? "ready"
+        : "unknown";
     this.changed();
   }
   private async run(job: Job, account: Account) {
@@ -200,101 +227,107 @@ export class Scheduler extends EventEmitter {
       await this.store.save();
       this.changed();
       const prepared = await this.accounts.inspect(account.id, true);
-      if (isExhausted(prepared.quotas[job.bucket]))
-        throw {
-          codexErrorInfo: "usageLimitExceeded",
-          message: "额度在准备会话时已用尽",
-        };
-      if (
-        job.model &&
-        prepared.models.length &&
-        !prepared.models.some(
-          (m) => m.model === job.model || m.id === job.model,
-        )
-      )
-        throw new Error(
-          `该账户没有模型 ${job.model} 的权限；请选择所有轮换账户都可用的模型`,
-        );
-      const home = this.store.jobHome(job.id);
-      await fs.mkdir(home, { recursive: true, mode: 0o700 });
-      const tokens = {
-        accessToken: prepared.auth.tokens.access_token,
-        chatgptAccountId: account.identity,
-        chatgptPlanType: account.plan,
-      };
-      active.worker = this.factories[job.mode]({
-        job,
-        home,
-        cli: this.store.data.settings.cliPath,
-        resumePrompt: this.store.data.settings.resumePrompt,
-        checkpoint: async (threadId, turnId) => {
-          job.threadId = threadId;
-          if (turnId) job.turnId = turnId;
-          await this.store.save();
-          this.changed();
-        },
-        shouldStart: () => !active.reason && !this.closing,
-        refresh: async () => {
-          const auth = await this.accounts.refreshTokens(account.id);
-          return {
-            accessToken: auth.tokens.access_token,
-            chatgptAccountId: account.identity,
-            chatgptPlanType: account.plan,
-          };
-        },
-      });
-      const worker = active.worker;
-      worker.on("quota", (quotas) => this.updateQuota(account, quotas));
-      worker.on("output", (text) => this.log(text, "output", job.id));
-      worker.on("log", (text) => this.log(text, "info", job.id));
-      worker.on("approval", (approval) => {
-        this.approvals.push(approval);
-        this.log(
-          "Codex 等待你的审批或输入，任务和账户保持不变",
-          "info",
-          job.id,
-        );
-      });
-      worker.on("approvalResolved", (id) => {
-        this.approvals = this.approvals.filter(
-          (a) => !(a.jobId === job.id && a.id === id),
-        );
-        this.changed();
-      });
-      worker.on("stopError", (error) => {
-        active.failedStop = true;
-        this.log(error, "error", job.id);
-      });
-      await worker.start(tokens);
       if (active.reason || this.closing) {
-        job.state = "pausing";
-        await worker.stop();
+        outcome = { kind: "interrupted" };
       } else {
-        job.state = "running";
-        this.log(
-          `使用 ${account.label} 继续会话 ${job.threadId}`,
-          "info",
-          job.id,
-        );
-      }
-      await this.store.save();
-      this.changed();
-      let polling = false;
-      poll = setInterval(() => {
-        if (polling || active.reason) return;
-        polling = true;
-        void worker
-          .quota()
-          .catch((error) =>
-            this.log(`额度读取暂时失败：${redact(error)}`, "warning", job.id),
+        if (isExhausted(prepared.quotas[job.bucket]))
+          throw {
+            codexErrorInfo: "usageLimitExceeded",
+            message: "额度在准备会话时已用尽",
+          };
+        if (
+          job.model &&
+          prepared.models.length &&
+          !prepared.models.some(
+            (m) => m.model === job.model || m.id === job.model,
           )
-          .finally(() => {
-            polling = false;
-          });
-      }, this.store.data.settings.pollSeconds * 1000);
-      outcome = await worker.done;
-      if (active.failedStop) throw new Error("停止确认失败，保留任务等待检查");
+        )
+          throw new Error(
+            `该账户没有模型 ${job.model} 的权限；请选择所有轮换账户都可用的模型`,
+          );
+        const home = this.store.jobHome(job.id);
+        await fs.mkdir(home, { recursive: true, mode: 0o700 });
+        const tokens = {
+          accessToken: prepared.auth.tokens.access_token,
+          chatgptAccountId: account.identity,
+          chatgptPlanType: account.plan,
+        };
+        active.worker = this.factories[job.mode]({
+          job,
+          home,
+          cli: this.store.data.settings.cliPath,
+          resumePrompt: this.store.data.settings.resumePrompt,
+          checkpoint: async (threadId, turnId) => {
+            job.threadId = threadId;
+            if (turnId) job.turnId = turnId;
+            await this.store.save();
+            this.changed();
+          },
+          shouldStart: () => !active.reason && !this.closing,
+          refresh: async () => {
+            const auth = await this.accounts.refreshTokens(account.id);
+            return {
+              accessToken: auth.tokens.access_token,
+              chatgptAccountId: account.identity,
+              chatgptPlanType: account.plan,
+            };
+          },
+        });
+        const worker = active.worker;
+        worker.on("quota", (quotas) => this.updateQuota(account, quotas));
+        worker.on("output", (text) => this.log(text, "output", job.id));
+        worker.on("log", (text) => this.log(text, "info", job.id));
+        worker.on("approval", (approval) => {
+          this.approvals.push(approval);
+          this.log(
+            "Codex 等待你的审批或输入，任务和账户保持不变",
+            "info",
+            job.id,
+          );
+        });
+        worker.on("approvalResolved", (id) => {
+          this.approvals = this.approvals.filter(
+            (a) => !(a.jobId === job.id && a.id === id),
+          );
+          this.changed();
+        });
+        worker.on("stopError", (error) => {
+          active.failedStop = true;
+          this.log(error, "error", job.id);
+        });
+        await worker.start(tokens);
+        if (active.reason || this.closing) {
+          job.state = "pausing";
+          await worker.stop();
+        } else {
+          job.state = "running";
+          this.log(
+            `使用 ${account.label} 继续会话 ${job.threadId}`,
+            "info",
+            job.id,
+          );
+        }
+        await this.store.save();
+        this.changed();
+        let polling = false;
+        poll = setInterval(() => {
+          if (polling || active.reason) return;
+          polling = true;
+          void worker
+            .quota()
+            .catch((error) =>
+              this.log(`额度读取暂时失败：${redact(error)}`, "warning", job.id),
+            )
+            .finally(() => {
+              polling = false;
+            });
+        }, this.store.data.settings.pollSeconds * 1000);
+        outcome = await worker.done;
+        if (active.failedStop)
+          throw new Error("停止确认失败，保留任务等待检查");
+      }
     } catch (error) {
+      if (error instanceof ProcessSafetyError) active.failedStop = true;
       outcome = {
         kind: errorKind(error) === "quota" ? "quota" : "error",
         error,
@@ -314,6 +347,7 @@ export class Scheduler extends EventEmitter {
     else if ((active.reason === "pause" || this.closing) && !active.failedStop)
       job.state = "paused";
     else if (active.failedStop) {
+      job.recoveryRequired = true;
       job.state = "needs_attention";
       job.lastError = "无法确认原进程停止，禁止启动第二个任务进程";
     } else if (outcome?.kind === "quota") {
@@ -362,18 +396,30 @@ export class Scheduler extends EventEmitter {
     if (!active.failedStop) this.active = undefined;
     this.changed();
   }
-  async control(id: string, action: "pause" | "resume" | "cancel") {
+  control(id: string, action: "pause" | "resume" | "cancel"): Promise<void> {
+    const next = this.controls
+      .catch(() => {})
+      .then(() => this.controlOnce(id, action));
+    this.controls = next;
+    return next;
+  }
+  private async controlOnce(id: string, action: "pause" | "resume" | "cancel") {
     const job = this.store.data.jobs.find((j) => j.id === id);
     if (!job) throw new Error("任务不存在");
+    if (["completed", "cancelled"].includes(job.state))
+      throw new Error("终止任务不可再次操作，请新建任务");
+    if (this.active?.job.id === id && this.active.failedStop) {
+      await this.currentRun;
+      await this.active?.worker?.close();
+      await this.recover(job);
+      this.active = undefined;
+      job.recoveryRequired = false;
+    }
     if (job.recoveryRequired) {
       await this.recover(job);
       job.recoveryRequired = false;
     }
     if (action === "resume") {
-      if (this.active?.job.id === id && this.active.failedStop) {
-        await this.active.worker?.close();
-        this.active = undefined;
-      }
       if (this.active?.job.id === id) throw new Error("任务仍在执行或正在停止");
       if (["completed", "cancelled"].includes(job.state))
         throw new Error("终止任务不可恢复，请新建任务");
@@ -381,19 +427,14 @@ export class Scheduler extends EventEmitter {
       job.lastError = undefined;
       job.nextWakeAt = undefined;
     } else if (this.active?.job.id === id) {
-      if (this.active.failedStop) {
-        await this.active.worker?.close();
-        this.active = undefined;
-        job.state = action === "pause" ? "paused" : "cancelled";
-        await this.store.save();
-        this.changed();
-        return;
-      }
       this.active.reason = action;
       job.state = "pausing";
       this.changed();
       try {
         await this.active.worker?.stop();
+        await this.currentRun;
+        if (this.active?.failedStop)
+          throw new Error("任务未能安全停止，请处理恢复状态");
       } catch (error) {
         if (this.active) this.active.failedStop = true;
         throw error;
@@ -413,11 +454,17 @@ export class Scheduler extends EventEmitter {
     this.closing = true;
     if (this.timer) clearInterval(this.timer);
     try {
-      if (this.active) await this.control(this.active.job.id, "pause");
+      await this.tickInFlight;
+      if (
+        this.active &&
+        !["completed", "cancelled"].includes(this.active.job.state)
+      )
+        await this.control(this.active.job.id, "pause");
       await this.currentRun;
       if (this.active?.failedStop)
         throw new Error("受管进程未确认停止，暂不退出");
       await this.accounts.cancelLogin();
+      if (this.accounts.drain) await this.accounts.drain();
       await this.store.save();
     } catch (error) {
       this.closing = false;
