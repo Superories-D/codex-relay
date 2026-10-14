@@ -40,8 +40,8 @@ export function parseQuotas(
             observedAt: now,
             reached: Boolean(
               r.rateLimitReachedType ||
-                r.spendControlReached ||
-                (sparse && old?.reached),
+              r.spendControlReached ||
+              (sparse && old?.reached),
             ),
             unlimited:
               r.credits?.unlimited === true ||

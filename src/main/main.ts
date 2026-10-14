@@ -1,6 +1,7 @@
 import {
   app,
   BrowserWindow,
+  screen,
   ipcMain,
   dialog,
   shell,
@@ -95,13 +96,9 @@ async function boot() {
     if (j.recoveryRequired && j.accountId && j.mode === "desktop")
       accounts.busy.add(j.accountId);
   let sleepBlocker: number | undefined;
-  let publishTimer: NodeJS.Timeout | undefined;
-  scheduler.on("snapshot", () => {
-    if (!publishTimer)
-      publishTimer = setTimeout(() => {
-        publishTimer = undefined;
-        window?.webContents.send("relay:snapshot", scheduler.snapshot());
-      }, 100);
+  scheduler.on("snapshot", (snapshot) => {
+    if (window && !window.isDestroyed())
+      window.webContents.send("relay:snapshot", snapshot);
     const running = store.data.jobs.some((j) =>
       ["preparing", "running", "pausing", "rotating"].includes(j.state),
     );
@@ -115,6 +112,42 @@ async function boot() {
   const command = async (name: string, args?: unknown): Promise<unknown> => {
     if (quitting) throw new Error("正在保存并退出");
     switch (name) {
+      case "health":
+        return { at: Date.now() };
+      case "job.desktop.show":
+        return scheduler.showDesktop(idSchema.parse(args));
+      case "job.desktop.inspect":
+        return scheduler.inspectDesktop(idSchema.parse(args));
+      case "job.directory": {
+        const job = store.data.jobs.find((j) => j.id === idSchema.parse(args));
+        if (!job) throw new Error("任务不存在");
+        const error = await shell.openPath(job.cwd);
+        if (error) throw new Error(error);
+        return;
+      }
+      case "desktop.detect": {
+        if (process.platform !== "win32")
+          throw new Error("客户端安装检测需要 Windows");
+        const result = await promisify(execFile)(
+          path.join(
+            process.env.SystemRoot ?? "C:\\Windows",
+            "System32",
+            "WindowsPowerShell",
+            "v1.0",
+            "powershell.exe",
+          ),
+          [
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            path.join(scripts, "desktop-detect.ps1"),
+          ],
+          { windowsHide: true, timeout: 15000, maxBuffer: 1024 * 1024 },
+        );
+        return JSON.parse(result.stdout.replace(/^\uFEFF/, ""));
+      }
       case "snapshot":
         return scheduler.snapshot();
       case "job.add":
@@ -195,8 +228,8 @@ async function boot() {
           ids.some((id) => !store.data.accounts.some((a) => a.id === id))
         )
           throw new Error("账户顺序无效");
-        store.data.accounts = ids.map(
-          (id) => store.data.accounts.find((a) => a.id === id)!,
+        store.data.accounts = ids.map((id) =>
+          store.data.accounts.find((a) => a.id === id)!,
         );
         store.data.cursor = 0;
         await store.save();
@@ -284,11 +317,12 @@ async function boot() {
   };
   const server = await startCommandServer(dataRoot, scheduler, command);
   const rendererPath = path.join(__dirname, "..", "renderer", "index.html");
+  const available = screen.getPrimaryDisplay().workAreaSize;
   window = new BrowserWindow({
-    width: 1280,
-    height: 860,
-    minWidth: 1000,
-    minHeight: 700,
+    width: Math.min(1280, available.width),
+    height: Math.min(860, available.height),
+    minWidth: Math.min(900, available.width),
+    minHeight: Math.min(620, available.height),
     title: "Codex Relay",
     backgroundColor: "#101316",
     show: false,

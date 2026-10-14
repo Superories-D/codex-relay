@@ -1,5 +1,7 @@
-param([Parameter(Mandatory=$true)][string]$RequestPath, [switch]$InPackage)
+﻿param([Parameter(Mandatory=$true)][string]$RequestPath, [switch]$InPackage)
 $ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+$OutputEncoding = [Console]::OutputEncoding
 $r = Get-Content -LiteralPath $RequestPath -Raw -Encoding UTF8 | ConvertFrom-Json
 function Quote-Arg([string]$s) {
   if ($s -notmatch '[\s"]' -and $s.Length -gt 0) { return $s }
@@ -9,7 +11,7 @@ try {
   $exe = [string]$r.executable
   $package = $null; $application = $null
   if (-not $InPackage) {
-    $candidates = @(Get-AppxPackage | Where-Object { $_.Name -match '^OpenAI\.(Codex|ChatGPT)$' } | Sort-Object Version -Descending)
+    $candidates = @(Get-AppxPackage | Where-Object { $_.Name -match '^OpenAI\.(Codex|ChatGPT)$' } | Sort-Object @{Expression={if($_.Name -match 'Codex'){0}else{1}}}, @{Expression='Version';Descending=$true})
     foreach ($p in $candidates) {
       foreach ($a in (Get-AppxPackageManifest -Package $p).Package.Applications.Application) {
         $full = Join-Path $p.InstallLocation $a.Executable
@@ -34,7 +36,7 @@ try {
   $psi.EnvironmentVariables['CODEX_ELECTRON_USER_DATA_PATH'] = $r.userData
   $psi.EnvironmentVariables.Remove('OPENAI_API_KEY')
   $child = [Diagnostics.Process]::Start($psi)
-  @{ pid=$child.Id; executable=$exe; nonce=$r.nonce; userData=$r.userData; started=$true } | ConvertTo-Json -Compress | Set-Content -LiteralPath $r.receipt -Encoding UTF8
+  @{ pid=$child.Id; createdAt=$child.StartTime.ToUniversalTime().ToString('o'); executable=$exe; nonce=$r.nonce; userData=$r.userData; started=$true } | ConvertTo-Json -Compress | Set-Content -LiteralPath $r.receipt -Encoding UTF8
 } catch {
   @{ error=$_.Exception.Message; nonce=$r.nonce; started=($null -ne $child); pid=$child.Id; executable=$exe; userData=$r.userData } | ConvertTo-Json -Compress | Set-Content -LiteralPath $r.receipt -Encoding UTF8
   exit 1

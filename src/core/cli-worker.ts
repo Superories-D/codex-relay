@@ -40,6 +40,7 @@ export class CliWorker extends EventEmitter implements Worker {
     chatgptAccountId: string;
     chatgptPlanType: string;
   }) {
+    this.emit("stage", "连接 Codex CLI");
     this.rpc = await Rpc.open(this.ctx.cli, this.ctx.home);
     this.rpc.on(
       "notification",
@@ -78,6 +79,7 @@ export class CliWorker extends EventEmitter implements Worker {
       }[this.ctx.job.sandbox],
       ...(this.ctx.job.model ? { model: this.ctx.job.model } : {}),
     };
+    this.emit("stage", "创建或恢复本地会话");
     const result = await prepareThread(this.rpc, this.ctx.job.threadId, config);
     this.threadId = result.thread.id;
     if (!this.ctx.job.model && typeof result.model === "string")
@@ -87,6 +89,7 @@ export class CliWorker extends EventEmitter implements Worker {
       this.finish({ kind: "interrupted" });
       return;
     }
+    this.emit("stage", "发送任务，等待执行确认");
     const turn = await this.rpc
       .call("turn/start", {
         threadId: this.threadId,
@@ -108,6 +111,7 @@ export class CliWorker extends EventEmitter implements Worker {
       });
     this.turnId = turn.turn.id;
     await this.ctx.checkpoint(this.threadId!, this.turnId);
+    this.emit("stage", "Codex 正在执行");
     if (this.quotaSeen && !this.terminal) await this.stop();
   }
   private finish(result: Outcome) {
@@ -160,6 +164,7 @@ export class CliWorker extends EventEmitter implements Worker {
     if (msg.method === "turn/completed") {
       if (this.turnId && p.turn?.id !== this.turnId) return;
       this.completing = true;
+      this.emit("stage", "收到终止事件，正在复查额度与结果");
       // Drain already queued quota notifications, then ask the server again. The final
       // turn status alone is NOT a completion signal when quota has been exhausted.
       await new Promise((resolve) => setTimeout(resolve, 750));
@@ -229,6 +234,7 @@ export class CliWorker extends EventEmitter implements Worker {
     if (!this.rpc) throw new Error("Worker not connected");
     const quotas = parseQuotas(await this.rpc.call("account/rateLimits/read"));
     this.quotas = quotas;
+    this.emit("heartbeat");
     this.emit("quota", quotas);
     if (isExhausted(quotas[this.ctx.job.bucket])) {
       this.quotaSeen = true;

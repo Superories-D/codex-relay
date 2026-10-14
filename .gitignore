@@ -10,3 +10,5 @@ runtime/
 state.json
 ipc-token
 *.age
+
+qa-output/

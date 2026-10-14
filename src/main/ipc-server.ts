@@ -52,6 +52,10 @@ export async function startCommandServer(
       while ((index = buffer.indexOf("\n")) >= 0) {
         const line = buffer.slice(0, index);
         buffer = buffer.slice(index + 1);
+        if (pendingCommands >= 64) {
+          socket.destroy();
+          break;
+        }
         pendingCommands++;
         chain = chain.then(async () => {
           if (socket.destroyed) {

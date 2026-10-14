@@ -183,6 +183,10 @@ export class Accounts {
       .catch(() => {})
       .then(fn);
     this.locks.set(id, next);
+    const release = () => {
+      if (this.locks.get(id) === next) this.locks.delete(id);
+    };
+    void next.then(release, release);
     return next;
   }
   import(text: string, label?: string): Promise<Account> {

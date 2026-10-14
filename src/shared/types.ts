@@ -45,10 +45,14 @@ export interface Job {
   effort: string;
   bucket: string;
   state: JobState;
+  stage?: string;
+  lastActivityAt?: number;
+  lastHeartbeatAt?: number;
   threadId?: string;
   turnId?: string;
   accountId?: string;
   recoveryRequired?: boolean;
+  desktopSubmissionPending?: boolean;
   nextWakeAt?: number;
   rotations: number;
   createdAt: number;

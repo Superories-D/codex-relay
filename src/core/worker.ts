@@ -15,6 +15,8 @@ export interface Worker extends EventEmitter {
   close(): Promise<void>;
   quota(): Promise<Record<string, Quota>>;
   respond(id: string, value: unknown): void;
+  inspect?(): Promise<unknown>;
+  show?(): Promise<void>;
 }
 export interface WorkerContext {
   job: Job;

@@ -123,3 +123,31 @@ it("local command server rejects wrong authentication and sends watch updates", 
     await cleanup(server, root);
   }
 });
+
+it("disconnects a pipelined command flood instead of growing an unbounded promise queue", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "relay-ipc-flood-"));
+  const fake: any = new EventEmitter();
+  fake.snapshot = () => ({ jobs: [] });
+  const command = vi.fn(async () => ({}));
+  const server = await startCommandServer(root, fake, command);
+  const socket = net.createConnection({
+    port: portOf(server),
+    host: "127.0.0.1",
+  });
+  socket.on("error", () => {});
+  try {
+    const token = await fs.readFile(path.join(root, "ipc-token"), "utf8");
+    const closed = new Promise<void>((r) => socket.once("close", () => r()));
+    socket.write(
+      Array.from(
+        { length: 100 },
+        (_, id) => JSON.stringify({ token, id, command: "snapshot" }) + "\n",
+      ).join(""),
+    );
+    await closed;
+    expect(command).not.toHaveBeenCalled();
+  } finally {
+    socket.destroy();
+    await cleanup(server, root);
+  }
+});

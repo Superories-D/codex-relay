@@ -37,6 +37,7 @@ export class Scheduler extends EventEmitter {
   private closing = false;
   private currentRun?: Promise<void>;
   private probes = new Map<string, number>();
+  private publishTimer?: NodeJS.Timeout;
   constructor(
     readonly store: Store,
     readonly accounts: Accounts,
@@ -55,21 +56,32 @@ export class Scheduler extends EventEmitter {
     });
   }
   changed() {
-    this.emit("snapshot", this.snapshot());
+    if (this.publishTimer) return;
+    this.publishTimer = setTimeout(() => {
+      this.publishTimer = undefined;
+      if (this.listenerCount("snapshot"))
+        this.emit("snapshot", this.snapshot());
+    }, 100);
+    this.publishTimer.unref?.();
   }
   log(
     message: unknown,
     level: "info" | "warning" | "error" | "output" = "info",
     jobId?: string,
   ) {
-    const value = redact(message);
+    const redacted = redact(message);
+    const value =
+      redacted.length > 12000
+        ? redacted.slice(0, 12000) +
+          "\n[本条输出过长，后续内容请查看 Codex 会话]"
+        : redacted;
     if (!value.trim()) return;
     const last = this.store.data.logs.at(-1);
     if (
       level === "output" &&
       last?.level === "output" &&
       last.jobId === jobId &&
-      last.message.length < 12000
+      last.message.length + value.length <= 12000
     )
       last.message = redact(last.message + value);
     else
@@ -80,7 +92,15 @@ export class Scheduler extends EventEmitter {
         message: value,
         jobId,
       });
-    this.store.data.logs = this.store.data.logs.slice(-1000);
+    let characters = 0;
+    this.store.data.logs = this.store.data.logs
+      .slice(-500)
+      .reverse()
+      .filter((log) => {
+        characters += log.message.length;
+        return characters <= 500_000;
+      })
+      .reverse();
     this.changed();
   }
   async add(input: NewJob) {
@@ -132,7 +152,7 @@ export class Scheduler extends EventEmitter {
             "warning",
           ),
         );
-      if (this.closing) return;
+      return; // At most one background account probe per tick; keep dispatch responsive.
     }
   }
   private tick(): Promise<void> {
@@ -148,7 +168,17 @@ export class Scheduler extends EventEmitter {
     try {
       const now = Date.now();
       if (this.store.data.jobs.some((j) => j.recoveryRequired)) return;
-      if (!this.active) await this.refreshDue(now);
+      const runnable = this.store.data.jobs.find(
+        (j) =>
+          ["queued", "waiting"].includes(j.state) &&
+          pickAccount(
+            this.store.data.accounts,
+            this.store.data.cursor,
+            j.bucket,
+            now,
+          ),
+      );
+      if (!this.active && !runnable) await this.refreshDue(now);
       if (
         this.active ||
         this.closing ||
@@ -224,6 +254,7 @@ export class Scheduler extends EventEmitter {
       job.accountId = account.id;
       job.nextWakeAt = undefined;
       job.lastError = undefined;
+      job.stage = "核实账户额度与模型权限";
       await this.store.save();
       this.changed();
       const prepared = await this.accounts.inspect(account.id, true);
@@ -274,8 +305,19 @@ export class Scheduler extends EventEmitter {
           },
         });
         const worker = active.worker;
+        worker.on("stage", (stage: string) => {
+          job.stage = stage;
+          this.changed();
+        });
+        worker.on("heartbeat", () => {
+          job.lastHeartbeatAt = Date.now();
+          this.changed();
+        });
         worker.on("quota", (quotas) => this.updateQuota(account, quotas));
-        worker.on("output", (text) => this.log(text, "output", job.id));
+        worker.on("output", (text) => {
+          job.lastActivityAt = Date.now();
+          this.log(text, "output", job.id);
+        });
         worker.on("log", (text) => this.log(text, "info", job.id));
         worker.on("approval", (approval) => {
           this.approvals.push(approval);
@@ -442,6 +484,16 @@ export class Scheduler extends EventEmitter {
     } else job.state = action === "pause" ? "paused" : "cancelled";
     await this.store.save();
     this.changed();
+  }
+  async showDesktop(id: string) {
+    if (this.active?.job.id !== id || !this.active.worker?.show)
+      throw new Error("受管客户端尚未启动");
+    await this.active.worker.show();
+  }
+  async inspectDesktop(id: string) {
+    if (this.active?.job.id !== id || !this.active.worker?.inspect)
+      throw new Error("该任务没有已连接的受管客户端，请先启动 Desktop 任务");
+    return this.active.worker.inspect();
   }
   respond(id: string, value: unknown) {
     const approval = this.approvals.find((a) => a.id === id);

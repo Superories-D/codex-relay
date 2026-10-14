@@ -85,3 +85,14 @@ it("an initialization failure with failed process cleanup retains the recovery m
   );
   expect(owner.pid).toBe(child.pid);
 });
+
+it("ignores malformed protocol shapes and keeps subsequent responses usable", async () => {
+  child.stdout.write("null\n42\n[]\nnot-json\n");
+  await expect(rpc.call("account/read")).resolves.toEqual({});
+});
+it("closes the protocol on an oversized unterminated frame", () => {
+  const disconnected = vi.fn();
+  rpc.on("disconnected", disconnected);
+  child.stdout.write(Buffer.alloc(8 * 1024 * 1024 + 1, 120));
+  expect(disconnected).toHaveBeenCalledOnce();
+});

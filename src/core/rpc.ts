@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import readline from "node:readline";
+import { JsonLines } from "./json-lines";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { spawnCodex, terminateTree } from "./process";
 import { redact } from "./redact";
@@ -39,7 +39,8 @@ export class Rpc extends EventEmitter {
     private nonce: string,
   ) {
     super();
-    readline.createInterface({ input: child.stdout }).on("line", (line) => {
+    const frames = new JsonLines();
+    const receive = (line: string) => {
       if (line.length > 8 * 1024 * 1024) {
         this.emit("diagnostic", "RPC frame too large");
         return;
@@ -51,6 +52,7 @@ export class Rpc extends EventEmitter {
         this.emit("diagnostic", redact(line));
         return;
       }
+      if (!msg || typeof msg !== "object" || Array.isArray(msg)) return;
       if (msg.id !== undefined && !msg.method) {
         const pending = this.pending.get(msg.id);
         if (pending) {
@@ -68,6 +70,14 @@ export class Rpc extends EventEmitter {
           msg.method === "error" ? "rpc:error" : msg.method,
           msg.params,
         );
+      }
+    };
+    child.stdout.on("data", (chunk: Buffer) => {
+      if (this.dead) return;
+      try {
+        frames.push(chunk, receive);
+      } catch (error) {
+        this.fail(error as Error);
       }
     });
     child.stderr.on("data", (chunk) =>
@@ -89,7 +99,11 @@ export class Rpc extends EventEmitter {
     this.pending.clear();
     if (firstFailure && !this.closing) this.emit("disconnected", error);
   }
-  static async open(cli: string, home: string): Promise<Rpc> {
+  static async open(
+    cli: string,
+    home: string,
+    initializeTimeoutMs = 30000,
+  ): Promise<Rpc> {
     await Rpc.assertHomeIdle(home);
     const nonce = randomUUID();
     const rpc = new Rpc(
@@ -113,14 +127,18 @@ export class Rpc extends EventEmitter {
           path.join(home, "relay-owner.json"),
           JSON.stringify({ pid: rpc.child.pid, nonce }),
         );
-      await rpc.call("initialize", {
-        clientInfo: {
-          name: "codex_relay",
-          title: "Codex Relay",
-          version: "0.1.1",
+      await rpc.call(
+        "initialize",
+        {
+          clientInfo: {
+            name: "codex_relay",
+            title: "Codex Relay",
+            version: "0.2.0",
+          },
+          capabilities: { experimentalApi: true },
         },
-        capabilities: { experimentalApi: true },
-      });
+        initializeTimeoutMs,
+      );
       rpc.notify("initialized", {});
       return rpc;
     } catch (error) {
@@ -161,9 +179,13 @@ export class Rpc extends EventEmitter {
   send(msg: RpcMessage) {
     if (this.dead || this.child.stdin.destroyed)
       throw new Error("RPC connection is closed");
+    if (this.child.stdin.writableLength > 2 * 1024 * 1024)
+      throw new Error("Codex 输入管道繁忙，请等待当前操作结束");
     this.child.stdin.write(JSON.stringify(msg) + "\n");
   }
   call(method: string, params: unknown = {}, timeoutMs = 30_000): Promise<any> {
+    if (this.pending.size >= 128)
+      return Promise.reject(new Error("Codex 待处理请求过多，暂停提交新请求"));
     return new Promise((resolve, reject) => {
       const id = this.sequence++;
       const timer = setTimeout(() => {

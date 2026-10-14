@@ -48,7 +48,11 @@ export async function atomicWrite(
 }
 export class Store {
   data = structuredClone(defaults);
-  private chain: Promise<void> = Promise.resolve();
+  private writing = false;
+  private pending?: {
+    content: string;
+    waiters: { resolve: () => void; reject: (error: unknown) => void }[];
+  };
   constructor(readonly root: string) {}
   async load() {
     try {
@@ -83,10 +87,30 @@ export class Store {
   }
   save(): Promise<void> {
     const content = JSON.stringify(this.data, null, 2);
-    this.chain = this.chain
-      .catch(() => {})
-      .then(() => atomicWrite(path.join(this.root, "state.json"), content));
-    return this.chain;
+    return new Promise<void>((resolve, reject) => {
+      if (this.pending) {
+        this.pending.content = content;
+        this.pending.waiters.push({ resolve, reject });
+      } else this.pending = { content, waiters: [{ resolve, reject }] };
+      if (!this.writing) void this.flush();
+    });
+  }
+  private async flush() {
+    this.writing = true;
+    try {
+      while (this.pending) {
+        const batch = this.pending;
+        this.pending = undefined;
+        try {
+          await atomicWrite(path.join(this.root, "state.json"), batch.content);
+          batch.waiters.forEach((w) => w.resolve());
+        } catch (error) {
+          batch.waiters.forEach((w) => w.reject(error));
+        }
+      }
+    } finally {
+      this.writing = false;
+    }
   }
   jobHome(id: string) {
     return path.join(this.root, "runtime", "jobs", id);

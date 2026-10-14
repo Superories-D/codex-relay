@@ -46,7 +46,12 @@ beforeEach(() => {
     {} as any,
     "/unused",
   );
-  w.cdp = { call: vi.fn(async () => ({})), click: vi.fn(async () => true) };
+  w.cdp = {
+    close: vi.fn(),
+    call: vi.fn(async () => ({})),
+    fill: vi.fn(async () => {}),
+    clickForThread: vi.fn(async () => true),
+  };
   w.turnStarted = true;
   w.quota = vi.fn(async () => ({
     codex: {
@@ -160,5 +165,59 @@ it("does not release credentials while the bootstrap process is unconfirmed", as
   w.cdp.close = vi.fn();
   w.leased = true;
   await expect(w.close()).rejects.toThrow("still running");
+  expect(busy.has("account")).toBe(true);
+});
+
+it("does not click stop when another thread is selected", async () => {
+  w.cdp.clickForThread.mockResolvedValue(false);
+  await expect(w.stop()).rejects.toThrow("当前会话");
+  expect((await w.done).kind).toBe("error");
+  expect(w.cdp.clickForThread).toHaveBeenCalledWith(
+    expect.any(String),
+    "thread",
+    '[data-thread-id="thread"]',
+  );
+});
+it("cancels a pending bootstrap without waiting for its RPC timeout", async () => {
+  w.turnStarted = false;
+  w.bootstrap = { close: vi.fn(async () => {}) };
+  await w.stop();
+  expect(w.bootstrap.close).toHaveBeenCalledOnce();
+  expect(() => w.assertStarting()).toThrow("已请求暂停");
+});
+it("records uncertain submission before sending and includes original goal on recovery", async () => {
+  job.turnId = undefined;
+  w.cdp.clickForThread.mockImplementationOnce(async () => {
+    expect(job.desktopSubmissionPending).toBe(true);
+    throw new Error("lost acknowledgment");
+  });
+  await expect(w.submitPrompt()).rejects.toThrow("lost acknowledgment");
+  expect(job.desktopSubmissionPending).toBe(true);
+  await w.submitPrompt();
+  expect(w.cdp.fill).toHaveBeenLastCalledWith(
+    expect.any(String),
+    expect.stringContaining("原始任务：\noriginal"),
+  );
+  records({ type: "task_started", turn_id: "new-turn" });
+  w.turnStarted = false;
+  await w.readTranscript();
+  expect(job.desktopSubmissionPending).toBe(false);
+  expect(job.turnId).toBe("new-turn");
+});
+it("a refused atomic click clears the unsent marker", async () => {
+  w.cdp.clickForThread.mockResolvedValue(false);
+  await expect(w.submitPrompt()).rejects.toThrow("任务未发送");
+  expect(job.desktopSubmissionPending).toBe(false);
+});
+it("keeps the account lease when the quota probe cannot stop", async () => {
+  w.probe = {
+    close: vi.fn(async () => {
+      throw new Error("probe still running");
+    }),
+  };
+  const busy = new Set(["account"]);
+  w.accounts = { busy };
+  w.leased = true;
+  await expect(w.close()).rejects.toThrow("probe still running");
   expect(busy.has("account")).toBe(true);
 });

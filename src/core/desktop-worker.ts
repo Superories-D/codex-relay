@@ -36,6 +36,8 @@ export class DesktopWorker extends EventEmitter implements Worker {
   private bootstrap?: Rpc;
   private leased = false;
   private launchNonce?: string;
+  private stopRequested = false;
+  private probe?: Rpc;
   private quotaSeen = false;
   private turnStarted = false;
   private lastError?: unknown;
@@ -78,6 +80,31 @@ export class DesktopWorker extends EventEmitter implements Worker {
       { windowsHide: true, timeout: 20_000, maxBuffer: 1024 * 1024 },
     );
   }
+  private stage(text: string) {
+    this.emit("stage", text);
+  }
+  private assertStarting() {
+    if (this.stopRequested || !this.ctx.shouldStart())
+      throw new Error("已请求暂停，停止准备客户端任务");
+  }
+  async inspect() {
+    if (!this.cdp || !this.ctx.job.threadId)
+      throw new Error("客户端尚未连接，请查看当前准备阶段");
+    return this.cdp.inspect(
+      this.store.data.settings.desktop,
+      this.ctx.job.threadId,
+    );
+  }
+  async show() {
+    if (!this.receipt || !this.launchAttempted)
+      throw new Error("受管客户端尚未启动");
+    await this.powershell("desktop-control.ps1", [
+      "-RequestPath",
+      this.receipt,
+      "-Action",
+      "show",
+    ]);
+  }
   private finish(outcome: Outcome) {
     if (!this.terminal) {
       this.terminal = true;
@@ -91,6 +118,8 @@ export class DesktopWorker extends EventEmitter implements Worker {
   }) {
     if (process.platform !== "win32")
       throw new Error("官方客户端模式需要 Windows；CLI 模式可跨平台开发检查");
+    this.assertStarting();
+    this.stage("等待账户凭据独占权");
     const id = this.ctx.job.accountId!;
     const leasedAuth = await this.accounts.acquireDesktop(id);
     this.leased = true;
@@ -104,8 +133,11 @@ export class DesktopWorker extends EventEmitter implements Worker {
       path.join(this.ctx.home, "config.toml"),
       `cli_auth_credentials_store = "file"\n${job.model ? `model = ${JSON.stringify(job.model)}\n` : ""}${job.effort ? `model_reasoning_effort = ${JSON.stringify(job.effort)}\n` : ""}approval_policy = ${JSON.stringify(job.approvalPolicy)}\nsandbox_mode = ${JSON.stringify({ workspaceWrite: "workspace-write", readOnly: "read-only", dangerFullAccess: "danger-full-access" }[job.sandbox])}\n[features]\nsecret_auth_storage = false\n`,
     );
+    this.assertStarting();
+    this.stage("创建或恢复本地会话");
     const bootstrap = await Rpc.open(this.ctx.cli, this.ctx.home);
     this.bootstrap = bootstrap;
+    this.assertStarting();
     const title = `Relay ${job.id.slice(0, 8)} · ${job.title}`;
     try {
       await bootstrap.call("account/login/start", {
@@ -127,6 +159,7 @@ export class DesktopWorker extends EventEmitter implements Worker {
       });
       if (!job.model && typeof response.model === "string")
         job.model = response.model;
+      this.assertStarting();
       await this.ctx.checkpoint(response.thread.id);
       await bootstrap.call("thread/name/set", {
         threadId: job.threadId,
@@ -140,6 +173,19 @@ export class DesktopWorker extends EventEmitter implements Worker {
       this.finish({ kind: "interrupted" });
       return;
     }
+    // Persist the actual model chosen by bootstrap before launching the desktop.
+    const configFile = path.join(this.ctx.home, "config.toml");
+    if (job.model) {
+      const config = await fs.readFile(configFile, "utf8");
+      const modelLine = `model = ${JSON.stringify(job.model)}`;
+      await atomicWrite(
+        configFile,
+        /^model = /m.test(config)
+          ? config.replace(/^model = .*$/m, () => modelLine)
+          : modelLine + "\n" + config,
+      );
+    }
+    this.stage("启动独立的官方客户端");
     this.tail = new TranscriptTail(
       await findTranscript(this.ctx.home, job.threadId!),
     );
@@ -180,6 +226,7 @@ export class DesktopWorker extends EventEmitter implements Worker {
     const deadline = Date.now() + 45_000;
     let connected = false;
     while (Date.now() < deadline && !connected) {
+      this.assertStarting();
       try {
         const receipt = JSON.parse(
           (await fs.readFile(this.receipt, "utf8")).replace(/^\uFEFF/, ""),
@@ -197,9 +244,11 @@ export class DesktopWorker extends EventEmitter implements Worker {
             await fs.readFile(path.join(userData, "DevToolsActivePort"), "utf8")
           ).split("\n")[0],
         );
+        this.stage("连接受管客户端调试端口");
         this.cdp = await Cdp.connect(port);
         connected = true;
       } catch (error) {
+        this.assertStarting();
         if (Date.now() + 1000 >= deadline) throw error;
         await delay(1000);
       }
@@ -213,9 +262,11 @@ export class DesktopWorker extends EventEmitter implements Worker {
       "{threadId}",
       job.threadId!,
     );
+    this.stage("定位任务会话；首次运行请完成客户端引导");
     let selected = false;
     for (let i = 0; i < 20 && !selected; i++) {
-      selected = await this.cdp.selectThread(selector, title);
+      this.assertStarting();
+      selected = await this.cdp.selectThread(selector, title, job.threadId);
       if (!selected) await delay(500);
     }
     if (!selected)
@@ -224,6 +275,7 @@ export class DesktopWorker extends EventEmitter implements Worker {
       );
     let verifiedThread = false;
     for (let i = 0; i < 20 && !verifiedThread; i++) {
+      this.assertStarting();
       verifiedThread = await this.cdp.isThreadSelected(job.threadId!, selector);
       if (!verifiedThread) await delay(500);
     }
@@ -232,23 +284,51 @@ export class DesktopWorker extends EventEmitter implements Worker {
       this.finish({ kind: "interrupted" });
       return;
     }
-    await this.cdp.fill(
-      selectors.editorSelector,
-      job.turnId ? this.ctx.resumePrompt : job.prompt,
-    );
-    if (!this.ctx.shouldStart()) {
-      this.finish({ kind: "interrupted" });
-      return;
-    }
-    if (!(await this.cdp.click(selectors.sendSelector)))
-      throw new Error("未找到唯一的发送按钮，任务未发送");
+    this.stage("核对会话与输入框");
+    await this.submitPrompt();
+    this.stage("已发送，等待本机会话确认");
     this.timer = setInterval(() => void this.readTranscript(), 500);
-    for (let i = 0; i < 40 && !this.turnStarted && !this.terminal; i++)
+    for (let i = 0; i < 40 && !this.turnStarted && !this.terminal; i++) {
+      this.assertStarting();
       await delay(500);
+    }
     if (!this.turnStarted && !this.terminal)
       throw new Error(
         "未在受管目录检测到新 task_started，无法确认客户端目录隔离",
       );
+  }
+  private async submitPrompt() {
+    const job = this.ctx.job;
+    const selectors = this.store.data.settings.desktop;
+    const selector = selectors.threadSelector.replaceAll(
+      "{threadId}",
+      job.threadId!,
+    );
+    const prompt = job.desktopSubmissionPending
+      ? `${this.ctx.resumePrompt}\n上次发送结果未确认，请先检查已有会话和文件，不要重复已经完成的操作。\n原始任务：\n${job.prompt}`
+      : job.turnId
+        ? this.ctx.resumePrompt
+        : job.prompt;
+    this.assertStarting();
+    await this.cdp!.fill(selectors.editorSelector, prompt);
+    this.assertStarting();
+    // Persist before the side effect. A disconnect after click is not proof it was unsent.
+    job.desktopSubmissionPending = true;
+    await this.ctx.checkpoint(job.threadId!);
+    this.assertStarting();
+    const clicked = await this.cdp!.clickForThread(
+      selectors.sendSelector,
+      job.threadId!,
+      selector,
+      { selector: selectors.editorSelector, text: prompt },
+    );
+    if (!clicked) {
+      job.desktopSubmissionPending = false;
+      await this.ctx.checkpoint(job.threadId!);
+      throw new Error(
+        "会话、草稿或发送按钮发生变化，任务未发送；请检查客户端适配",
+      );
+    }
   }
   private async readTranscript() {
     if (this.polling || !this.tail || this.terminal || this.closing) return;
@@ -261,6 +341,7 @@ export class DesktopWorker extends EventEmitter implements Worker {
           expression: "1",
           returnByValue: true,
         });
+        this.emit("heartbeat");
       }
       for (const record of await this.tail.read()) {
         if (record.type !== "event_msg") continue;
@@ -269,6 +350,8 @@ export class DesktopWorker extends EventEmitter implements Worker {
           if (this.turnStarted && p.turn_id !== this.ctx.job.turnId)
             throw new Error("受管会话出现另一轮任务，停止自动操作");
           this.turnStarted = true;
+          this.ctx.job.desktopSubmissionPending = false;
+          this.stage("客户端正在执行；需要审批时请在官方窗口处理");
           if (!p.turn_id) throw new Error("客户端未提供真实 turn_id");
           await this.ctx.checkpoint(this.ctx.job.threadId!, p.turn_id);
         }
@@ -323,6 +406,7 @@ export class DesktopWorker extends EventEmitter implements Worker {
             throw new Error("终止记录缺少 turn_id，无法确认任务结束");
           if (p.turn_id !== this.ctx.job.turnId) continue;
           this.completing = true;
+          this.stage("收到终止记录，正在复查额度与结果");
           this.lastError = p.error ?? this.lastError;
           await delay(750);
           let quotaKnown = false;
@@ -359,6 +443,7 @@ export class DesktopWorker extends EventEmitter implements Worker {
     }
   }
   quota(): Promise<Record<string, Quota>> {
+    if (this.closing) return Promise.reject(new Error("客户端正在关闭"));
     if (!this.probeInFlight)
       this.probeInFlight = this.readQuota().finally(() => {
         this.probeInFlight = undefined;
@@ -378,17 +463,24 @@ export class DesktopWorker extends EventEmitter implements Worker {
       throw new Error("客户端凭据身份变化，停止自动操作");
     const probeHome = path.join(this.ctx.home, "quota-probe");
     await fs.mkdir(probeHome, { recursive: true });
-    const probe = await Rpc.open(this.ctx.cli, probeHome);
+    const probe = await Rpc.open(this.ctx.cli, probeHome, 10000);
+    this.probe = probe;
     try {
       probe.on("request", (m) =>
         probe.reject(m.id, "Desktop owns token refresh"),
       );
-      await probe.call("account/login/start", {
-        type: "chatgptAuthTokens",
-        accessToken: current.tokens.access_token,
-        chatgptAccountId: current.tokens.account_id,
-      });
-      const q = parseQuotas(await probe.call("account/rateLimits/read"));
+      await probe.call(
+        "account/login/start",
+        {
+          type: "chatgptAuthTokens",
+          accessToken: current.tokens.access_token,
+          chatgptAccountId: current.tokens.account_id,
+        },
+        8000,
+      );
+      const q = parseQuotas(
+        await probe.call("account/rateLimits/read", {}, 8000),
+      );
       this.emit("quota", q);
       if (isExhausted(q[this.ctx.job.bucket])) {
         this.quotaSeen = true;
@@ -403,16 +495,38 @@ export class DesktopWorker extends EventEmitter implements Worker {
       return q;
     } finally {
       await probe.close();
+      this.probe = undefined;
     }
   }
   respond() {
     throw new Error("客户端模式请在官方客户端处理审批和输入");
   }
   async stop(): Promise<void> {
+    this.stopRequested = true;
+    if (!this.turnStarted && this.bootstrap) {
+      await this.bootstrap.close();
+      return;
+    }
     if (this.terminal || this.completing || !this.turnStarted) return;
     if (this.stopping) return this.stopping;
     this.stopping = (async () => {
-      await this.cdp?.click(this.store.data.settings.desktop.stopSelector);
+      this.stage("请求停止，等待本轮终止记录");
+      const selectors = this.store.data.settings.desktop;
+      const selector = selectors.threadSelector.replaceAll(
+        "{threadId}",
+        this.ctx.job.threadId!,
+      );
+      if (
+        !this.cdp ||
+        !(await this.cdp.clickForThread(
+          selectors.stopSelector,
+          this.ctx.job.threadId!,
+          selector,
+        ))
+      )
+        throw new Error(
+          "当前会话或停止按钮无法确认，禁止点击其他会话；保留任务等待检查",
+        );
       await Promise.race([
         this.done,
         new Promise<never>((_, reject) => {
@@ -440,6 +554,7 @@ export class DesktopWorker extends EventEmitter implements Worker {
   }
   private async closeOnce() {
     this.closing = true;
+    this.stage("确认客户端退出并保存凭据");
     if (this.timer) clearInterval(this.timer);
     this.cdp?.close();
     if (this.bootstrap) {
@@ -448,6 +563,12 @@ export class DesktopWorker extends EventEmitter implements Worker {
     }
     if (this.leased) await Rpc.assertHomeIdle(this.ctx.home);
     await this.probeInFlight?.catch(() => {});
+    if (this.probe) {
+      await this.probe.close();
+      this.probe = undefined;
+    }
+    if (this.leased)
+      await Rpc.assertHomeIdle(path.join(this.ctx.home, "quota-probe"));
     if (this.receipt && this.launchAttempted) {
       const receipt = JSON.parse(
         (await fs.readFile(this.receipt, "utf8")).replace(/^\uFEFF/, ""),

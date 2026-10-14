@@ -69,16 +69,28 @@ export async function terminateTree(
   if (process.platform === "win32") {
     await new Promise<void>((resolve, reject) => {
       const killer = spawn(
-        "taskkill.exe",
+        path.join(
+          process.env.SystemRoot ?? "C:\\Windows",
+          "System32",
+          "taskkill.exe",
+        ),
         ["/PID", String(proc.pid), "/T", "/F"],
         { windowsHide: true },
       );
-      killer.once("error", reject);
-      killer.once("close", (code) =>
-        code === 0 || proc.exitCode !== null
+      const timeout = setTimeout(() => {
+        killer.kill();
+        reject(new Error("终止进程树超时，保留任务等待检查"));
+      }, 10000);
+      killer.once("error", (error) => {
+        clearTimeout(timeout);
+        reject(error);
+      });
+      killer.once("close", (code) => {
+        clearTimeout(timeout);
+        return code === 0 || proc.exitCode !== null
           ? resolve()
-          : reject(new Error("无法确认受管 Codex 进程树已停止")),
-      );
+          : reject(new Error("无法确认受管 Codex 进程树已停止"));
+      });
     });
   } else proc.kill("SIGTERM");
   if (proc.exitCode === null && proc.signalCode == null)

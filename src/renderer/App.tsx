@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { createRoot } from "react-dom/client";
 import type {
   Account,
@@ -11,6 +11,8 @@ import type {
   WindowQuota,
 } from "../shared/types";
 import "./style.css";
+import { Dialog } from "./Dialog";
+import { operationKey, operationLabel } from "./operations";
 declare global {
   interface Window {
     relay: Bridge;
@@ -101,37 +103,130 @@ function App() {
   const [snapshot, setSnapshot] = useState<Snapshot>();
   const [tab, setTab] = useState("dashboard");
   const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [pending, setPending] = useState<
+    Record<string, { name: string; at: number }>
+  >({});
+  const inFlight = useRef(
+    new Map<string, { name: string; promise: Promise<unknown> }>(),
+  );
+  const [connection, setConnection] = useState<
+    "checking" | "online" | "offline"
+  >("checking");
+  const [notice, setNotice] = useState("");
+  const [confirmAction, setConfirmAction] = useState<{
+    title: string;
+    message: string;
+    run: () => void;
+  }>();
+  const [desktopReport, setDesktopReport] = useState<any>();
+  const [logSearch, setLogSearch] = useState("");
+  const [logLevel, setLogLevel] = useState("all");
+  const [taskFilter, setTaskFilter] = useState("all");
+  const [taskSearch, setTaskSearch] = useState("");
+  const isPending = (name: string, args?: unknown) =>
+    !!pending[operationKey(name, args)];
+  const busy = isPending("job.add") || isPending("account.login");
   const [modal, setModal] = useState<"job" | "login" | null>(null);
   const [selected, setSelected] = useState<string>();
   const [, setClock] = useState(0);
+  useEffect(() => {
+    if (!notice) return;
+    const timer = setTimeout(() => setNotice(""), 6000);
+    return () => clearTimeout(timer);
+  }, [notice]);
   useEffect(() => {
     if (!window.relay) {
       setError("请通过 Codex Relay 桌面程序启动此界面");
       return;
     }
+    let alive = true;
+    let pinging = false;
+    const initialTimer = setTimeout(() => {
+      if (alive) {
+        setConnection("offline");
+        setError("读取状态较慢，请等待后台响应，或重试读取。");
+      }
+    }, 8000);
     void window.relay
       .snapshot()
-      .then(setSnapshot)
-      .catch((e) => setError(String(e)));
-    const off = window.relay.onSnapshot(setSnapshot);
+      .then((value) => {
+        if (alive) {
+          setSnapshot(value);
+          setConnection("online");
+          setError("");
+        }
+      })
+      .catch((e) => {
+        if (alive) {
+          setError(String(e));
+          setConnection("offline");
+        }
+      })
+      .finally(() => clearTimeout(initialTimer));
+    const off = window.relay.onSnapshot((value) => {
+      if (alive) {
+        setSnapshot(value);
+        setConnection("online");
+      }
+    });
+    const ping = () => {
+      if (pinging) return;
+      pinging = true;
+      const timeout = setTimeout(() => {
+        if (alive) setConnection("offline");
+      }, 4000);
+      void window.relay
+        .command("health")
+        .then(
+          () => {
+            if (alive) setConnection("online");
+          },
+          () => {
+            if (alive) setConnection("offline");
+          },
+        )
+        .finally(() => {
+          clearTimeout(timeout);
+          pinging = false;
+        });
+    };
+    const health = setInterval(ping, 5000);
     const t = setInterval(() => setClock((x) => x + 1), 1000);
     return () => {
+      alive = false;
       off();
+      clearTimeout(initialTimer);
+      clearInterval(health);
       clearInterval(t);
     };
   }, []);
-  const cmd = async (name: string, args?: unknown) => {
-    setBusy(true);
-    setError("");
-    try {
-      return await window.relay.command(name, args);
-    } catch (e) {
-      setError(String(e).replace(/^Error: /, ""));
-      throw e;
-    } finally {
-      setBusy(false);
+  const cmd = (name: string, args?: unknown): Promise<unknown> => {
+    const key = operationKey(name, args);
+    const previous = inFlight.current.get(key);
+    if (previous) {
+      if (previous.name === name) return previous.promise;
+      const message = "同一账户正在处理另一项操作，请等待完成后重试。";
+      setError(message);
+      return Promise.reject(new Error(message));
     }
+    setPending((p) => ({ ...p, [key]: { name, at: Date.now() } }));
+    setError("");
+    const operation = Promise.resolve()
+      .then(() => window.relay.command(name, args))
+      .catch((e) => {
+        setError(String(e).replace(/^Error: /, ""));
+        throw e;
+      })
+      .finally(() => {
+        inFlight.current.delete(key);
+        setPending((p) => {
+          const next = { ...p };
+          delete next[key];
+          return next;
+        });
+      });
+    inFlight.current.set(key, { name, promise: operation });
+    return operation;
   };
   const act = (name: string, args?: unknown) =>
     void cmd(name, args).catch(() => {});
@@ -141,12 +236,32 @@ function App() {
         <div className="brand-mark">R</div>
         <h1>Codex Relay</h1>
         <p>{error || "正在读取任务与账户…"}</p>
+        {error && window.relay && (
+          <button
+            onClick={() => {
+              setError("正在重新读取…");
+              void window.relay
+                .snapshot()
+                .then((v) => {
+                  setSnapshot(v);
+                  setError("");
+                })
+                .catch((e) => setError(String(e)));
+            }}
+          >
+            重试读取
+          </button>
+        )}
       </div>
     );
   const live =
     snapshot.jobs.find((j) =>
       ["running", "preparing", "pausing", "rotating"].includes(j.state),
-    ) ?? snapshot.jobs.find((j) => j.state === "waiting");
+    ) ??
+    snapshot.jobs.find((j) => j.state === "waiting") ??
+    snapshot.jobs.find((j) => j.state === "needs_attention") ??
+    snapshot.jobs.find((j) => j.state === "paused") ??
+    snapshot.jobs.find((j) => j.state === "queued");
   const focus =
     snapshot.jobs.find((j) => j.id === selected) ??
     live ??
@@ -157,7 +272,6 @@ function App() {
   ).length;
   const navigate = (key: string) => {
     setTab(key);
-    setError("");
   };
   const swap = (id: string, offset: number) => {
     const ids = snapshot.accounts.map((a) => a.id);
@@ -166,6 +280,99 @@ function App() {
     [ids[i], ids[i + offset]] = [ids[i + offset], ids[i]];
     act("accounts.reorder", ids);
   };
+  const control = (job: Job, action: "pause" | "resume" | "cancel") => {
+    const run = () => act("job.control", { id: job.id, action });
+    if (action === "cancel")
+      setConfirmAction({
+        title: "取消这个任务？",
+        message:
+          "已生成的文件与会话会保留。取消后不再自动恢复，需要继续时请新建任务。",
+        run,
+      });
+    else run();
+  };
+  const jobActions = (job: Job) => (
+    <div className="job-actions row gap wrap">
+      {["paused", "needs_attention"].includes(job.state) && (
+        <button
+          className="primary"
+          disabled={
+            isPending("job.control", { id: job.id }) || connection === "offline"
+          }
+          onClick={() => control(job, "resume")}
+        >
+          {job.recoveryRequired ? "检查并恢复" : "继续任务"}
+        </button>
+      )}
+      {[
+        "queued",
+        "preparing",
+        "running",
+        "waiting",
+        "rotating",
+        "pausing",
+      ].includes(job.state) && (
+        <button
+          disabled={
+            job.state === "pausing" ||
+            isPending("job.control", { id: job.id }) ||
+            connection === "offline"
+          }
+          onClick={() => control(job, "pause")}
+        >
+          {job.state === "pausing" || isPending("job.control", { id: job.id })
+            ? "正在确认停止…"
+            : "暂停任务"}
+        </button>
+      )}
+      {!["completed", "cancelled"].includes(job.state) && (
+        <button
+          className="danger-text"
+          disabled={
+            isPending("job.control", { id: job.id }) || connection === "offline"
+          }
+          onClick={() => control(job, "cancel")}
+        >
+          取消任务
+        </button>
+      )}
+      <button onClick={() => act("job.directory", job.id)}>打开工作目录</button>
+      {job.mode === "desktop" &&
+        ["preparing", "running", "pausing"].includes(job.state) && (
+          <>
+            <button
+              disabled={isPending("job.desktop.show")}
+              onClick={() => act("job.desktop.show", job.id)}
+            >
+              打开受管客户端 ↗
+            </button>
+            <button
+              disabled={isPending("job.desktop.inspect")}
+              onClick={() =>
+                void cmd("job.desktop.inspect", job.id)
+                  .then(setDesktopReport)
+                  .catch(() => {})
+              }
+            >
+              检查适配
+            </button>
+          </>
+        )}
+    </div>
+  );
+  const filteredJobs = snapshot.jobs.filter(
+    (j) =>
+      (taskFilter === "all" ||
+        (taskFilter === "active"
+          ? !["completed", "cancelled"].includes(j.state)
+          : j.state === taskFilter)) &&
+      (j.title + " " + j.cwd).toLowerCase().includes(taskSearch.toLowerCase()),
+  );
+  const filteredLogs = snapshot.logs.filter(
+    (l) =>
+      (logLevel === "all" || l.level === logLevel) &&
+      l.message.toLowerCase().includes(logSearch.toLowerCase()),
+  );
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -203,8 +410,11 @@ function App() {
           ))}
         </nav>
         <div className="sidebar-bottom">
-          <span className="status-dot" /> 本地运行 · 凭据加密保存
-          <small>Windows companion / v0.1.1</small>
+          <span
+            className={`status-dot ${connection === "offline" ? "offline" : ""}`}
+          />{" "}
+          {connection === "offline" ? "后台响应较慢" : "后台已连接"} · 本机加密
+          <small>Windows companion / v0.2.0</small>
           <button className="text-button" onClick={() => act("data.open")}>
             打开数据目录 ↗
           </button>
@@ -232,7 +442,7 @@ function App() {
             </span>
             <button
               className="primary"
-              disabled={busy}
+              disabled={connection === "offline"}
               onClick={() => setModal("job")}
             >
               <Icon name="plus" /> 新建任务
@@ -240,6 +450,31 @@ function App() {
           </div>
         </header>
         <div className="content">
+          {connection === "offline" && (
+            <div className="alert" role="status">
+              后台暂未响应，任务结果仍未知。界面可继续查看；恢复连接前不要重复提交任务。
+            </div>
+          )}
+          {!!Object.keys(pending).length && (
+            <div className="operation-banner" role="status" aria-live="polite">
+              <span className="spinner" />
+              <div>
+                {Object.values(pending)
+                  .map((p) => operationLabel(p.name))
+                  .join(" · ")}
+                <small>
+                  {Object.values(pending).some((p) => Date.now() - p.at > 15000)
+                    ? "操作耗时较长，正在等待进程或服务器确认。你可以切换页面，状态会自动更新。"
+                    : "无需重复点击，可以继续查看其他页面。"}
+                </small>
+              </div>
+            </div>
+          )}
+          {notice && (
+            <div className="success-banner" role="status">
+              {notice}
+            </div>
+          )}
           {error && (
             <div className="alert" role="alert">
               {error}
@@ -358,7 +593,12 @@ function App() {
                               {duration(live.nextWakeAt)}
                             </strong>
                           </>
-                        ) : (
+                        ) : [
+                            "running",
+                            "preparing",
+                            "rotating",
+                            "pausing",
+                          ].includes(live.state) ? (
                           <div className="activity">
                             <i />
                             <i />
@@ -366,16 +606,16 @@ function App() {
                             <i />
                             <i />
                           </div>
+                        ) : (
+                          <Badge state={live.state} />
                         )}
-                        <button
-                          onClick={() =>
-                            act("job.control", { id: live.id, action: "pause" })
-                          }
-                        >
-                          <Icon name="pause" /> 暂停
-                        </button>
                       </div>
                     </div>
+                    <JobStatus job={live} />
+                    {live.lastError && (
+                      <p className="error-message">{live.lastError}</p>
+                    )}
+                    {jobActions(live)}
                     <div className="relay-strip">
                       <span>01 保存会话</span>
                       <i />
@@ -430,6 +670,13 @@ function App() {
                     actions={
                       <button
                         className="text-button"
+                        disabled={
+                          isPending("account.refresh", a.id) ||
+                          (a.id === live?.accountId &&
+                            ["preparing", "running", "pausing"].includes(
+                              live.state,
+                            ))
+                        }
                         onClick={() => act("account.refresh", a.id)}
                       >
                         刷新额度 ↻
@@ -492,6 +739,7 @@ function App() {
                         <label className="toggle">
                           <input
                             type="checkbox"
+                            disabled={isPending("account.update", { id: a.id })}
                             checked={a.enabled}
                             onChange={(e) =>
                               act("account.update", {
@@ -517,14 +765,25 @@ function App() {
                           >
                             →
                           </button>
-                          <button onClick={() => act("account.refresh", a.id)}>
-                            ↻
+                          <button
+                            title="核实额度"
+                            disabled={isPending("account.refresh", a.id)}
+                            onClick={() => act("account.refresh", a.id)}
+                          >
+                            {isPending("account.refresh", a.id)
+                              ? "核实中…"
+                              : "↻"}
                           </button>
                           <button
                             className="danger-text"
+                            disabled={isPending("account.remove", a.id)}
                             onClick={() => {
-                              if (confirm(`删除 ${a.label} 的本地账户记录？`))
-                                act("account.remove", a.id);
+                              setConfirmAction({
+                                title: `删除 ${a.label}？`,
+                                message:
+                                  "仅移除本机保存的账户凭据。正在执行任务的账户需要先暂停。",
+                                run: () => act("account.remove", a.id),
+                              });
                             }}
                           >
                             删除
@@ -545,10 +804,30 @@ function App() {
                   <p>暂停保留上下文。恢复会话时，接着完成原始目标。</p>
                 </div>
               </div>
+              <div className="filter-bar">
+                <input
+                  aria-label="搜索任务"
+                  placeholder="搜索任务名称或工作目录"
+                  value={taskSearch}
+                  onChange={(e) => setTaskSearch(e.target.value)}
+                />
+                <select
+                  aria-label="任务状态筛选"
+                  value={taskFilter}
+                  onChange={(e) => setTaskFilter(e.target.value)}
+                >
+                  <option value="all">全部任务</option>
+                  <option value="active">未完成</option>
+                  <option value="needs_attention">需要处理</option>
+                  <option value="waiting">等待额度</option>
+                  <option value="paused">已暂停</option>
+                  <option value="completed">已完成</option>
+                </select>
+              </div>
               <div className="task-layout">
                 <section className="task-list">
-                  {snapshot.jobs.length ? (
-                    snapshot.jobs
+                  {filteredJobs.length ? (
+                    filteredJobs
                       .slice()
                       .reverse()
                       .map((j) => (
@@ -569,7 +848,9 @@ function App() {
                       ))
                   ) : (
                     <div className="empty">
-                      <h3>还没有任务</h3>
+                      <h3>
+                        {snapshot.jobs.length ? "没有匹配的任务" : "还没有任务"}
+                      </h3>
                       <button onClick={() => setModal("job")}>新建任务</button>
                     </div>
                   )}
@@ -607,49 +888,8 @@ function App() {
                     {focus.lastError && (
                       <p className="error-message">{focus.lastError}</p>
                     )}
-                    <div className="row gap">
-                      {!["completed", "cancelled"].includes(focus.state) && (
-                        <>
-                          <button
-                            className="primary"
-                            disabled={[
-                              "running",
-                              "preparing",
-                              "pausing",
-                            ].includes(focus.state)}
-                            onClick={() =>
-                              act("job.control", {
-                                id: focus.id,
-                                action: "resume",
-                              })
-                            }
-                          >
-                            继续
-                          </button>
-                          <button
-                            onClick={() =>
-                              act("job.control", {
-                                id: focus.id,
-                                action: "pause",
-                              })
-                            }
-                          >
-                            暂停
-                          </button>
-                          <button
-                            className="danger-text"
-                            onClick={() =>
-                              act("job.control", {
-                                id: focus.id,
-                                action: "cancel",
-                              })
-                            }
-                          >
-                            取消任务
-                          </button>
-                        </>
-                      )}
-                    </div>
+                    <JobStatus job={focus} />
+                    {jobActions(focus)}
                     <h3>任务输出</h3>
                     <LogList
                       logs={snapshot.logs
@@ -670,15 +910,30 @@ function App() {
                 </div>
                 <button onClick={() => act("logs.export")}>导出诊断记录</button>
               </div>
-              <LogList logs={snapshot.logs.slice().reverse()} />
+              <div className="filter-bar">
+                <input
+                  aria-label="搜索运行记录"
+                  placeholder="搜索错误、账户或输出内容"
+                  value={logSearch}
+                  onChange={(e) => setLogSearch(e.target.value)}
+                />
+                <select
+                  aria-label="日志级别"
+                  value={logLevel}
+                  onChange={(e) => setLogLevel(e.target.value)}
+                >
+                  <option value="all">全部记录</option>
+                  <option value="error">错误</option>
+                  <option value="warning">警告</option>
+                  <option value="info">状态</option>
+                  <option value="output">任务输出</option>
+                </select>
+              </div>
+              <LogList logs={filteredLogs.slice().reverse()} />
             </>
           )}
           {tab === "settings" && (
-            <SettingsForm
-              key={JSON.stringify(snapshot.settings)}
-              settings={snapshot.settings}
-              command={cmd}
-            />
+            <SettingsForm settings={snapshot.settings} command={cmd} />
           )}
         </div>
         <footer>
@@ -687,43 +942,139 @@ function App() {
         </footer>
       </main>
       {modal && (
-        <div
-          className="modal-shade"
-          onMouseDown={(e) => {
-            if (e.target === e.currentTarget && !busy) setModal(null);
-          }}
+        <Dialog
+          title={modal === "job" ? "新建任务" : "添加账户"}
+          busy={busy}
+          onClose={() => setModal(null)}
         >
-          <section className="modal" role="dialog" aria-modal="true">
+          {error && (
+            <div className="alert" role="alert">
+              {error}
+            </div>
+          )}
+          {modal === "login" ? (
+            <LoginForm
+              busy={busy}
+              submit={async (a) => {
+                await cmd("account.login", a);
+                setModal(null);
+                setNotice("请在官方页面完成登录，账户会自动添加。");
+              }}
+            />
+          ) : (
+            <JobForm
+              accounts={snapshot.accounts}
+              busy={busy}
+              command={cmd}
+              submit={async (a) => {
+                const job = (await cmd("job.add", a)) as Job;
+                setSelected(job.id);
+                setModal(null);
+                setTab("tasks");
+                setNotice("任务已加入队列，可以在这里查看执行进度。");
+              }}
+            />
+          )}
+        </Dialog>
+      )}
+      {confirmAction && (
+        <Dialog
+          title={confirmAction.title}
+          onClose={() => setConfirmAction(undefined)}
+        >
+          <h2>{confirmAction.title}</h2>
+          <p>{confirmAction.message}</p>
+          <div className="row gap">
+            <button onClick={() => setConfirmAction(undefined)}>返回</button>
             <button
-              className="modal-close"
-              aria-label="关闭"
-              onClick={() => setModal(null)}
+              className="primary"
+              onClick={() => {
+                const action = confirmAction;
+                setConfirmAction(undefined);
+                action.run();
+              }}
             >
-              ×
+              确认
             </button>
-            {modal === "login" ? (
-              <LoginForm
-                busy={busy}
-                submit={async (a) => {
-                  await cmd("account.login", a);
-                  setModal(null);
-                }}
-              />
-            ) : (
-              <JobForm
-                accounts={snapshot.accounts}
-                busy={busy}
-                command={cmd}
-                submit={async (a) => {
-                  const job = (await cmd("job.add", a)) as Job;
-                  setSelected(job.id);
-                  setModal(null);
-                  setTab("tasks");
-                }}
-              />
-            )}
-          </section>
-        </div>
+          </div>
+        </Dialog>
+      )}
+      {desktopReport && (
+        <Dialog
+          title="客户端适配检查"
+          onClose={() => setDesktopReport(undefined)}
+        >
+          <p className="eyebrow">DESKTOP CHECK</p>
+          <h2>客户端适配检查</h2>
+          <div className="diagnostic-grid">
+            <p>
+              <b>{desktopReport.connected ? "已连接" : "未连接"}</b>受管调试连接
+            </p>
+            <p>
+              <b>{desktopReport.threadSelected ? "已确认" : "未确认"}</b>
+              当前目标会话
+            </p>
+            {Object.entries(desktopReport.counts ?? {}).map(([key, value]) => (
+              <p key={key}>
+                <b>{String(value)} 个</b>
+                {(
+                  {
+                    editorSelector: "可用输入框",
+                    sendSelector: "可用发送按钮",
+                    stopSelector: "可用停止按钮",
+                    threadSelector: "会话控件",
+                  } as any
+                )[key] ?? key}
+              </p>
+            ))}
+          </div>
+          <p className="notice">
+            运行中发送按钮可能不可用；停止按钮应唯一。检测只读取控件状态，不会发送消息或改写草稿。
+            {desktopReport.hasDraft ? " 当前输入框内有草稿。" : ""}
+          </p>
+          <button
+            onClick={() => {
+              setDesktopReport(undefined);
+              setTab("settings");
+            }}
+          >
+            查看适配设置
+          </button>
+        </Dialog>
+      )}
+    </div>
+  );
+}
+function JobStatus({ job }: { job: Job }) {
+  const explanation: Record<string, string> = {
+    queued: "等待可用账户，系统会自动启动。",
+    waiting: "任务尚未完成。到点会重新核实服务器额度，再接着原会话执行。",
+    paused: "手动暂停，不会自行恢复。点击继续任务后接续原会话。",
+    needs_attention: job.recoveryRequired
+      ? "无法确认旧进程是否停止，整个队列已保护性冻结。确认后点击检查并恢复。"
+      : "请查看错误详情。处理问题后点击继续任务，将沿用原会话。",
+    completed: "本轮正常结束，最终答复与额度检查通过。",
+    cancelled: "任务已取消，已有文件和会话仍保留。",
+    pausing: "正在确认停止并保存状态。此时不会启动另一个任务进程。",
+  };
+  return (
+    <div className="job-status" role="status">
+      <b>
+        {["preparing", "running", "rotating"].includes(job.state)
+          ? (job.stage ?? states[job.state])
+          : states[job.state]}
+      </b>
+      <p>
+        {explanation[job.state] ??
+          (job.mode === "desktop"
+            ? "需要审批或输入时，请打开受管客户端处理。"
+            : "正在执行原始任务，长时间思考不等于卡死。")}
+      </p>
+      {job.lastHeartbeatAt && (
+        <small>最近连接确认：{time(job.lastHeartbeatAt)}</small>
+      )}
+      {job.lastActivityAt && (
+        <small>最近输出：{time(job.lastActivityAt)}</small>
       )}
     </div>
   );
@@ -801,10 +1152,11 @@ function AccountCard({
   );
 }
 function LogList({ logs }: { logs: Snapshot["logs"] }) {
+  const [limit, setLimit] = useState(100);
   return (
     <div className="log-list">
       {logs.length ? (
-        logs.map((l) => (
+        logs.slice(0, limit).map((l) => (
           <div className={`log-row ${l.level}`} key={l.id}>
             <time>
               {new Date(l.at).toLocaleTimeString("zh-CN", { hour12: false })}
@@ -815,6 +1167,11 @@ function LogList({ logs }: { logs: Snapshot["logs"] }) {
         ))
       ) : (
         <div className="empty compact">新的运行记录会出现在这里</div>
+      )}
+      {logs.length > limit && (
+        <button className="full" onClick={() => setLimit((n) => n + 100)}>
+          再显示 100 条（共 {logs.length} 条）
+        </button>
       )}
     </div>
   );
@@ -896,7 +1253,7 @@ function JobForm({
   });
   const [models, setModels] = useState<any[]>([]);
   const patch = (key: keyof NewJob, value: string) =>
-    setForm({ ...form, [key]: value });
+    setForm((previous) => ({ ...previous, [key]: value }));
   return (
     <form
       onSubmit={(e) => {
@@ -1151,14 +1508,22 @@ function SettingsForm({
 }) {
   const [form, setForm] = useState(settings);
   const [saved, setSaved] = useState(false);
+  const [detecting, setDetecting] = useState(false);
+  const [installations, setInstallations] = useState<any[]>([]);
+  const [detected, setDetected] = useState(false);
+  const [saving, setSaving] = useState(false);
   return (
     <form
+      onChangeCapture={() => setSaved(false)}
       className="settings-form"
       onSubmit={(e) => {
         e.preventDefault();
+        if (saving) return;
+        setSaving(true);
         void command("settings.save", form)
           .then(() => setSaved(true))
-          .catch(() => {});
+          .catch(() => {})
+          .finally(() => setSaving(false));
       }}
     >
       <div className="page-title">
@@ -1166,10 +1531,60 @@ function SettingsForm({
           <h1>设置</h1>
           <p>设置本机 Codex 路径与轮换节奏。</p>
         </div>
-        <button className="primary">{saved ? "已保存 ✓" : "保存设置"}</button>
+        <button className="primary" disabled={saving}>
+          {saving ? "正在保存…" : saved ? "已保存 ✓" : "保存设置"}
+        </button>
       </div>
       <section className="settings-section">
         <h2>本机程序</h2>
+        <button
+          type="button"
+          disabled={detecting}
+          onClick={() => {
+            setDetecting(true);
+            void command("desktop.detect")
+              .then((r: any) => {
+                setDetected(true);
+                setInstallations(r.candidates ?? []);
+                if (r.candidates?.length === 1)
+                  setForm((p) => ({
+                    ...p,
+                    desktopPath: r.candidates[0].executable,
+                  }));
+                setSaved(false);
+              })
+              .catch(() => {})
+              .finally(() => setDetecting(false));
+          }}
+        >
+          {detecting ? "正在检测…" : "自动检测官方客户端"}
+        </button>
+        {detected && (
+          <p className="notice">
+            {installations.length
+              ? `发现 ${installations.length} 个安装；选择后保存设置。`
+              : "未找到已知安装位置，请手动选择 Codex.exe。"}
+          </p>
+        )}
+        {installations.length > 1 && (
+          <label>
+            检测到的安装
+            <select
+              aria-label="选择客户端安装"
+              value={form.desktopPath}
+              onChange={(e) =>
+                setForm((p) => ({ ...p, desktopPath: e.target.value }))
+              }
+            >
+              <option value="">选择一个安装</option>
+              {installations.map((i) => (
+                <option key={i.executable} value={i.executable}>
+                  {i.name} · {i.version} · {i.source}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <label>
           Codex CLI
           <div className="input-button">
@@ -1182,7 +1597,7 @@ function SettingsForm({
               onClick={() =>
                 void command("choose.executable")
                   .then((v) => {
-                    if (v) setForm({ ...form, cliPath: String(v) });
+                    if (v) setForm((p) => ({ ...p, cliPath: String(v) }));
                   })
                   .catch(() => {})
               }
@@ -1207,7 +1622,7 @@ function SettingsForm({
               onClick={() =>
                 void command("choose.executable")
                   .then((v) => {
-                    if (v) setForm({ ...form, desktopPath: String(v) });
+                    if (v) setForm((p) => ({ ...p, desktopPath: String(v) }));
                   })
                   .catch(() => {})
               }
@@ -1260,7 +1675,8 @@ function SettingsForm({
       <section className="settings-section">
         <h2>官方客户端适配 · 实验</h2>
         <p>
-          客户端界面随版本变化。只有唯一匹配到控件才会执行操作；无法确认时保留任务供检查。
+          先检测安装并保存设置。运行 Desktop
+          任务后，可在任务详情打开受管窗口或检查会话与控件。首次启动若出现引导或权限提示，请在官方窗口完成。以下选择器仅在默认适配失败时调整。
         </p>
         {Object.entries(form.desktop)
           .filter(([key]) => key !== "projectSelector")

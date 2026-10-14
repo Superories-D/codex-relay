@@ -321,3 +321,21 @@ it("shutdown waits for completion persistence without trying to pause a terminal
   expect(await result).toBe("ok");
   expect(job.state).toBe("completed");
 });
+
+it("does not probe an unavailable account before dispatching a known available one", async () => {
+  store.data.accounts[0].status = "offline";
+  store.data.accounts[0].quotas = {};
+  const inspect = vi.mocked(scheduler.accounts.inspect);
+  const job = await scheduler.add({ ...input, cwd: root });
+  await until(() => workers[0]?.started);
+  expect(job.accountId).toBe("b");
+  expect(inspect.mock.calls.every(([id]) => id === "b")).toBe(true);
+});
+it("limits idle quota refresh to one account per dispatch cycle", async () => {
+  const inspect = vi.mocked(scheduler.accounts.inspect);
+  await (scheduler as any).tick();
+  expect(inspect).toHaveBeenCalledTimes(1);
+  await (scheduler as any).tick();
+  expect(inspect).toHaveBeenCalledTimes(2);
+  expect(inspect.mock.calls.map(([id]) => id)).toEqual(["a", "b"]);
+});
