@@ -22,4 +22,4 @@ Git 认证使用你本机的凭据管理器；不要把 token 写进远程 URL�
 
 ## 验证范围
 
-本地严格类型检查、构建、146 项测试、实际 Chromium 控件与 UI 回归通过。当前环境为 Linux，没有运行真实 Windows 安装包，没有进行真实账户额度耗尽、DPAPI、官方 Desktop 全链路验收；Desktop 保持实验适配标识。详细结果见 [VALIDATION.md](VALIDATION.md)，真机步骤见 [WINDOWS-ACCEPTANCE.md](WINDOWS-ACCEPTANCE.md)。
+本地严格类型检查、构建、147 项测试、实际 Chromium 控件与 UI 回归通过。当前环境为 Linux，没有运行真实 Windows 安装包，没有进行真实账户额度耗尽、DPAPI、官方 Desktop 全链路验收；Desktop 保持实验适配标识。详细结果见 [VALIDATION.md](VALIDATION.md)，真机步骤见 [WINDOWS-ACCEPTANCE.md](WINDOWS-ACCEPTANCE.md)。

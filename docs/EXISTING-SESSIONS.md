@@ -11,7 +11,7 @@
 | Windows PowerShell / cmd / Windows Terminal 中的官方 Codex CLI | 读取本机 rollout、关联原生 Codex 进程；交接后可用 Relay CLI 或 Desktop 继续。终端宿主保留。 |
 | Windows 官方 Codex 客户端普通窗口 | 读取本机主会话并关联 Codex 实例；交接会关闭整个选中实例，包含其中其他聊天和子进程。继续时使用新的受管 CLI 或独立 Desktop 实例。 |
 | 已退出的本地 CLI / Desktop 会话 | 没有仍在运行且归属不明的 Codex 实例时可选择立即交接，恢复原历史。 |
-| WSL、SSH、云端 Codex、IDE 扩展、第三方客户端 | 本版不保证接管。WSL/远程工作路径、子代理、外部历史依赖和动态工具会话会被拒绝或提示不支持。 |
+| WSL、SSH、云端 Codex、IDE 扩展、第三方客户端 | 本版不保证接管。WSL/远程/UNC 工作路径、子代理、外部历史依赖和动态工具会话会被拒绝或提示不支持。 |
 
 不沿用原进程的 stdio、不广播 Ctrl+C、不自动改写原 `.codex/auth.json`。自定义 MCP、插件、外部工作树或应用状态不会随一个 rollout 自动迁移；涉及这些能力的任务需要先核实受管运行环境。
 

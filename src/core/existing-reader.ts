@@ -241,6 +241,17 @@ async function readFold(file: string, stat: Stats) {
   while (reads.size > 64) reads.delete(reads.keys().next().value!);
   return result;
 }
+export function isLocalWorkingDirectory(
+  cwd: unknown,
+  platform = process.platform,
+): cwd is string {
+  if (typeof cwd !== "string") return false;
+  // win32.isAbsolute also accepts /home/... and UNC paths; those are not a native
+  // drive-qualified project and must never be reinterpreted as C:\home\... .
+  return platform === "win32"
+    ? /^[a-z]:[\\/]/i.test(cwd)
+    : path.isAbsolute(cwd);
+}
 export async function readSession(
   home: string,
   file: string,
@@ -280,7 +291,7 @@ export async function readSession(
     issue = "此会话依赖其他线程或应用专用工具，当前不能独立交接";
   if (source === "subagent") issue = "请选择主会话，不直接接管子代理";
   const cwd = state.cwd || p.cwd;
-  if (typeof cwd !== "string" || !path.isAbsolute(cwd))
+  if (!isLocalWorkingDirectory(cwd))
     issue = "工作目录不是本机绝对路径（不支持 WSL/远程会话）";
   const candidate: ExistingCandidate = {
     id,

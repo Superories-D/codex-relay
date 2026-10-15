@@ -10,6 +10,7 @@ import {
   copyStoppedSession,
   foldSession,
   fileStamp,
+  isLocalWorkingDirectory,
   readSession,
   scanSessions,
 } from "../src/core/existing-reader";
@@ -143,6 +144,20 @@ afterEach(async () => {
     await fs.rm(root, { recursive: true, force: true });
 });
 describe("existing session parsing", () => {
+  it("does not reinterpret WSL or network project paths as Windows local directories", () => {
+    expect(isLocalWorkingDirectory("C:\\Projects\\中文", "win32")).toBe(true);
+    expect(isLocalWorkingDirectory("D:/Project", "win32")).toBe(true);
+    for (const cwd of [
+      "/home/me/project",
+      "\\home\\project",
+      "C:relative",
+      "\\\\wsl.localhost\\Ubuntu\\home\\me",
+      "\\\\server\\share",
+    ]) {
+      expect(isLocalWorkingDirectory(cwd, "win32")).toBe(false);
+    }
+  });
+
   it("does not let old quota errors or quoted task text poison the latest turn", () => {
     const state = foldSession([
       event("task_started", { turn_id: "old" }),

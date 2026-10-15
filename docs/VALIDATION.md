@@ -9,7 +9,7 @@
 - 实际构建后的接入弹窗在 Chromium 检查扫描、候选选择、PID/路径范围、未授权按钮禁用、检查失败后重新选择、提交参数、监控状态及 860px 布局。没有调用 Windows 进程终止，也没有真实 Codex 账户参与。
 
 - TypeScript strict 类型检查和 esbuild 主进程/preload/React 打包。
-- Vitest **146 项、18 个文件全部通过**，涵盖额度窗口与重置时间、轮换与等待、手动暂停优先级、进程终止与异常恢复、凭据串行访问与失败保留、断连、CLI 命令认证以及 JSONL/UTF-8 边界。本版新增导入预览/部分失败/退出等待、完成标记/补完上限、运行中账户保护和环境诊断。详细证据见 [参考审查](REFERENCE-REVIEW.md)、[DEBUG-REVIEW.md](DEBUG-REVIEW.md) 和 [DEBUG-V020.md](DEBUG-V020.md)。
+- Vitest **147 项、18 个文件全部通过**，涵盖额度窗口与重置时间、轮换与等待、手动暂停优先级、进程终止与异常恢复、凭据串行访问与失败保留、断连、CLI 命令认证以及 JSONL/UTF-8 边界。本版新增导入预览/部分失败/退出等待、完成标记/补完上限、运行中账户保护和环境诊断。详细证据见 [参考审查](REFERENCE-REVIEW.md)、[DEBUG-REVIEW.md](DEBUG-REVIEW.md) 和 [DEBUG-V020.md](DEBUG-V020.md)。
 - 启动真正的 JSONL 测试子进程，运行实际 Rpc/CliWorker/Scheduler：额度错误后伪完成不终止任务，换号后续接相同线程，退出后释放占用记录。
 - 启动真实 CLI 查看器与本地命令服务器，检查认证、状态通知、监听清理和失联非零退出。Linux 环境 AF_UNIX 返回 EPERM，测试专用 TCP 适配器验证协议；未把此项当作 Windows 命名管道实测。
 - 真实 Chromium 上执行实际 Cdp 代码：线程完整路由识别（忽略查询参数中的引用 ID）、发送/停止前原子校验、用户草稿保护、重复填入幂等、textarea/contenteditable 中文多行输入、禁用按钮、多编辑器/页面拒绝。无真实账户与官方客户端参与。
