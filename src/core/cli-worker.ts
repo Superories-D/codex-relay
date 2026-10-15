@@ -81,7 +81,12 @@ export class CliWorker extends EventEmitter implements Worker {
       ...(this.ctx.job.model ? { model: this.ctx.job.model } : {}),
     };
     this.emit("stage", "创建或恢复本地会话");
-    const result = await prepareThread(this.rpc, this.ctx.job.threadId, config);
+    const result = await prepareThread(
+      this.rpc,
+      this.ctx.job.threadId,
+      config,
+      this.ctx.job.importedRollout,
+    );
     this.threadId = result.thread.id;
     if (!this.ctx.job.model && typeof result.model === "string")
       this.ctx.job.model = result.model;
@@ -98,7 +103,7 @@ export class CliWorker extends EventEmitter implements Worker {
           {
             type: "text",
             text_elements: [],
-            text: taskPrompt(this.ctx),
+            text: taskPrompt(this.ctx, !!this.ctx.job.desktopSubmissionPending),
           },
         ],
         ...(this.ctx.job.effort ? { effort: this.ctx.job.effort } : {}),

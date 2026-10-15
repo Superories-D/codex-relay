@@ -13,6 +13,7 @@ import type {
 import "./style.css";
 import { RelayFlow } from "./RelayFlow";
 import { ImportDialog } from "./ImportDialog";
+import { ExistingDialog } from "./ExistingDialog";
 import type { ImportPreview } from "../core/account-import";
 import type { Diagnostic } from "../core/diagnostics";
 import { Dialog } from "./Dialog";
@@ -34,6 +35,7 @@ const states: Record<string, string> = {
   pausing: "正在暂停",
   rotating: "正在切换",
   waiting: "等待额度恢复",
+  watching: "监控原会话",
   paused: "已暂停",
   needs_attention: "需要处理",
   completed: "已完成",
@@ -124,6 +126,7 @@ function App() {
   }>();
   const [importPreview, setImportPreview] = useState<ImportPreview>();
   const [desktopReport, setDesktopReport] = useState<any>();
+  const [showExisting, setShowExisting] = useState(false);
   const [logSearch, setLogSearch] = useState("");
   const [logLevel, setLogLevel] = useState("all");
   const [taskFilter, setTaskFilter] = useState("all");
@@ -268,7 +271,9 @@ function App() {
     );
   const live =
     snapshot.jobs.find((j) =>
-      ["running", "preparing", "pausing", "rotating"].includes(j.state),
+      ["running", "preparing", "pausing", "rotating", "watching"].includes(
+        j.state,
+      ),
     ) ??
     snapshot.jobs.find((j) => j.state === "waiting") ??
     snapshot.jobs.find((j) => j.state === "needs_attention") ??
@@ -296,15 +301,35 @@ function App() {
     const run = () => act("job.control", { id: job.id, action });
     if (action === "cancel")
       setConfirmAction({
-        title: "取消这个任务？",
+        title:
+          job.existing && job.existing.phase !== "managed"
+            ? "取消接入？"
+            : "取消这个任务？",
         message:
-          "已生成的文件与会话会保留。取消后不再自动恢复，需要继续时请新建任务。",
+          job.existing && job.existing.phase !== "managed"
+            ? "取消 Relay 的接入监控，原窗口保持原状态。如果交接已经开始，需先完成停止确认。"
+            : "已生成的文件与会话会保留。取消后不再自动恢复，需要继续时请新建任务。",
         run,
       });
     else run();
   };
   const jobActions = (job: Job) => (
     <div className="job-actions row gap wrap">
+      {job.existing &&
+        job.existing.phase !== "managed" &&
+        !["completed", "cancelled"].includes(job.state) && (
+          <button
+            className="primary"
+            disabled={
+              job.state === "pausing" ||
+              isPending("session.handoff", job.id) ||
+              connection === "offline"
+            }
+            onClick={() => act("session.handoff", job.id)}
+          >
+            立即交接并继续
+          </button>
+        )}
       {["paused", "needs_attention"].includes(job.state) && (
         <button
           className="primary"
@@ -313,7 +338,11 @@ function App() {
           }
           onClick={() => control(job, "resume")}
         >
-          {job.recoveryRequired ? "检查并恢复" : "继续任务"}
+          {job.existing && job.existing.phase !== "managed"
+            ? "继续监控 / 恢复检查"
+            : job.recoveryRequired
+              ? "检查并恢复"
+              : "继续任务"}
         </button>
       )}
       {[
@@ -323,6 +352,7 @@ function App() {
         "waiting",
         "rotating",
         "pausing",
+        "watching",
       ].includes(job.state) && (
         <button
           disabled={
@@ -345,7 +375,9 @@ function App() {
           }
           onClick={() => control(job, "cancel")}
         >
-          取消任务
+          {job.existing && job.existing.phase !== "managed"
+            ? "取消接入"
+            : "取消任务"}
         </button>
       )}
       <button onClick={() => act("job.directory", job.id)}>打开工作目录</button>
@@ -426,7 +458,7 @@ function App() {
             className={`status-dot ${connection === "offline" ? "offline" : ""}`}
           />{" "}
           {connection === "offline" ? "后台响应较慢" : "后台已连接"} · 本机加密
-          <small>Windows companion / v0.3.0</small>
+          <small>Windows companion / v0.4.0</small>
           <button className="text-button" onClick={() => act("data.open")}>
             打开数据目录 ↗
           </button>
@@ -452,6 +484,12 @@ function App() {
             <span className="pill">
               {snapshot.platform === "win32" ? "Windows" : "开发环境"}
             </span>
+            <button
+              disabled={connection === "offline"}
+              onClick={() => setShowExisting(true)}
+            >
+              接入已有会话
+            </button>
             <button
               className="primary"
               disabled={connection === "offline"}
@@ -594,7 +632,11 @@ function App() {
                               : "官方客户端 · 实验适配"}
                           </span>
                           <span>{live.model || "账户默认模型"}</span>
-                          <span>{activeAccount?.label ?? "等待账户"}</span>
+                          <span>
+                            {live.existing && live.existing.phase !== "managed"
+                              ? "原窗口账户"
+                              : (activeAccount?.label ?? "等待账户")}
+                          </span>
                         </div>
                       </div>
                       <div className="work-actions">
@@ -961,7 +1003,10 @@ function App() {
         </div>
         <footer>
           <span>任务与账户仅在本机管理</span>
-          <span>关闭窗口后留在托盘运行 · 从托盘退出会先暂停任务</span>
+          <span>
+            关闭窗口后留在托盘 ·
+            退出会暂停受管任务与监控，尚未交接的原窗口继续运行
+          </span>
         </footer>
       </main>
       {modal && (
@@ -999,6 +1044,18 @@ function App() {
             />
           )}
         </Dialog>
+      )}
+      {showExisting && (
+        <ExistingDialog
+          command={cmd}
+          close={() => setShowExisting(false)}
+          attached={(job) => {
+            setShowExisting(false);
+            setSelected(job.id);
+            setTab("tasks");
+            setNotice("已接入原会话，可在任务详情查看监控和交接进度。");
+          }}
+        />
       )}
       {importPreview && (
         <ImportDialog
@@ -1086,12 +1143,20 @@ function App() {
 }
 function JobStatus({ job }: { job: Job }) {
   const explanation: Record<string, string> = {
+    watching:
+      "原窗口 / 终端继续运行，审批在那里处理。额度中断后自动交接，保留原会话。",
     queued: "等待可用账户，系统会自动启动。",
     waiting: "任务尚未完成。到点会重新核实服务器额度，再接着原会话执行。",
-    paused: "手动暂停，不会自行恢复。点击继续任务后接续原会话。",
-    needs_attention: job.recoveryRequired
-      ? "无法确认旧进程是否停止，整个队列已保护性冻结。确认后点击检查并恢复。"
-      : "请查看错误详情。处理问题后点击继续任务，将沿用原会话。",
+    paused:
+      job.existing && job.existing.phase !== "managed"
+        ? "接入监控已暂停；原窗口可能仍在运行。可以继续监控或立即交接。"
+        : "手动暂停，不会自行恢复。点击继续任务后接续原会话。",
+    needs_attention:
+      job.existing && job.existing.phase !== "managed"
+        ? "请核查原窗口和错误详情，再选择继续监控或立即交接；其他队列任务暂不启动。"
+        : job.recoveryRequired
+          ? "无法确认旧进程是否停止，整个队列已保护性冻结。确认后点击检查并恢复。"
+          : "请查看错误详情。处理问题后点击继续任务，将沿用原会话。",
     completed: "本轮正常结束，最终答复与额度检查通过。",
     cancelled: "任务已取消，已有文件和会话仍保留。",
     pausing: "正在确认停止并保存状态。此时不会启动另一个任务进程。",
@@ -1099,7 +1164,7 @@ function JobStatus({ job }: { job: Job }) {
   return (
     <div className="job-status" role="status">
       <b>
-        {["preparing", "running", "rotating"].includes(job.state)
+        {["preparing", "running", "rotating", "watching"].includes(job.state)
           ? (job.stage ?? states[job.state])
           : states[job.state]}
       </b>

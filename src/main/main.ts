@@ -19,6 +19,10 @@ import { promisify } from "node:util";
 import { Store } from "../core/store";
 import { checkEnvironment } from "../core/diagnostics";
 import { AccountImport } from "../core/account-import";
+import {
+  ExistingSessions,
+  WindowsExistingDriver,
+} from "../core/existing-sessions";
 import os from "node:os";
 import { Accounts } from "../core/accounts";
 import { Scheduler } from "../core/scheduler";
@@ -34,6 +38,8 @@ import {
   controlSchema,
   loginSchema,
   accountSchema,
+  sessionScanSchema,
+  sessionAttachSchema,
 } from "./validation";
 import { z } from "zod";
 app.setName("Codex Relay");
@@ -95,6 +101,12 @@ async function boot() {
       desktop: (ctx) => new DesktopWorker(ctx, store, accounts, scripts),
     },
     (job) => recoverJob(job, store, accounts, scripts),
+    (job) => existing.assertManagedSafe(job),
+  );
+  const existing = new ExistingSessions(
+    store,
+    scheduler,
+    new WindowsExistingDriver(path.join(dataRoot, "session-requests"), scripts),
   );
   for (const j of store.data.jobs)
     if (j.recoveryRequired && j.accountId && j.mode === "desktop")
@@ -104,7 +116,9 @@ async function boot() {
     if (window && !window.isDestroyed())
       window.webContents.send("relay:snapshot", snapshot);
     const running = store.data.jobs.some((j) =>
-      ["preparing", "running", "pausing", "rotating"].includes(j.state),
+      ["preparing", "running", "pausing", "rotating", "watching"].includes(
+        j.state,
+      ),
     );
     if (running && sleepBlocker === undefined)
       sleepBlocker = powerSaveBlocker.start("prevent-app-suspension");
@@ -116,6 +130,16 @@ async function boot() {
   const command = async (name: string, args?: unknown): Promise<unknown> => {
     if (quitting) throw new Error("正在保存并退出");
     switch (name) {
+      case "session.scan": {
+        const input = sessionScanSchema.parse(args ?? {});
+        return existing.scan(input.home, input.threadId);
+      }
+      case "session.inspect":
+        return existing.inspect(idSchema.parse(args));
+      case "session.attach":
+        return existing.attach(sessionAttachSchema.parse(args));
+      case "session.handoff":
+        return existing.control(idSchema.parse(args), "handoff");
       case "environment.check":
         return checkEnvironment(store.data.settings.cliPath);
       case "health":
@@ -160,6 +184,9 @@ async function boot() {
         return scheduler.add(newJobSchema.parse(args));
       case "job.control": {
         const a = controlSchema.parse(args);
+        const job = store.data.jobs.find((j) => j.id === a.id);
+        if (job?.existing && job.existing.phase !== "managed")
+          return existing.control(a.id, a.action);
         return scheduler.control(a.id, a.action);
       }
       case "account.login": {
@@ -406,7 +433,7 @@ async function boot() {
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: "打开 Codex Relay", click: () => window?.show() },
-      { label: "暂停任务并退出", click: () => app.quit() },
+      { label: "暂停受管任务 / 监控并退出", click: () => app.quit() },
     ]),
   );
   tray.on("double-click", () => window?.show());
@@ -414,13 +441,16 @@ async function boot() {
     if (!quitting) {
       event.preventDefault();
       quitting = true;
-      void Promise.all([importer.drain(), scheduler.shutdown()])
+      void existing
+        .shutdown()
+        .then(() => Promise.all([importer.drain(), scheduler.shutdown()]))
         .then(() => {
           server.close();
           app.quit();
         })
         .catch((error) => {
           quitting = false;
+          existing.start();
           dialog.showErrorBox("任务尚未安全停止", redact(error));
           window?.show();
         });
@@ -433,6 +463,7 @@ async function boot() {
     scheduler.changed();
   });
   scheduler.start();
+  existing.start();
 }
 async function openAuth(value: string) {
   const url = new URL(value);

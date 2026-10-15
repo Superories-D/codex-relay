@@ -92,6 +92,10 @@ export async function startCommandServer(
                 "job.add",
                 "job.control",
                 "approval.respond",
+                "session.scan",
+                "session.inspect",
+                "session.attach",
+                "session.handoff",
               ].includes(msg.command)
             )
               throw new Error("CLI command not allowed");

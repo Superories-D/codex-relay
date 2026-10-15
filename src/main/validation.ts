@@ -54,6 +54,17 @@ export const settingsSchema = z
   })
   .strict();
 export const idSchema = z.string().uuid();
+export const sessionScanSchema = z
+  .object({ home: absolute.optional(), threadId: idSchema.optional() })
+  .strict();
+export const sessionAttachSchema = z
+  .object({
+    id: idSchema,
+    strategy: z.enum(["quota", "now"]),
+    mode: z.enum(["cli", "desktop"]),
+    allowStop: z.boolean(),
+  })
+  .strict();
 export const controlSchema = z
   .object({ id: idSchema, action: z.enum(["pause", "resume", "cancel"]) })
   .strict();

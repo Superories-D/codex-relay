@@ -5,6 +5,7 @@ export type JobState =
   | "pausing"
   | "rotating"
   | "waiting"
+  | "watching"
   | "paused"
   | "needs_attention"
   | "completed"
@@ -56,6 +57,8 @@ export interface Job {
   completionMarker?: string;
   maxCompletionRetries?: number;
   completionRetries?: number;
+  importedRollout?: string;
+  existing?: ExistingLink;
   nextWakeAt?: number;
   rotations: number;
   createdAt: number;
@@ -63,6 +66,44 @@ export interface Job {
   lastError?: string;
   approvalPolicy: "on-request" | "never";
   sandbox: "workspaceWrite" | "readOnly" | "dangerFullAccess";
+}
+export interface ProcessIdentity {
+  pid: number;
+  startedAt: string;
+  executable: string;
+  title: string;
+}
+export interface ExistingLink {
+  sourceHome: string;
+  sourceFile: string;
+  phase: "watching" | "handoff" | "managed";
+  strategy: "quota" | "now";
+  processes: ProcessIdentity[];
+  allowStop: boolean;
+  attachedAt: number;
+  sourceStamp?: string;
+  lastObservedTurn?: string;
+  completionEligible?: boolean;
+  stopAttempted?: boolean;
+  stopConfirmed?: boolean;
+}
+export interface ExistingCandidate {
+  id: string;
+  threadId: string;
+  title: string;
+  cwd: string;
+  model: string;
+  source: string;
+  updatedAt: number;
+  status: "running" | "quota" | "completed" | "interrupted" | "unknown";
+  preview: string;
+  issue?: string;
+}
+export interface ExistingInspection {
+  candidate: ExistingCandidate;
+  processes: ProcessIdentity[];
+  canHandoff: boolean;
+  issue?: string;
 }
 export interface Approval {
   id: string;

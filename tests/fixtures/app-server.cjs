@@ -30,6 +30,14 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
         },
       };
     if (m.method === "thread/start" || m.method === "thread/resume") {
+      if (m.method === "thread/resume" && p.path) {
+        const meta = JSON.parse(fs.readFileSync(p.path, "utf8").split("\n")[0]);
+        if (meta.type !== "session_meta" || meta.payload.id !== p.threadId)
+          throw Error("Imported history mismatch");
+        thread = meta.payload.id;
+        fs.writeFileSync(saved, JSON.stringify({ id: thread }));
+      } else if (m.method === "thread/resume" && fs.existsSync(saved))
+        thread = JSON.parse(fs.readFileSync(saved, "utf8")).id;
       if (
         !["workspace-write", "read-only", "danger-full-access"].includes(
           p.sandbox,

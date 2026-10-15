@@ -158,6 +158,54 @@ let activeBrowser, activeServer;
       command: async (name, args) => {
         window.qa.calls.push({ name, args });
         if (name === "health") return {};
+        const candidate = {
+          id: "existing-preview",
+          threadId: "019d9f29-ace0-7000-8123-aaaaaaaaaaaa",
+          title: "继续原窗口中的账户管理任务",
+          cwd: "C:\\Projects\\workspace",
+          source: "cli",
+          status: "running",
+          updatedAt: now,
+          model: "",
+          preview: "完成项目",
+        };
+        if (name === "session.scan")
+          return {
+            home: "C:\\Users\\Developer\\.codex",
+            candidates: [candidate],
+            warnings: [],
+          };
+        if (name === "session.inspect")
+          return {
+            candidate,
+            processes: [
+              {
+                pid: 1234,
+                startedAt: "638000000000000000",
+                executable: "C:\\Apps\\Codex.exe",
+                title: "Codex · 现有项目",
+              },
+            ],
+            canHandoff: true,
+          };
+        if (name === "session.attach") {
+          if (window.qa.attachFailure) {
+            window.qa.attachFailure = false;
+            throw new Error("合成错误：进程列表已改变，请重新检查");
+          }
+          const job = {
+            ...snapshot.jobs[0],
+            id: "adopted",
+            title: candidate.title,
+            state: "watching",
+            mode: args.mode,
+            existing: { phase: "watching", strategy: args.strategy },
+          };
+          snapshot.jobs.push(job);
+          window.qa.push();
+          return job;
+        }
+
         if (name === "environment.check")
           return {
             checks: [
@@ -379,6 +427,70 @@ let activeBrowser, activeServer;
   await page.getByRole("button", { name: "工作台", exact: true }).click();
   await page.getByRole("button", { name: "继续任务", exact: true }).waitFor();
   assert.equal(await page.locator(".activity").count(), 0);
+  await page.evaluate(() => {
+    window.qa.attachFailure = true;
+  });
+  await page.getByRole("button", { name: "接入已有会话", exact: true }).click();
+  const existing = page.getByRole("dialog", { name: "接入已有 Codex 会话" });
+  await existing
+    .getByRole("button", { name: "扫描本机会话", exact: true })
+    .click();
+  const source = existing.getByRole("button", {
+    name: /继续原窗口中的账户管理任务/,
+  });
+  await source.click();
+  const accept = existing.getByRole("button", {
+    name: "接入并等待额度中断",
+    exact: true,
+  });
+  assert.equal(await accept.isDisabled(), true);
+  await existing.getByRole("checkbox").check();
+  await existing.getByLabel("交接后的运行方式").selectOption("desktop");
+  await accept.scrollIntoViewIfNeeded();
+  await page.screenshot({
+    path: path.join(output, "ui-existing-session.png"),
+    fullPage: true,
+  });
+  await accept.click();
+  await existing
+    .getByRole("alert")
+    .filter({ hasText: "进程列表已改变" })
+    .waitFor();
+  assert.equal(await existing.isVisible(), true);
+  await source.click();
+  assert.equal(await existing.getByRole("checkbox").isChecked(), false);
+  await existing.getByRole("checkbox").check();
+  await page.setViewportSize({ width: 860, height: 620 });
+  assert.equal(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth > innerWidth,
+    ),
+    false,
+  );
+  await accept.click();
+  await existing.waitFor({ state: "detached" });
+  await page
+    .getByRole("button", { name: "立即交接并继续", exact: true })
+    .waitFor();
+  assert.deepEqual(
+    await page.evaluate(
+      () =>
+        window.qa.calls.filter((c) => c.name === "session.attach").at(-1).args,
+    ),
+    {
+      id: "existing-preview",
+      strategy: "quota",
+      mode: "desktop",
+      allowStop: true,
+    },
+  );
+  await page.evaluate(() => {
+    window.qa.snapshot.jobs = window.qa.snapshot.jobs.filter(
+      (j) => j.id !== "adopted",
+    );
+    window.qa.push();
+  });
+
   const sizes = [
     { width: 1440, height: 900 },
     { width: 1000, height: 700 },
@@ -414,9 +526,9 @@ let activeBrowser, activeServer;
   console.log(
     JSON.stringify({
       checks:
-        "Import preview/selection, completion criteria, environment check, Desktop diagnostics, cancellation, long command responsiveness, form errors, draft persistence, autodetection, saved feedback, paused state, search, 3 viewport sizes / 5 tabs",
+        "Existing-session scan/inspection/explicit consent/error recovery/attachment, import preview/selection, completion criteria, environment check, Desktop diagnostics, cancellation, long command responsiveness, form errors, draft persistence, autodetection, saved feedback, paused state, search, 3 viewport sizes / 5 tabs",
       errors,
-      screenshots: 6,
+      screenshots: 7,
       overflow: await page.evaluate(
         () => document.documentElement.scrollWidth > innerWidth,
       ),

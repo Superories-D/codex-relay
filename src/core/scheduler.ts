@@ -6,6 +6,7 @@ import type {
   Approval,
   Job,
   NewJob,
+  ExistingLink,
   Quota,
   Snapshot,
 } from "../shared/types";
@@ -43,6 +44,7 @@ export class Scheduler extends EventEmitter {
     readonly accounts: Accounts,
     private factories: Record<"cli" | "desktop", WorkerFactory>,
     private recover: (job: Job) => Promise<void> = async () => {},
+    private beforeStart: (job: Job) => Promise<void> = async () => {},
   ) {
     super();
   }
@@ -103,13 +105,42 @@ export class Scheduler extends EventEmitter {
       .reverse();
     this.changed();
   }
-  async add(input: NewJob) {
+  async add(
+    input: NewJob,
+    existing?: { link: ExistingLink; threadId: string; turnId?: string },
+  ) {
     const stat = await fs.stat(input.cwd);
     if (!stat.isDirectory()) throw new Error("工作目录不存在");
+    if (
+      existing &&
+      (this.active ||
+        this.store.data.jobs.some(
+          (j) =>
+            j.recoveryRequired ||
+            [
+              "queued",
+              "waiting",
+              "watching",
+              "preparing",
+              "running",
+              "pausing",
+              "rotating",
+            ].includes(j.state),
+        ))
+    )
+      throw new Error("另一任务已开始，请先暂停它再接入原会话");
     const job: Job = {
       ...input,
       id: randomUUID(),
-      state: "queued",
+      state: existing ? "watching" : "queued",
+      ...(existing
+        ? {
+            existing: existing.link,
+            threadId: existing.threadId,
+            turnId: existing.turnId,
+            stage: "接入已有会话，等待核实原进程",
+          }
+        : {}),
       rotations: 0,
       createdAt: Date.now(),
       updatedAt: Date.now(),
@@ -167,7 +198,16 @@ export class Scheduler extends EventEmitter {
     this.ticking = true;
     try {
       const now = Date.now();
-      if (this.store.data.jobs.some((j) => j.recoveryRequired)) return;
+      if (
+        this.store.data.jobs.some(
+          (j) =>
+            j.recoveryRequired ||
+            (j.existing &&
+              j.existing.phase !== "managed" &&
+              !["cancelled", "completed"].includes(j.state)),
+        )
+      )
+        return;
       const runnable = this.store.data.jobs.find(
         (j) =>
           ["queued", "waiting"].includes(j.state) &&
@@ -251,6 +291,7 @@ export class Scheduler extends EventEmitter {
     let outcome: Outcome | undefined;
     try {
       job.state = "preparing";
+      await this.beforeStart(job);
       job.accountId = account.id;
       job.nextWakeAt = undefined;
       job.lastError = undefined;
@@ -290,7 +331,11 @@ export class Scheduler extends EventEmitter {
           resumePrompt: this.store.data.settings.resumePrompt,
           checkpoint: async (threadId, turnId) => {
             job.threadId = threadId;
-            if (turnId) job.turnId = turnId;
+            job.importedRollout = undefined;
+            if (turnId) {
+              job.turnId = turnId;
+              job.desktopSubmissionPending = false;
+            }
             await this.store.save();
             this.changed();
           },

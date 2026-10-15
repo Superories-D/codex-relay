@@ -148,16 +148,21 @@ export class DesktopWorker extends EventEmitter implements Worker {
         chatgptPlanType: auth.chatgptPlanType,
       });
       await ensureWindowsSandbox(bootstrap, job.cwd, job.sandbox);
-      const response = await prepareThread(bootstrap, job.threadId, {
-        cwd: job.cwd,
-        approvalPolicy: job.approvalPolicy,
-        sandbox: {
-          workspaceWrite: "workspace-write",
-          readOnly: "read-only",
-          dangerFullAccess: "danger-full-access",
-        }[job.sandbox],
-        ...(job.model ? { model: job.model } : {}),
-      });
+      const response = await prepareThread(
+        bootstrap,
+        job.threadId,
+        {
+          cwd: job.cwd,
+          approvalPolicy: job.approvalPolicy,
+          sandbox: {
+            workspaceWrite: "workspace-write",
+            readOnly: "read-only",
+            dangerFullAccess: "danger-full-access",
+          }[job.sandbox],
+          ...(job.model ? { model: job.model } : {}),
+        },
+        job.importedRollout,
+      );
       if (!job.model && typeof response.model === "string")
         job.model = response.model;
       this.assertStarting();

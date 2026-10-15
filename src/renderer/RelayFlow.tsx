@@ -13,7 +13,7 @@ export function RelayFlow({ job }: { job: Job }) {
             ? job.turnId
               ? 4
               : 0
-            : job.state === "running"
+            : job.state === "running" || job.state === "watching"
               ? stage.includes("复查")
                 ? 5
                 : 1

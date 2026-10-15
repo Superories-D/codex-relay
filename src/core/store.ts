@@ -75,7 +75,15 @@ export class Store {
         },
       };
       for (const j of this.data.jobs)
-        if (["running", "preparing", "pausing", "rotating"].includes(j.state)) {
+        if (j.existing && j.existing.phase !== "managed") {
+          if (!["completed", "cancelled"].includes(j.state)) {
+            j.state = "needs_attention";
+            j.lastError =
+              "已有会话接入需要恢复检查；原窗口可能仍在运行。选择继续监控或完成交接。";
+          }
+        } else if (
+          ["running", "preparing", "pausing", "rotating"].includes(j.state)
+        ) {
           j.recoveryRequired = true;
           j.state = "needs_attention";
           j.lastError =

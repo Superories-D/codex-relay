@@ -5,7 +5,7 @@ export function taskPrompt(ctx: WorkerContext, uncertain = false): string {
   const { job } = ctx;
   let prompt = uncertain
     ? `${ctx.resumePrompt}\n上次发送结果未确认，请先检查已有会话和文件，不要重复已经完成的操作。\n原始任务：\n${job.prompt}`
-    : job.turnId
+    : job.turnId || job.existing
       ? ctx.resumePrompt
       : job.prompt;
   if ((job.completionRetries ?? 0) > 0)

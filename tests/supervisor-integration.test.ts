@@ -6,6 +6,8 @@ import { expect, it, vi } from "vitest";
 import { Store } from "../src/core/store";
 import { Scheduler } from "../src/core/scheduler";
 import { CliWorker } from "../src/core/cli-worker";
+import { ExistingSessions } from "../src/core/existing-sessions";
+import { randomUUID } from "node:crypto";
 vi.mock("../src/core/process", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/core/process")>();
   return {
@@ -109,6 +111,134 @@ it("real JSONL child processes rotate on error and resume the same persisted thr
       fs.stat(path.join(store.jobHome(job.id), "relay-owner.json")),
     ).rejects.toMatchObject({ code: "ENOENT" });
   } finally {
+    await scheduler.shutdown();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+}, 15000);
+it("hands off an existing rollout and drives the real worker to completion with the same thread", async () => {
+  const root = await fs.mkdtemp(
+    path.join(os.tmpdir(), "relay-adopt-integration-"),
+  );
+  const home = path.join(root, "original"),
+    store = new Store(path.join(root, "relay")),
+    id = randomUUID();
+  const file = path.join(home, "sessions", `rollout-${id}.jsonl`);
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  const original =
+    [
+      { type: "session_meta", payload: { id, cwd: root, source: "cli" } },
+      {
+        type: "event_msg",
+        payload: { type: "task_started", turn_id: "prior" },
+      },
+      {
+        type: "event_msg",
+        payload: {
+          type: "user_message",
+          message: "Finish the original project",
+        },
+      },
+      {
+        type: "event_msg",
+        payload: {
+          type: "error",
+          codex_error_info: "usage_limit_exceeded",
+          message: "quota",
+        },
+      },
+    ]
+      .map((x) => JSON.stringify(x))
+      .join("\n") + "\n";
+  await fs.writeFile(file, original);
+  const quota: any = {
+    codex: {
+      limitId: "codex",
+      primary: {
+        usedPercent: 10,
+        windowDurationMins: 300,
+        resetsAt: Date.now() + 100000,
+      },
+      secondary: null,
+      observedAt: Date.now(),
+      reached: false,
+    },
+  };
+  store.data.accounts = [
+    {
+      id: "b",
+      identity: "b",
+      label: "b",
+      email: "test",
+      plan: "test",
+      enabled: true,
+      status: "ready",
+      blockedUntil: null,
+      failureCount: 0,
+      quotas: quota,
+    },
+  ];
+  const accounts: any = {
+    busy: new Set(),
+    inspect: async () => ({
+      auth: { tokens: { access_token: "synthetic" } },
+      models: [],
+      quotas: quota,
+    }),
+    cancelLogin: async () => {},
+    drain: async () => {},
+  };
+  const driver = {
+    inspect: async () => ({ processes: [], canHandoff: true }),
+    stop: vi.fn(async () => {}),
+  };
+  let service: ExistingSessions;
+  const scheduler = new Scheduler(
+    store,
+    accounts,
+    {
+      cli: (ctx) => new CliWorker(ctx),
+      desktop: () => {
+        throw Error("unused");
+      },
+    },
+    undefined,
+    (job) => service.assertManagedSafe(job),
+  );
+  service = new ExistingSessions(store, scheduler, driver);
+  try {
+    const scan = await service.scan(home);
+    const handle = scan.candidates[0].id;
+    await service.inspect(handle);
+    const job = await service.attach({
+      id: handle,
+      mode: "cli",
+      strategy: "quota",
+      allowStop: false,
+    });
+    expect(job.state).toBe("watching");
+    await service.tick();
+    expect(job.state).toBe("queued");
+    await (scheduler as any).tick();
+    await vi.waitFor(() => expect(job.state).toBe("completed"), {
+      timeout: 5000,
+    });
+    await (scheduler as any).currentRun;
+    const journal = JSON.parse(
+      (
+        await fs.readFile(
+          path.join(store.jobHome(job.id), "synthetic-journal.jsonl"),
+          "utf8",
+        )
+      ).trim(),
+    );
+    expect(journal.threadId).toBe(id);
+    expect(journal.input).toContain("Finish the original project");
+    expect(journal.input).toContain("不要重复");
+    expect(job.importedRollout).toBeUndefined();
+    expect(job.desktopSubmissionPending).toBe(false);
+    expect(await fs.readFile(file, "utf8")).toBe(original);
+  } finally {
+    await service.shutdown();
     await scheduler.shutdown();
     await fs.rm(root, { recursive: true, force: true });
   }

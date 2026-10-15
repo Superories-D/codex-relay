@@ -104,6 +104,19 @@ export class Accounts {
     if (!this.store.data.accounts.some((a) => a.id === id))
       throw new Error("账户不存在");
   }
+  private assertExternalRefreshIdle() {
+    if (
+      this.store.data.jobs.some(
+        (j) =>
+          j.existing &&
+          j.existing.phase !== "managed" &&
+          !["completed", "cancelled"].includes(j.state),
+      )
+    )
+      throw new Error(
+        "原 Codex 实例仍负责登录刷新；请先交接或取消接入，再手动刷新账户",
+      );
+  }
   async drain() {
     for (;;) {
       const pending = [...this.locks.values()];
@@ -163,8 +176,10 @@ export class Accounts {
     await atomicWrite(path.join(home, "auth.json"), JSON.stringify(auth));
   }
   async refreshTokens(id: string): Promise<AuthCache> {
+    this.assertExternalRefreshIdle();
     if (this.busy.has(id)) throw new Error("客户端负责刷新该账户");
     return this.serial(id, async () => {
+      this.assertExternalRefreshIdle();
       this.available(id);
       const home = this.store.profileHome(id);
       await this.stage(id, home);
@@ -292,9 +307,11 @@ export class Accounts {
     quotas: Record<string, Quota>;
     models: any[];
   }> {
+    this.assertExternalRefreshIdle();
     if (this.busy.has(id))
       throw new Error("客户端正在使用该账户，监控改由客户端凭据执行");
     return this.serial(id, async () => {
+      this.assertExternalRefreshIdle();
       this.available(id);
       const account = this.store.data.accounts.find((a) => a.id === id);
       if (!account) throw new Error("账户不存在");

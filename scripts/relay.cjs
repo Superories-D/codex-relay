@@ -22,6 +22,10 @@ if (operation === "help") {
   node scripts/relay.cjs status
   node scripts/relay.cjs watch [--id JOB_ID]
   node scripts/relay.cjs pause|resume|cancel --id JOB_ID
+  node scripts/relay.cjs sessions [--home C:\\Users\\you\\.codex]
+  node scripts/relay.cjs attach --session THREAD_UUID [--home PATH] [--when quota|now] [--mode cli|desktop] [--allow-stop]
+  node scripts/relay.cjs handoff --id JOB_ID
+  --allow-stop authorizes ending the identified Codex instance and its children at handoff, including other chats in that desktop instance.
   Ctrl+C disconnects the viewer; the task continues in the desktop app.
   --data-dir PATH overrides the default app data location.`);
   process.exit(0);
@@ -69,7 +73,21 @@ let shownApprovals = new Set();
 const send = (id, command, args) =>
   socket.write(JSON.stringify({ id, token, command, args }) + "\n");
 socket.on("connect", () => {
-  if (operation === "run") {
+  if (["sessions", "attach"].includes(operation)) {
+    if (operation === "attach" && typeof options.session !== "string") {
+      console.error(
+        "attach requires --session THREAD_UUID; use sessions to list saved sessions.",
+      );
+      disconnect();
+      process.exitCode = 1;
+      return;
+    }
+    send(10, "session.scan", {
+      ...(options.home ? { home: path.resolve(options.home) } : {}),
+      ...(options.session ? { threadId: options.session } : {}),
+    });
+  } else if (operation === "handoff") send(1, "session.handoff", options.id);
+  else if (operation === "run") {
     let prompt = options.prompt || "";
     try {
       if (options["prompt-file"])
@@ -174,7 +192,61 @@ socket.on("data", (data) => {
       process.exitCode = 1;
       return;
     }
-    if (m.event === "snapshot" || m.id === 2) show(m.data || m.result);
+    if (m.id === 10) {
+      for (const warning of m.result.warnings ?? []) console.error(warning);
+      if (operation === "sessions") {
+        console.table(
+          m.result.candidates.map((c) => ({
+            session: c.threadId,
+            title: c.title,
+            state: c.status,
+            cwd: c.cwd,
+            issue: c.issue || "",
+          })),
+        );
+        disconnect();
+      } else {
+        const found = m.result.candidates.find(
+          (c) => c.threadId === options.session,
+        );
+        if (!found) {
+          console.error("Session not found");
+          disconnect();
+          process.exitCode = 1;
+        } else send(11, "session.inspect", found.id);
+      }
+    } else if (m.id === 11) {
+      const report = m.result;
+      console.table(
+        report.processes.map((p) => ({
+          pid: p.pid,
+          executable: p.executable,
+          title: p.title,
+        })),
+      );
+      if (
+        !report.canHandoff ||
+        (report.processes.length && options["allow-stop"] !== true)
+      ) {
+        console.error(
+          report.issue ||
+            "Review the process scope above, then add --allow-stop to authorize handoff. The desktop instance's other chats will also stop.",
+        );
+        disconnect();
+        process.exitCode = 2;
+      } else
+        send(12, "session.attach", {
+          id: report.candidate.id,
+          mode: options.mode || "cli",
+          strategy: options.when || "quota",
+          allowStop: options["allow-stop"] === true,
+        });
+    } else if (m.id === 12) {
+      jobId = m.result.id;
+      console.log(`Attached task ${jobId}`);
+      watching = true;
+      send(2, "watch");
+    } else if (m.event === "snapshot" || m.id === 2) show(m.data || m.result);
     else if (m.id === 1) {
       if (operation === "run") {
         jobId = m.result.id;

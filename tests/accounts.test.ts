@@ -60,6 +60,19 @@ afterEach(async () => {
   vi.clearAllMocks();
 });
 describe("single refresh-token authority", () => {
+  it("blocks refresh work queued before an existing instance becomes the token authority", async () => {
+    const account = await accounts.import(JSON.stringify(auth()));
+    const refreshing = accounts.refreshTokens(account.id).catch((e) => e);
+    store.data.jobs.push({
+      id: "external",
+      state: "watching",
+      existing: { phase: "watching" },
+    } as any);
+    expect(await refreshing).toBeInstanceOf(Error);
+    await expect(accounts.inspect(account.id)).rejects.toThrow("原 Codex 实例");
+    expect(Rpc.open).not.toHaveBeenCalled();
+  });
+
   it("deduplicates simultaneous imports of the same identity", async () => {
     const [a, b] = await Promise.all([
       accounts.import(JSON.stringify(auth())),

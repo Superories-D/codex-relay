@@ -1163,6 +1163,72 @@ button:disabled {
 .import-row small.danger-text {
   color: #ddaca4;
 }
+.session-list {
+  max-height: 280px;
+  overflow: auto;
+  margin: 14px 0;
+}
+.session-row {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 14px;
+  margin: 7px 0;
+  white-space: normal;
+}
+.session-row b,
+.session-row span,
+.session-row small,
+.process-card small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.session-row span,
+.session-row small {
+  font-size: 11px;
+  color: var(--subtle);
+  margin-top: 5px;
+}
+.session-row.selected {
+  border-color: var(--accent);
+  background: #21382f;
+}
+.session-inspection {
+  margin-top: 22px;
+  border-top: 1px solid var(--line);
+  padding-top: 18px;
+}
+.session-id {
+  overflow-wrap: anywhere;
+  font-family: monospace;
+}
+.process-card {
+  padding: 12px;
+  margin: 8px 0;
+  background: #14191c;
+  border-radius: 8px;
+}
+.process-card small {
+  margin-top: 6px;
+  color: var(--subtle);
+}
+.modal .session-consent {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  line-height: 1.7;
+}
+.session-consent input {
+  width: 18px;
+  height: 18px;
+  margin: 2px 0;
+  flex-shrink: 0;
+  accent-color: var(--accent);
+}
+.badge.watching {
+  background: #203d43;
+  color: #a2d4dd;
+}
 .import-row em {
   font-size: 12px;
   font-style: normal;
@@ -1228,4 +1294,13 @@ button:disabled {
   .relay-flow {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
+}
+
+.session-home input {
+  min-width: 0;
+  flex: 1;
+}
+.session-home button {
+  flex-shrink: 0;
+  white-space: nowrap;
 }

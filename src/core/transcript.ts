@@ -40,6 +40,7 @@ export class TranscriptTail {
 export async function findTranscript(
   home: string,
   threadId: string,
+  includeArchived = false,
 ): Promise<string> {
   let visited = 0;
   async function walk(dir: string): Promise<string | undefined> {
@@ -71,7 +72,11 @@ export async function findTranscript(
       }
     }
   }
-  const file = await walk(path.join(home, "sessions"));
+  const file =
+    (await walk(path.join(home, "sessions"))) ||
+    (includeArchived
+      ? await walk(path.join(home, "archived_sessions"))
+      : undefined);
   if (!file)
     throw new Error("受管目录内未找到该会话，客户端版本可能忽略 CODEX_HOME");
   return file;

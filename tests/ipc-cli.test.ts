@@ -151,3 +151,69 @@ it("disconnects a pipelined command flood instead of growing an unbounded promis
     await cleanup(server, root);
   }
 });
+it("CLI attaches only after process inspection and explicit stop authorization", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "relay-attach-cli-"));
+  const fake: any = new EventEmitter();
+  fake.snapshot = () => ({
+    jobs: [{ id: "adopted", state: "completed" }],
+    logs: [],
+    approvals: [],
+  });
+  const command = vi.fn(async (name: string, args: any) => {
+    if (name === "session.scan")
+      return {
+        candidates: [{ id: "preview", threadId: "selected" }],
+        warnings: [],
+      };
+    if (name === "session.inspect")
+      return {
+        candidate: { id: "preview" },
+        processes: [
+          { pid: 123, executable: "codex.exe", title: "selected instance" },
+        ],
+        canHandoff: true,
+      };
+    if (name === "session.attach") return { id: "adopted" };
+    throw Error("unexpected command");
+  });
+  const server = await startCommandServer(root, fake, command);
+  const run = async (allow: boolean) => {
+    const child = spawn(
+      process.execPath,
+      [
+        "--require",
+        path.join(process.cwd(), "tests/fixtures/pipe-over-tcp.cjs"),
+        path.join(process.cwd(), "scripts/relay.cjs"),
+        "attach",
+        "--session",
+        "selected",
+        "--data-dir",
+        root,
+        ...(allow ? ["--allow-stop"] : []),
+      ],
+      {
+        env: { ...process.env, RELAY_TEST_PORT: String(portOf(server)) },
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    child.stdout.resume();
+    child.stderr.resume();
+    return (await once(child, "close"))[0];
+  };
+  try {
+    expect(await run(false)).toBe(2);
+    expect(command.mock.calls.some(([name]) => name === "session.attach")).toBe(
+      false,
+    );
+    command.mockClear();
+    expect(await run(true)).toBe(0);
+    expect(command).toHaveBeenCalledWith("session.attach", {
+      id: "preview",
+      mode: "cli",
+      strategy: "quota",
+      allowStop: true,
+    });
+  } finally {
+    await cleanup(server, root);
+  }
+});
