@@ -221,3 +221,16 @@ it("keeps the account lease when the quota probe cannot stop", async () => {
   await expect(w.close()).rejects.toThrow("probe still running");
   expect(busy.has("account")).toBe(true);
 });
+
+it("Desktop uses the same optional completion gate after quota verification", async () => {
+  job.completionMarker = "[DONE]";
+  records({
+    type: "task_complete",
+    turn_id: "turn",
+    last_agent_message: "Not yet verified",
+  });
+  const read = w.readTranscript();
+  await vi.advanceTimersByTimeAsync(1000);
+  await read;
+  expect((await w.done).kind).toBe("incomplete");
+});

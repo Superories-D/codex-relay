@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 import type { Approval, Job, Quota } from "../shared/types";
 export interface Outcome {
-  kind: "completed" | "quota" | "interrupted" | "error";
+  kind: "completed" | "quota" | "interrupted" | "error" | "incomplete";
   error?: unknown;
 }
 export interface Worker extends EventEmitter {

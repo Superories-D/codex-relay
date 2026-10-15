@@ -133,7 +133,7 @@ export class Rpc extends EventEmitter {
           clientInfo: {
             name: "codex_relay",
             title: "Codex Relay",
-            version: "0.2.0",
+            version: "0.3.0",
           },
           capabilities: { experimentalApi: true },
         },

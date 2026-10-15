@@ -18,6 +18,7 @@ if (operation === "help") {
   console.log(`Codex Relay CLI — keep the desktop app running first.
   node scripts/relay.cjs run --cwd C:\\Project --prompt "Finish the task" [--model MODEL] [--effort high] [--mode cli|desktop]
   node scripts/relay.cjs run --cwd C:\\Project --prompt-file task.txt
+  node scripts/relay.cjs run --cwd C:\\Project --prompt "Finish the task" --completion-marker "[TASK_DONE]" --completion-retries 3
   node scripts/relay.cjs status
   node scripts/relay.cjs watch [--id JOB_ID]
   node scripts/relay.cjs pause|resume|cancel --id JOB_ID
@@ -89,6 +90,12 @@ socket.on("connect", () => {
       bucket: options.bucket || "codex",
       approvalPolicy: "on-request",
       sandbox: "workspaceWrite",
+      ...(options["completion-marker"]
+        ? { completionMarker: options["completion-marker"] }
+        : {}),
+      ...(options["completion-retries"] !== undefined
+        ? { maxCompletionRetries: Number(options["completion-retries"]) }
+        : {}),
     });
   } else if (operation === "status") send(1, "snapshot");
   else if (operation === "watch") {

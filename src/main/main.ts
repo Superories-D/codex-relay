@@ -17,6 +17,9 @@ import { promises as fs } from "node:fs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { Store } from "../core/store";
+import { checkEnvironment } from "../core/diagnostics";
+import { AccountImport } from "../core/account-import";
+import os from "node:os";
 import { Accounts } from "../core/accounts";
 import { Scheduler } from "../core/scheduler";
 import { CliWorker } from "../core/cli-worker";
@@ -83,6 +86,7 @@ async function boot() {
     },
     () => scheduler?.changed(),
   );
+  const importer = new AccountImport(accounts, store);
   scheduler = new Scheduler(
     store,
     accounts,
@@ -112,6 +116,8 @@ async function boot() {
   const command = async (name: string, args?: unknown): Promise<unknown> => {
     if (quitting) throw new Error("正在保存并退出");
     switch (name) {
+      case "environment.check":
+        return checkEnvironment(store.data.settings.cliPath);
       case "health":
         return { at: Date.now() };
       case "job.desktop.show":
@@ -167,20 +173,36 @@ async function boot() {
       case "account.openLogin":
         if (accounts.loginDisplay) return openAuth(accounts.loginDisplay.url);
         return;
-      case "account.import": {
-        const result = await dialog.showOpenDialog(window!, {
-          title: "导入官方 Codex auth.json",
-          properties: ["openFile"],
-          filters: [{ name: "Codex auth.json", extensions: ["json"] }],
-        });
-        if (result.canceled) return;
-        const file = result.filePaths[0];
-        if ((await fs.stat(file)).size > 1024 * 1024)
-          throw new Error("凭据文件过大");
-        const account = await accounts.import(await fs.readFile(file, "utf8"));
-        await accounts.inspect(account.id).catch(() => {});
-        return account.id;
+      case "account.import":
+      case "account.importLocal": {
+        let file = path.join(os.homedir(), ".codex", "auth.json");
+        if (name === "account.import") {
+          const result = await dialog.showOpenDialog(window!, {
+            title: "导入 Codex 账户备份",
+            properties: ["openFile"],
+            filters: [
+              { name: "auth.json / 账户备份", extensions: ["json", "jsonl"] },
+            ],
+          });
+          if (result.canceled) return;
+          file = result.filePaths[0];
+        }
+        if ((await fs.stat(file)).size > 2 * 1024 * 1024)
+          throw new Error("凭据文件超过 2 MiB");
+        return importer.preview(await fs.readFile(file, "utf8"));
       }
+      case "account.importCommit": {
+        const input = z
+          .object({
+            id: idSchema,
+            indices: z.array(z.number().int().min(0).max(199)).min(1).max(200),
+          })
+          .strict()
+          .parse(args);
+        return importer.commit(input.id, input.indices);
+      }
+      case "account.importCancel":
+        return importer.cancel(idSchema.parse(args));
       case "account.refresh": {
         const id = idSchema.parse(args);
         if (
@@ -392,8 +414,7 @@ async function boot() {
     if (!quitting) {
       event.preventDefault();
       quitting = true;
-      void scheduler
-        .shutdown()
+      void Promise.all([importer.drain(), scheduler.shutdown()])
         .then(() => {
           server.close();
           app.quit();

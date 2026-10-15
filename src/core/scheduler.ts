@@ -409,6 +409,18 @@ export class Scheduler extends EventEmitter {
       await this.store.save();
       this.changed();
       job.state = "queued";
+    } else if (outcome?.kind === "incomplete") {
+      const retries = job.completionRetries ?? 0;
+      const limit = job.maxCompletionRetries ?? 3;
+      if (retries < limit) {
+        job.completionRetries = retries + 1;
+        job.state = "queued";
+        job.lastError = `未满足完成标记，将继续原会话检查（${retries + 1}/${limit}）`;
+      } else {
+        job.state = "needs_attention";
+        job.lastError = `完成标记仍未满足，已达到 ${limit} 次自动补完上限；请检查原会话后手动继续`;
+      }
+      this.log(job.lastError, "warning", job.id);
     } else if (outcome?.kind === "completed") {
       job.state = "completed";
       this.log("Codex 正常完成本轮任务，未检测到额度中断", "info", job.id);
@@ -466,6 +478,7 @@ export class Scheduler extends EventEmitter {
       if (["completed", "cancelled"].includes(job.state))
         throw new Error("终止任务不可恢复，请新建任务");
       job.state = "queued";
+      job.completionRetries = 0;
       job.lastError = undefined;
       job.nextWakeAt = undefined;
     } else if (this.active?.job.id === id) {

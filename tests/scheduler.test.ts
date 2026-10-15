@@ -339,3 +339,28 @@ it("limits idle quota refresh to one account per dispatch cycle", async () => {
   expect(inspect).toHaveBeenCalledTimes(2);
   expect(inspect.mock.calls.map(([id]) => id)).toEqual(["a", "b"]);
 });
+
+it("bounds completion repair attempts while retaining the thread and keeping quota rotation separate", async () => {
+  const job = await scheduler.add({
+    ...input,
+    cwd: root,
+    completionMarker: "[DONE]",
+    maxCompletionRetries: 1,
+  });
+  await until(() => workers[0]?.started);
+  workers[0].settle({ kind: "incomplete" });
+  await (scheduler as any).currentRun;
+  expect(job.state).toBe("queued");
+  expect(job.completionRetries).toBe(1);
+  expect(job.rotations).toBe(0);
+  await (scheduler as any).tick();
+  await until(() => workers[1]?.started);
+  expect(job.threadId).toBe("stable-thread");
+  workers[1].settle({ kind: "incomplete" });
+  await (scheduler as any).currentRun;
+  expect(job.state).toBe("needs_attention");
+  await (scheduler as any).tick();
+  expect(workers).toHaveLength(2);
+  await scheduler.control(job.id, "resume");
+  expect(job.completionRetries).toBe(0);
+});

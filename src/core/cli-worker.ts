@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { taskPrompt, completionOutcome } from "./completion";
 import { prepareThread } from "./thread";
 import { Rpc, type RpcMessage } from "./rpc";
 import {
@@ -97,9 +98,7 @@ export class CliWorker extends EventEmitter implements Worker {
           {
             type: "text",
             text_elements: [],
-            text: this.ctx.job.turnId
-              ? this.ctx.resumePrompt
-              : this.ctx.job.prompt,
+            text: taskPrompt(this.ctx),
           },
         ],
         ...(this.ctx.job.effort ? { effort: this.ctx.job.effort } : {}),
@@ -191,7 +190,7 @@ export class CliWorker extends EventEmitter implements Worker {
           kind: "error",
           error: new Error("终止原因不明确，需核查额度后继续"),
         });
-      else this.finish({ kind: "completed" });
+      else this.finish(completionOutcome(this.ctx.job, this.finalText));
     }
   }
   private async request(msg: RpcMessage) {

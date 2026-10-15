@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
 import { Accounts, parseAuth } from "./accounts";
 import { Store, atomicWrite } from "./store";
+import { taskPrompt, completionOutcome } from "./completion";
 import { prepareThread } from "./thread";
 import { Rpc } from "./rpc";
 import { Cdp } from "./cdp";
@@ -304,11 +305,7 @@ export class DesktopWorker extends EventEmitter implements Worker {
       "{threadId}",
       job.threadId!,
     );
-    const prompt = job.desktopSubmissionPending
-      ? `${this.ctx.resumePrompt}\n上次发送结果未确认，请先检查已有会话和文件，不要重复已经完成的操作。\n原始任务：\n${job.prompt}`
-      : job.turnId
-        ? this.ctx.resumePrompt
-        : job.prompt;
+    const prompt = taskPrompt(this.ctx, job.desktopSubmissionPending);
     this.assertStarting();
     await this.cdp!.fill(selectors.editorSelector, prompt);
     this.assertStarting();
@@ -433,7 +430,13 @@ export class DesktopWorker extends EventEmitter implements Worker {
               kind: "error",
               error: new Error("终止原因不明确，缺少额度核实或最终答复"),
             });
-          else this.finish({ kind: "completed" });
+          else
+            this.finish(
+              completionOutcome(
+                this.ctx.job,
+                String(p.last_agent_message ?? this.finalText),
+              ),
+            );
         }
       }
     } catch (error) {

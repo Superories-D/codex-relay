@@ -1,0 +1,31 @@
+# Requires Gitea Runner 3.x with patch_actions enabled and windows-latest label.
+# Manual only: no assumption that this self-hosted service provides Windows runners.
+name: Windows validation and installers
+on:
+  workflow_dispatch:
+jobs:
+  package:
+    runs-on: windows-latest
+    steps:
+      - uses: https://github.com/actions/checkout@v4
+      - uses: https://github.com/actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm ci
+      - run: npm run check
+      - name: Parse PowerShell helpers
+        shell: powershell
+        run: |
+          Get-ChildItem scripts/windows/*.ps1 | ForEach-Object {
+            $parseErrors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$null, [ref]$parseErrors) | Out-Null
+            if ($parseErrors) { throw ($parseErrors | Out-String) }
+          }
+      - run: npm run package:win
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      - uses: https://github.com/actions/upload-artifact@v4
+        with:
+          name: Codex-Relay-Windows
+          path: release/*.exe
+          if-no-files-found: error

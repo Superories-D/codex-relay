@@ -158,6 +158,44 @@ let activeBrowser, activeServer;
       command: async (name, args) => {
         window.qa.calls.push({ name, args });
         if (name === "health") return {};
+        if (name === "environment.check")
+          return {
+            checks: [
+              { name: "Codex CLI", status: "ok", detail: "codex-cli 0.162.1" },
+              {
+                name: "真实账户与客户端",
+                status: "warning",
+                detail: "尚需实际运行核实",
+              },
+            ],
+          };
+        if (["account.import", "account.importLocal"].includes(name))
+          return {
+            id: "import-preview",
+            expiresAt: Date.now() + 600000,
+            rows: [
+              {
+                index: 0,
+                label: "待导入账户",
+                email: "import@example.test",
+                plan: "plus",
+                action: "add",
+              },
+              {
+                index: 1,
+                label: "已删除账户",
+                email: "",
+                plan: "",
+                action: "skip",
+                error: "已删除，默认跳过",
+              },
+            ],
+          };
+        if (name === "account.importCommit")
+          return {
+            imported: 1,
+            results: [{ index: 0, label: "待导入账户", ok: true }],
+          };
         if (name === "account.models") return [];
         if (name === "account.refresh")
           return new Promise((r) => {
@@ -255,6 +293,9 @@ let activeBrowser, activeServer;
     .fill("C:\\Projects\\test");
   await modal.getByLabel("任务目标").fill("合成检查");
   await modal.getByLabel("执行方式").selectOption("desktop");
+  await modal.getByText("完成校验（可选）", { exact: true }).click();
+  await modal.getByLabel("完成标记", { exact: true }).fill("[TASK_DONE]");
+  await modal.getByLabel("自动补完次数上限").fill("2");
   await page.screenshot({
     path: path.join(output, "ui-new-task.png"),
     fullPage: true,
@@ -272,7 +313,47 @@ let activeBrowser, activeServer;
   );
   await page.keyboard.press("Escape");
   await page.evaluate(() => window.qa.release());
+  assert.equal(
+    await page.evaluate(
+      () =>
+        window.qa.calls.find((c) => c.name === "job.add").args.completionMarker,
+    ),
+    "[TASK_DONE]",
+  );
+  assert.equal(
+    await page.evaluate(
+      () =>
+        window.qa.calls.find((c) => c.name === "job.add").args
+          .maxCompletionRetries,
+    ),
+    2,
+  );
+  await page.getByRole("button", { name: "账户轮换", exact: true }).click();
+  await page.getByRole("button", { name: "导入账户备份", exact: true }).click();
+  const imports = page.getByRole("dialog", { name: "预览账户导入" });
+  await imports.waitFor();
+  assert.equal(await imports.getByRole("checkbox").nth(1).isDisabled(), true);
+  await page.screenshot({
+    path: path.join(output, "ui-import.png"),
+    fullPage: true,
+  });
+  await imports
+    .getByRole("button", { name: "确认导入 1 个账户", exact: true })
+    .click();
+  await imports.getByText("已导入 1 个账户。额度将由后台核实。").waitFor();
+  assert.deepEqual(
+    await page.evaluate(
+      () =>
+        window.qa.calls.find((c) => c.name === "account.importCommit").args
+          .indices,
+    ),
+    [0],
+  );
+  await imports.getByRole("button", { name: "完成", exact: true }).click();
+
   await page.getByRole("button", { name: "设置", exact: true }).click();
+  await page.getByRole("button", { name: "检查运行环境", exact: true }).click();
+  await page.getByText("codex-cli 0.162.1", { exact: true }).waitFor();
   const cli = page.locator(".settings-form input").first();
   await cli.fill("draft-codex.exe");
   await page.evaluate(() => window.qa.push());
@@ -333,9 +414,9 @@ let activeBrowser, activeServer;
   console.log(
     JSON.stringify({
       checks:
-        "Desktop diagnostics, cancellation, long command responsiveness, form errors, draft persistence, autodetection, saved feedback, paused state, search, 3 viewport sizes / 5 tabs",
+        "Import preview/selection, completion criteria, environment check, Desktop diagnostics, cancellation, long command responsiveness, form errors, draft persistence, autodetection, saved feedback, paused state, search, 3 viewport sizes / 5 tabs",
       errors,
-      screenshots: 5,
+      screenshots: 6,
       overflow: await page.evaluate(
         () => document.documentElement.scrollWidth > innerWidth,
       ),

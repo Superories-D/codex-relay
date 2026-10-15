@@ -253,3 +253,45 @@ it("a new thread is materialized before a task can pause during preparation", as
   expect(rpc.calls).toContain("thread/unarchive");
   expect(rpc.calls).toContain("thread/resume");
 });
+
+it("returns incomplete after a normal turn without the requested marker", async () => {
+  job.completionMarker = "[DONE]";
+  const w = worker();
+  await w.start(auth);
+  rpc.notify("item/completed", {
+    threadId: "thread-1",
+    turnId: "turn-2",
+    item: {
+      type: "agentMessage",
+      phase: "final_answer",
+      text: "Partial result",
+    },
+  });
+  rpc.notify("turn/completed", {
+    threadId: "thread-1",
+    turn: { id: "turn-2", status: "completed" },
+  });
+  await vi.advanceTimersByTimeAsync(1000);
+  expect((await w.done).kind).toBe("incomplete");
+});
+it("quota exhaustion takes priority even when the final answer contains a completion marker", async () => {
+  job.completionMarker = "[DONE]";
+  const w = worker();
+  await w.start(auth);
+  rpc.used = 100;
+  rpc.notify("item/completed", {
+    threadId: "thread-1",
+    turnId: "turn-2",
+    item: {
+      type: "agentMessage",
+      phase: "final_answer",
+      text: "All done\n[DONE]",
+    },
+  });
+  rpc.notify("turn/completed", {
+    threadId: "thread-1",
+    turn: { id: "turn-2", status: "completed" },
+  });
+  await vi.advanceTimersByTimeAsync(1000);
+  expect((await w.done).kind).toBe("quota");
+});

@@ -154,3 +154,14 @@ describe("single refresh-token authority", () => {
     ).toContain("synthetic-refresh");
   });
 });
+
+it("blocks reimporting an account used by a running CLI task", async () => {
+  const account = await accounts.import(JSON.stringify(auth()));
+  store.data.jobs = [
+    { accountId: account.id, state: "running", mode: "cli" } as any,
+  ];
+  await expect(
+    accounts.import(JSON.stringify(auth("replacement"))),
+  ).rejects.toThrow("正在执行任务");
+  expect((await accounts.auth(account.id)).tokens.access_token).toBe("old");
+});

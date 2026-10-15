@@ -26,6 +26,13 @@ export const newJobSchema = z
     bucket: z.string().min(1).max(100),
     approvalPolicy: z.enum(["on-request", "never"]),
     sandbox: z.enum(["workspaceWrite", "readOnly", "dangerFullAccess"]),
+    completionMarker: z
+      .string()
+      .trim()
+      .max(80)
+      .refine((v) => !/[\r\n\x00-\x1f]/.test(v), "完成标记必须为单行文本")
+      .optional(),
+    maxCompletionRetries: z.number().int().min(0).max(10).optional(),
   })
   .strict();
 export const settingsSchema = z

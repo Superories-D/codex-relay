@@ -23,7 +23,12 @@ export interface AuthCache {
 }
 function claims(token: string): any {
   try {
-    return JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString());
+    const value = JSON.parse(
+      Buffer.from(token.split(".")[1], "base64url").toString(),
+    );
+    return value && typeof value === "object" && !Array.isArray(value)
+      ? value
+      : {};
   } catch {
     return {};
   }
@@ -34,12 +39,24 @@ export function parseAuth(text: string): {
   email: string;
   plan: string;
 } {
-  const auth = JSON.parse(text);
+  let auth: any;
+  try {
+    auth = JSON.parse(text);
+  } catch {
+    throw new Error("认证文件不是有效 JSON");
+  }
+  if (!auth || typeof auth !== "object" || Array.isArray(auth))
+    throw new Error("认证文件必须为对象");
   if (
     auth.OPENAI_API_KEY ||
+    auth.api_key ||
+    (auth.auth_mode &&
+      !["chatgpt", "chatgptAuthTokens"].includes(auth.auth_mode)) ||
     typeof auth.tokens?.access_token !== "string" ||
     !auth.tokens.access_token ||
-    typeof auth.tokens?.id_token !== "string"
+    typeof auth.tokens?.id_token !== "string" ||
+    (auth.tokens?.refresh_token !== undefined &&
+      typeof auth.tokens.refresh_token !== "string")
   )
     throw new Error(
       "仅支持官方 ChatGPT auth.json；API Key 和未知凭据格式不参与订阅额度轮换",
@@ -54,6 +71,7 @@ export function parseAuth(text: string): {
   if (typeof identity !== "string" || !identity)
     throw new Error("认证缓存缺少 ChatGPT account_id");
   auth.tokens.account_id = identity;
+  auth.auth_mode = "chatgpt";
   return {
     auth,
     identity,
@@ -202,7 +220,18 @@ export class Accounts {
     let account = this.store.data.accounts.find(
       (a) => a.identity === parsed.identity,
     );
-    if (account && this.busy.has(account.id))
+    if (
+      account &&
+      (this.busy.has(account.id) ||
+        this.store.data.jobs.some(
+          (job) =>
+            job.accountId === account!.id &&
+            (job.recoveryRequired ||
+              ["preparing", "running", "pausing", "rotating"].includes(
+                job.state,
+              )),
+        ))
+    )
       throw new Error("该账户正在执行任务；暂停后再更新凭据");
     if (!account) {
       account = {
@@ -222,6 +251,17 @@ export class Accounts {
     } else {
       await this.serial(account.id, async () => {
         this.available(account!.id);
+        if (
+          this.store.data.jobs.some(
+            (job) =>
+              job.accountId === account!.id &&
+              (job.recoveryRequired ||
+                ["preparing", "running", "pausing", "rotating"].includes(
+                  job.state,
+                )),
+          )
+        )
+          throw new Error("请先暂停使用此账户的任务，再更新凭据");
         const home = this.store.profileHome(account!.id);
         await Rpc.assertHomeIdle(home);
         await this.put(account!.id, parsed.auth);

@@ -24,7 +24,9 @@ export function Dialog({
         ) ?? [],
       ).filter((x) => x.getClientRects().length > 0);
     (
-      ref.current?.querySelector<HTMLElement>("input,textarea,select") ??
+      ref.current?.querySelector<HTMLElement>(
+        "input:not([disabled]),textarea:not([disabled]),select:not([disabled])",
+      ) ??
       nodes()[0] ??
       ref.current
     )?.focus();

@@ -1,5 +1,11 @@
 export function operationKey(name: string, args?: unknown) {
   const a = args as any;
+  if (
+    ["account.import", "account.importLocal", "account.importCommit"].includes(
+      name,
+    )
+  )
+    return "account.importFlow";
   if (name === "job.control") return `job:${a?.id}`;
   if (["account.refresh", "account.models", "account.remove"].includes(name))
     return `account:${args}`;
@@ -15,7 +21,10 @@ export function operationLabel(name: string) {
         "account.login": "正在打开官方登录",
         "account.refresh": "正在核实账户额度",
         "account.models": "正在读取模型",
-        "account.import": "正在导入账户",
+        "account.import": "正在读取导入预览",
+        "account.importLocal": "正在读取本机登录",
+        "account.importCommit": "正在保存导入账户",
+        "environment.check": "正在检查运行环境",
         "desktop.detect": "正在检测客户端安装",
         "job.desktop.inspect": "正在检查受管客户端",
         "job.desktop.show": "正在打开客户端窗口",

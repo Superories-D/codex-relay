@@ -53,6 +53,9 @@ export interface Job {
   accountId?: string;
   recoveryRequired?: boolean;
   desktopSubmissionPending?: boolean;
+  completionMarker?: string;
+  maxCompletionRetries?: number;
+  completionRetries?: number;
   nextWakeAt?: number;
   rotations: number;
   createdAt: number;
@@ -114,6 +117,8 @@ export type NewJob = Pick<
   | "bucket"
   | "approvalPolicy"
   | "sandbox"
+  | "completionMarker"
+  | "maxCompletionRetries"
 >;
 export interface Bridge {
   snapshot(): Promise<Snapshot>;

@@ -11,6 +11,10 @@ import type {
   WindowQuota,
 } from "../shared/types";
 import "./style.css";
+import { RelayFlow } from "./RelayFlow";
+import { ImportDialog } from "./ImportDialog";
+import type { ImportPreview } from "../core/account-import";
+import type { Diagnostic } from "../core/diagnostics";
 import { Dialog } from "./Dialog";
 import { operationKey, operationLabel } from "./operations";
 declare global {
@@ -118,6 +122,7 @@ function App() {
     message: string;
     run: () => void;
   }>();
+  const [importPreview, setImportPreview] = useState<ImportPreview>();
   const [desktopReport, setDesktopReport] = useState<any>();
   const [logSearch, setLogSearch] = useState("");
   const [logLevel, setLogLevel] = useState("all");
@@ -227,6 +232,13 @@ function App() {
       });
     inFlight.current.set(key, { name, promise: operation });
     return operation;
+  };
+  const openImport = (name: "account.import" | "account.importLocal") => {
+    void cmd(name)
+      .then((v) => {
+        if (v) setImportPreview(v as ImportPreview);
+      })
+      .catch(() => {});
   };
   const act = (name: string, args?: unknown) =>
     void cmd(name, args).catch(() => {});
@@ -414,7 +426,7 @@ function App() {
             className={`status-dot ${connection === "offline" ? "offline" : ""}`}
           />{" "}
           {connection === "offline" ? "后台响应较慢" : "后台已连接"} · 本机加密
-          <small>Windows companion / v0.2.0</small>
+          <small>Windows companion / v0.3.0</small>
           <button className="text-button" onClick={() => act("data.open")}>
             打开数据目录 ↗
           </button>
@@ -616,15 +628,7 @@ function App() {
                       <p className="error-message">{live.lastError}</p>
                     )}
                     {jobActions(live)}
-                    <div className="relay-strip">
-                      <span>01 保存会话</span>
-                      <i />
-                      <span>02 确认停止</span>
-                      <i />
-                      <span>03 切换账户</span>
-                      <i />
-                      <span>04 从中断处继续</span>
-                    </div>
+                    <RelayFlow job={live} />
                   </>
                 ) : (
                   <div className="empty hero-empty">
@@ -714,9 +718,18 @@ function App() {
                   <h1>账户轮换</h1>
                   <p>按卡片顺序循环选择。每次接力前重新核实额度。</p>
                 </div>
-                <div className="row gap">
-                  <button onClick={() => act("account.import")}>
-                    导入 auth.json
+                <div className="row gap wrap">
+                  <button
+                    disabled={isPending("account.importLocal")}
+                    onClick={() => openImport("account.importLocal")}
+                  >
+                    导入本机登录
+                  </button>
+                  <button
+                    disabled={isPending("account.import")}
+                    onClick={() => openImport("account.import")}
+                  >
+                    导入账户备份
                   </button>
                   <button className="primary" onClick={() => setModal("login")}>
                     ＋ 添加账户
@@ -873,6 +886,16 @@ function App() {
                           ? "Codex CLI"
                           : "官方客户端（实验）"}
                       </dd>
+                      {focus.completionMarker && (
+                        <>
+                          <dt>完成标记</dt>
+                          <dd>
+                            {focus.completionMarker} · 自动补完{" "}
+                            {focus.completionRetries ?? 0}/
+                            {focus.maxCompletionRetries ?? 3}
+                          </dd>
+                        </>
+                      )}
                       <dt>额度分组</dt>
                       <dd>{focus.bucket}</dd>
                       {focus.nextWakeAt && (
@@ -976,6 +999,22 @@ function App() {
             />
           )}
         </Dialog>
+      )}
+      {importPreview && (
+        <ImportDialog
+          key={importPreview.id}
+          preview={importPreview}
+          commit={(indices) =>
+            cmd("account.importCommit", {
+              id: importPreview.id,
+              indices,
+            }) as Promise<any>
+          }
+          cancel={() => {
+            act("account.importCancel", importPreview.id);
+            setImportPreview(undefined);
+          }}
+        />
       )}
       {confirmAction && (
         <Dialog
@@ -1379,6 +1418,36 @@ function JobForm({
         </label>
       </div>
       <details>
+        <summary>完成校验（可选）</summary>
+        <label>
+          完成标记
+          <input
+            maxLength={80}
+            placeholder="例如 [TASK_DONE]，留空使用默认检查"
+            value={form.completionMarker ?? ""}
+            onChange={(e) => patch("completionMarker", e.target.value)}
+          />
+        </label>
+        <label>
+          自动补完次数上限
+          <input
+            type="number"
+            min={0}
+            max={10}
+            value={form.maxCompletionRetries ?? 3}
+            onChange={(e) =>
+              setForm((p) => ({
+                ...p,
+                maxCompletionRetries: Number(e.target.value),
+              }))
+            }
+          />
+        </label>
+        <p className="subtle">
+          要求最终答复最后独立一行出现标记。缺失时继续原会话，达到上限后保留任务等待检查。额度耗尽仍优先暂停轮换，标记不能代替实际验收。
+        </p>
+      </details>
+      <details>
         <summary>执行权限</summary>
         <div className="form-grid">
           <label>
@@ -1512,6 +1581,8 @@ function SettingsForm({
   const [installations, setInstallations] = useState<any[]>([]);
   const [detected, setDetected] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [diagnostics, setDiagnostics] = useState<Diagnostic[]>();
   return (
     <form
       onChangeCapture={() => setSaved(false)}
@@ -1537,6 +1608,35 @@ function SettingsForm({
       </div>
       <section className="settings-section">
         <h2>本机程序</h2>
+        <button
+          type="button"
+          disabled={checking}
+          onClick={() => {
+            setChecking(true);
+            void command("environment.check")
+              .then((r: any) => setDiagnostics(r.checks))
+              .catch(() => {})
+              .finally(() => setChecking(false));
+          }}
+        >
+          {checking ? "正在检查环境…" : "检查运行环境"}
+        </button>
+        {diagnostics && (
+          <div className="environment-checks" role="status">
+            {diagnostics.map((d) => (
+              <div key={d.name} className={`environment-item ${d.status}`}>
+                <b>
+                  {d.status === "ok" ? "✓" : d.status === "error" ? "×" : "!"}{" "}
+                  {d.name}
+                </b>
+                <p>{d.detail}</p>
+              </div>
+            ))}
+          </div>
+        )}
+        <p className="subtle">
+          环境检查使用已保存的 CLI 路径。修改路径后请先保存。
+        </p>
         <button
           type="button"
           disabled={detecting}
