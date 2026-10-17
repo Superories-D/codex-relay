@@ -1,6 +1,42 @@
 import { legacyEnglish } from "./legacy-en";
 import { nativeEnglish } from "./native-en";
 export const english: Record<string, string> = {
+  问题: "Questions",
+  "问题已更新，请重新查看后回答":
+    "The questions have changed. Review them before answering",
+  "会话正在停止，请等待停止确认后继续":
+    "The chat is stopping. Wait for confirmation before continuing",
+  "回答 Codex 的问题": "Answer Codex's questions",
+  等待你的回答: "Waiting for your answer",
+  可稍后回答: "You can answer later",
+  自定义回答: "Custom answer",
+  私密回答: "Private answer",
+  你的回答: "Your answer",
+  "补充说明（可选）": "Additional details (optional)",
+  "给 {p0} 补充说明": "Additional details for {p0}",
+  "当前问题格式不受支持，请停止本轮后检查":
+    "This question format is unsupported. Stop the turn and inspect the chat",
+  请回答全部问题后再提交: "Answer every question before submitting",
+  "请填写有效的回答，每项最多 10000 个字符":
+    "Enter a valid answer, up to 10,000 characters each",
+  请从提供的选项中选择回答: "Choose one of the provided options",
+  "回答已发送，正在等待服务器确认":
+    "Answer sent. Waiting for server confirmation",
+  暂时没有问题: "No questions yet",
+  "Codex 需要你做决定时，问题和回答会显示在这里。":
+    "When Codex needs your input, questions and answers appear here.",
+  问题记录: "Question history",
+  已回答: "Answered",
+  问题已失效: "Question expired",
+  回答尚未确认: "Answer not confirmed",
+  "这个请求已结束，不能继续提交。需要时可在聊天中重新询问 Codex。":
+    "This request has ended and cannot accept answers. Ask Codex again in the chat if needed.",
+  回答: "Answer",
+  回答已隐藏: "Answer hidden",
+  加载更早的问题: "Load older questions",
+  "Codex 有问题需要你回答": "Codex has questions for you",
+  "在问题面板选择选项或填写回答，提交后继续执行。":
+    "Choose options or write answers in the Questions panel, then submit to continue.",
   持续目标: "Ongoing goal",
   完成目标前持续推进: "Keep working toward the result",
   退出持续目标模式: "Exit ongoing goal mode",

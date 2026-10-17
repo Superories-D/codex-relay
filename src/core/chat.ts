@@ -1,8 +1,14 @@
 import { createReadStream, promises as fs } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import type { ChatItem, ChatPage } from "../shared/types";
+import type {
+  ChatItem,
+  ChatPage,
+  Approval,
+  QuestionRecord,
+} from "../shared/types";
 import { redact } from "./redact";
+import { questionList } from "../shared/user-questions";
 import { protocolImages, imageSafePayload } from "../shared/chat-images";
 import { persistImages } from "./chat-media";
 
@@ -104,7 +110,83 @@ export class Chats {
     this.events.set(id, next);
     return next;
   }
+  question(
+    approval: Approval,
+    status: QuestionRecord["status"],
+    answers?: QuestionRecord["answers"],
+  ) {
+    return this.event(approval.jobId, "relay/question", {
+      approval,
+      status,
+      answers,
+    });
+  }
+  async questions(id: string, before?: number) {
+    await this.events.get(id);
+    await this.read(id);
+    const rows = (this.cache.get(id)?.rows || []).filter(
+      (item) => item.kind === "questionRequest",
+    );
+    const end = Math.min(before ?? rows.length, rows.length),
+      start = Math.max(0, end - 20);
+    return {
+      items: rows
+        .slice(start, end)
+        .map(
+          (item) =>
+            ({
+              ...item.data,
+              id: item.id,
+              at: item.at,
+            }) as unknown as QuestionRecord,
+        ),
+      total: rows.length,
+      ...(start ? { before: start } : {}),
+    };
+  }
   private async reduce(id: string, method: string, p: any) {
+    if (method === "relay/question") {
+      const approval = p.approval as Approval,
+        params = approval.params as any;
+      const questions = questionList(params);
+      const answers =
+        p.answers &&
+        Object.fromEntries(
+          questions
+            .filter((q) => !q.isSecret && Object.hasOwn(p.answers, q.id))
+            .map((q) => [q.id, p.answers[q.id]]),
+        );
+      const data = {
+        requestId: approval.id,
+        threadId: params.threadId,
+        turnId: params.turnId,
+        questions,
+        isBlocking: params.isBlocking !== false,
+        status: p.status,
+        ...(answers ? { answers } : {}),
+      };
+      await this.append(id, {
+        id: approval.historyId!,
+        role: "system",
+        kind: "questionRequest",
+        text: questions
+          .map(
+            (q: any) =>
+              q.question +
+              (p.status === "answered"
+                ? "\n" +
+                  (q.isSecret
+                    ? "[回答已隐藏]"
+                    : answers?.[q.id]?.answers.join("\n") || "")
+                : ""),
+          )
+          .join("\n\n"),
+        at: approval.createdAt!,
+        turnId: params.turnId,
+        data,
+      });
+      return;
+    }
     const live = this.live.get(id) ?? new Map<string, ChatItem>();
     this.live.set(id, live);
     const key = `${p.turnId ?? ""}:${p.item?.id ?? p.itemId ?? p.item?.type ?? method}`;

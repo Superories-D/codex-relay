@@ -324,6 +324,7 @@ export class CliWorker extends EventEmitter implements Worker {
         : {}),
       config: {
         "features.multi_agent": this.ctx.job.multiAgent !== false,
+        "features.default_mode_request_user_input": true,
         ...(effort ? { model_reasoning_effort: effort } : {}),
         ...(this.goal?.status === "active" ? { "features.goals": true } : {}),
       },
@@ -402,6 +403,12 @@ export class CliWorker extends EventEmitter implements Worker {
   }
   private async notification(msg: RpcMessage) {
     const p = msg.params ?? {};
+    if (msg.method === "serverRequest/resolved") {
+      const id = String(p.requestId);
+      this.requests.delete(id);
+      this.emit("approvalResolved", id);
+      return;
+    }
     if (msg.method === "account/rateLimits/updated") {
       const quotas = parseQuotas(p, Date.now(), this.quotas, true);
       this.quotas = { ...this.quotas, ...quotas };
@@ -567,11 +574,6 @@ export class CliWorker extends EventEmitter implements Worker {
         this.lastError = p.error;
       } else if (!p.willRetry) this.lastError = p.error;
       this.emit("log", p.error?.message ?? "Codex error");
-    }
-    if (msg.method === "serverRequest/resolved") {
-      const id = String(p.requestId);
-      this.requests.delete(id);
-      this.emit("approvalResolved", id);
     }
     if (msg.method === "turn/completed") {
       if (this.turnId && p.turn?.id !== this.turnId) return;

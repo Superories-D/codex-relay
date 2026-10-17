@@ -23,6 +23,7 @@ import { ExtensionsPage, SchedulesPage } from "./FeaturePages";
 import { SettingsPage } from "./SettingsPage";
 import { TurnHistory } from "./TurnHistory";
 import { ImportAllControl } from "./ImportAllControl";
+import { pruneQuestionDrafts } from "./QuestionPanel";
 import type { DesktopData } from "../core/desktop";
 import {
   Archive,
@@ -54,6 +55,7 @@ import {
   LoaderCircle,
   Menu,
   MessageSquare,
+  MessageCircleQuestion,
   Network,
   PanelLeftClose,
   PanelLeftOpen,
@@ -202,6 +204,31 @@ export function AgentApp({
   const modelDirty = useRef(false);
   selectedRef.current = selected;
   const job = snapshot?.jobs.find((j) => j.id === selected);
+  const inputRequests = (snapshot?.approvals || []).filter(
+    (a) => a.kind === "input",
+  );
+  const chatQuestions = inputRequests.filter((a) => a.jobId === selected);
+  const questionsSignature = inputRequests
+    .map((a) => `${a.jobId}:${a.historyId}:${a.responsePending}`)
+    .join("|");
+  const seenQuestions = useRef(new Set<string>());
+  useEffect(() => {
+    pruneQuestionDrafts(undefined, inputRequests);
+    const fresh = chatQuestions.filter(
+      (a) => !seenQuestions.current.has(`${a.jobId}:${a.historyId || a.id}`),
+    );
+    for (const a of fresh)
+      seenQuestions.current.add(`${a.jobId}:${a.historyId || a.id}`);
+    while (seenQuestions.current.size > 200)
+      seenQuestions.current.delete(
+        seenQuestions.current.values().next().value!,
+      );
+    if (fresh.some((a) => (a.params as any)?.isBlocking !== false)) {
+      setWorkspaceTab("questions");
+      setInspector(true);
+      setPreviewFile("");
+    }
+  }, [selected, questionsSignature]);
   const key = selected ?? "new";
   const draft = drafts[key] ?? "",
     attachments = files[key] ?? [];
@@ -1205,7 +1232,7 @@ export function AgentApp({
                       </p>
                     )}
                     {snapshot?.approvals
-                      .filter((a) => a.jobId === selected)
+                      .filter((a) => a.jobId === selected && a.kind !== "input")
                       .map((a) => (
                         <React.Fragment key={a.id}>
                           {approval(a, (value) =>
@@ -1215,6 +1242,27 @@ export function AgentApp({
                           )}
                         </React.Fragment>
                       ))}
+                    {!!chatQuestions.length && (
+                      <button
+                        className="question-callout"
+                        onClick={() => {
+                          setWorkspaceTab("questions");
+                          setInspector(true);
+                          setPreviewFile("");
+                        }}
+                      >
+                        <MessageCircleQuestion size={19} />
+                        <span>
+                          <strong>{t("Codex 有问题需要你回答")}</strong>
+                          <small>
+                            {t(
+                              "在问题面板选择选项或填写回答，提交后继续执行。",
+                            )}
+                          </small>
+                        </span>
+                        <ChevronRight size={17} />
+                      </button>
+                    )}
                     {job?.lastError && (
                       <div className="agent-history-note">{job.lastError}</div>
                     )}
@@ -1739,6 +1787,7 @@ export function AgentApp({
                     setDrafts((d) => ({ ...d, [key]: text }));
                   }}
                   draftAttachments={attachments}
+                  questions={chatQuestions}
                   addSources={() => {
                     const target = key;
                     addPastedFiles(target, () => call("chat.attachments"));

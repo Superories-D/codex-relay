@@ -596,6 +596,28 @@ async function boot() {
         if (!task) throw new Error("定时任务不存在");
         return runScheduled(task);
       }
+      case "chat.questions.read": {
+        const a = z
+          .object({ id: idSchema, before: z.number().int().min(0).optional() })
+          .strict()
+          .parse(args);
+        if (!store.data.jobs.some((job) => job.id === a.id))
+          throw Error("会话不存在");
+        const result = await scheduler.chats.questions(a.id, a.before);
+        const live = new Set(
+          scheduler.approvals
+            .filter((p) => p.jobId === a.id && p.kind === "input")
+            .map((p) => p.historyId),
+        );
+        return {
+          ...result,
+          items: result.items.map((item) =>
+            item.status === "pending" && !live.has(item.id)
+              ? { ...item, status: "expired" }
+              : item,
+          ),
+        };
+      }
       case "chat.goal.create": {
         const a = newJobSchema
           .extend({
@@ -1258,11 +1280,17 @@ async function boot() {
       }
       case "approval.respond": {
         const r = z
-          .object({ id: z.string().max(100), value: z.unknown() })
+          .object({
+            id: z.string().max(100),
+            historyId: z.string().max(100).optional(),
+            value: z.unknown(),
+          })
           .strict()
           .parse(args);
         const approval = scheduler.approvals.find((a) => a.id === r.id);
         if (!approval) throw new Error("请求已经结束");
+        if (approval.kind === "input" && r.historyId !== approval.historyId)
+          throw new Error("问题已更新，请重新查看后回答");
         if (approval.kind === "permissions") {
           const choice = z
             .object({ decision: z.enum(["accept", "decline"]) })

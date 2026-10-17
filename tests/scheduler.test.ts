@@ -54,6 +54,104 @@ class FakeWorker extends EventEmitter implements Worker {
   }
   respond() {}
 }
+it("keeps question answers pending until the native request is resolved, then records the acknowledged answer", async () => {
+  const job = await scheduler.add({ ...input, cwd: root, interactive: true });
+  await until(() => workers[0]?.started);
+  const request: any = {
+    jobId: job.id,
+    id: "71",
+    method: "item/tool/requestUserInput",
+    kind: "input",
+    params: {
+      threadId: job.threadId,
+      turnId: "turn",
+      questions: [
+        {
+          id: "direction",
+          header: "Direction",
+          question: "Which?",
+          isOther: false,
+          isSecret: false,
+          options: [{ label: "Small", description: "Fast" }],
+        },
+      ],
+    },
+  };
+  workers[0].emit("approval", request);
+  const respond = vi.spyOn(workers[0], "respond");
+  scheduler.respond("71", { answers: { direction: { answers: ["Small"] } } });
+  expect(respond).toHaveBeenCalledTimes(1);
+  expect(scheduler.approvals[0].responsePending).toBe(true);
+  expect((await scheduler.chats.questions(job.id)).items[0].status).toBe(
+    "pending",
+  );
+  expect(() => scheduler.respond("71", { answers: {} })).toThrow(
+    "等待服务器确认",
+  );
+  workers[0].emit("approvalResolved", "71");
+  await until(
+    async () =>
+      (await scheduler.chats.questions(job.id)).items[0]?.status === "answered",
+  );
+  expect(scheduler.approvals).toHaveLength(0);
+  expect((await scheduler.chats.questions(job.id)).items[0].answers).toEqual({
+    direction: { answers: ["Small"] },
+  });
+  workers[0].emit("approval", {
+    ...request,
+    id: "73",
+    historyId: undefined,
+    responsePending: false,
+  });
+  (scheduler as any).active.reason = "pause";
+  expect(() =>
+    scheduler.respond("73", { answers: { direction: { answers: ["Small"] } } }),
+  ).toThrow("会话正在停止");
+  (scheduler as any).active.reason = undefined;
+});
+it("expires a pending question on stop and does not claim an unacknowledged answer succeeded", async () => {
+  const job = await scheduler.add({ ...input, cwd: root, interactive: true });
+  await until(() => workers[0]?.started);
+  const request: any = {
+    jobId: job.id,
+    id: "72",
+    method: "item/tool/requestUserInput",
+    kind: "input",
+    params: {
+      threadId: job.threadId,
+      turnId: "turn",
+      questions: [
+        {
+          id: "private",
+          header: "Private",
+          question: "Secret?",
+          isOther: false,
+          isSecret: true,
+          options: null,
+        },
+      ],
+    },
+  };
+  workers[0].emit("approval", request);
+  scheduler.respond("72", {
+    answers: { private: { answers: ["SYNTHETIC_PRIVATE_REPLY"] } },
+  });
+  const originalStop = workers[0].stop.bind(workers[0]);
+  vi.spyOn(workers[0], "stop").mockImplementation(async () => {
+    // Native resolution can mean the stop cleared a pending request, rather
+    // than confirming that the model consumed the submitted answer.
+    workers[0].emit("approvalResolved", "72");
+    return originalStop();
+  });
+  await scheduler.control(job.id, "pause");
+  expect((await scheduler.chats.questions(job.id)).items[0].status).toBe(
+    "unconfirmed",
+  );
+  expect(await fs.readFile(scheduler.chats.file(job.id), "utf8")).not.toContain(
+    "SYNTHETIC_PRIVATE_REPLY",
+  );
+  expect(() => scheduler.respond("72", { answers: {} })).toThrow("过期");
+});
 it("dispatches using account value, and permits an explicit switch back to ordered rotation", async () => {
   store.data.accounts[1].expiresAt = Date.now() + 3600000;
   store.data.settings.accountSelection = "smart";
@@ -668,8 +766,8 @@ function account(id: string): Account {
     failureCount: 0,
   };
 }
-const until = async (fn: () => boolean) => {
-  await vi.waitFor(() => expect(fn()).toBe(true), {
+const until = async (fn: () => boolean | Promise<boolean>) => {
+  await vi.waitFor(async () => expect(await fn()).toBe(true), {
     timeout: 5000,
     interval: 5,
   });

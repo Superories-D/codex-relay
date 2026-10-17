@@ -11,6 +11,7 @@ import type {
   Quota,
   Snapshot,
   ThreadGoal,
+  QuestionRecord,
 } from "../shared/types";
 import { Accounts } from "./accounts";
 import { Store } from "./store";
@@ -33,6 +34,7 @@ import { prepareThread } from "./thread";
 import { ensureWindowsSandbox } from "./windows-sandbox";
 import { AccountWarmups } from "./account-warmups";
 import { WarmupRunner } from "./warmup-runner";
+import { validateQuestionAnswers } from "../shared/user-questions";
 export class Scheduler extends EventEmitter {
   readonly chats: Chats;
   approvals: Approval[] = [];
@@ -55,6 +57,18 @@ export class Scheduler extends EventEmitter {
   private warmupRecovery: Promise<void>;
   private backgroundProbe?: Promise<void>;
   private lastWarmupRecovery = 0;
+  private questionReplies = new Map<string, QuestionRecord["answers"]>();
+  private recordQuestion(
+    a: Approval,
+    status: QuestionRecord["status"],
+    answers?: QuestionRecord["answers"],
+  ) {
+    a.historyId ||= `question:${randomUUID()}`;
+    a.createdAt ||= Date.now();
+    return this.chats
+      .question(a, status, answers)
+      .then(() => this.emit("chatChanged", a.jobId));
+  }
   constructor(
     readonly store: Store,
     readonly accounts: Accounts,
@@ -670,6 +684,10 @@ export class Scheduler extends EventEmitter {
         });
         worker.on("log", (text) => this.log(text, "info", job.id));
         worker.on("approval", (approval) => {
+          if (approval.kind === "input")
+            void this.recordQuestion(approval, "pending").catch((e) =>
+              this.log(e, "error", job.id),
+            );
           this.approvals.push(approval);
           this.log(
             "Codex 等待你的审批或输入，任务和账户保持不变",
@@ -678,6 +696,22 @@ export class Scheduler extends EventEmitter {
           );
         });
         worker.on("approvalResolved", (id) => {
+          const a = this.approvals.find(
+            (a) => a.jobId === job.id && a.id === id,
+          );
+          if (a?.kind === "input") {
+            const answers = this.questionReplies.get(a.historyId!);
+            this.questionReplies.delete(a.historyId!);
+            void this.recordQuestion(
+              a,
+              answers
+                ? active.reason || this.closing
+                  ? "unconfirmed"
+                  : "answered"
+                : "expired",
+              active.reason || this.closing ? undefined : answers,
+            ).catch((e) => this.log(e, "error", job.id));
+          }
           this.approvals = this.approvals.filter(
             (a) => !(a.jobId === job.id && a.id === id),
           );
@@ -731,6 +765,16 @@ export class Scheduler extends EventEmitter {
       } catch (error) {
         active.failedStop = true;
         outcome = { kind: "error", error };
+      }
+      for (const a of this.approvals.filter(
+        (a) => a.jobId === job.id && a.kind === "input",
+      )) {
+        const submitted = this.questionReplies.has(a.historyId!);
+        this.questionReplies.delete(a.historyId!);
+        await this.recordQuestion(
+          a,
+          submitted ? "unconfirmed" : "expired",
+        ).catch((e) => this.log(e, "error", job.id));
       }
       this.approvals = this.approvals.filter((a) => a.jobId !== job.id);
       await this.chats.flush(job.id);
@@ -1436,6 +1480,29 @@ export class Scheduler extends EventEmitter {
   respond(id: string, value: unknown) {
     const approval = this.approvals.find((a) => a.id === id);
     if (!approval || !this.active?.worker) throw new Error("请求已过期");
+    if (approval.kind === "input") {
+      if (
+        this.active.job.id !== approval.jobId ||
+        this.active.reason ||
+        this.closing
+      )
+        throw Error("会话正在停止，请等待停止确认后继续");
+      if (approval.responsePending)
+        throw Error("回答已发送，正在等待服务器确认");
+      const answers = validateQuestionAnswers(approval.params, value);
+      approval.historyId ||= `question:${randomUUID()}`;
+      approval.responsePending = true;
+      this.questionReplies.set(approval.historyId, answers);
+      try {
+        this.active.worker.respond(id, { answers });
+      } catch (error) {
+        approval.responsePending = false;
+        this.questionReplies.delete(approval.historyId);
+        throw error;
+      }
+      this.changed();
+      return;
+    }
     this.active.worker.respond(id, value);
     this.approvals = this.approvals.filter((a) => a !== approval);
     this.changed();

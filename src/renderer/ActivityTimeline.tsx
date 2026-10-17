@@ -82,7 +82,9 @@ export function ActivityTimeline({
   );
   return (
     <MediaContext.Provider value={mediaContext}>
-      {activityRuns(items).map((run) =>
+      {activityRuns(
+        items.filter((item) => item.kind !== "questionRequest"),
+      ).map((run) =>
         run.group ? (
           <ActivityGroup
             key={`${scope}:${run.items[0].id}`}

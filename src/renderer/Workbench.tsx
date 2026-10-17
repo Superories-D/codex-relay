@@ -15,6 +15,7 @@ import {
   GitCompareArrows,
   LoaderCircle,
   MessageSquare,
+  MessageCircleQuestion,
   Network,
   Pencil,
   Plus,
@@ -32,11 +33,13 @@ import type {
   Job,
   ChatAsset,
   ChatAttachment,
+  Approval,
 } from "../shared/types";
 import { MarkdownText } from "./RichMessage";
 import { ActivityTimeline } from "./ActivityTimeline";
 import { ImageThumbnail } from "./ChatImages";
 import { GoalCard } from "./GoalCard";
+import { QuestionPanel } from "./QuestionPanel";
 import { mergePage, agentRows } from "./chat-view";
 type Call = (name: string, args?: unknown) => Promise<any>;
 function readAgentDrafts(): Record<string, string> {
@@ -67,7 +70,12 @@ function saveAgentDrafts(values: Record<string, string>) {
     );
   } catch {}
 }
-export type WorkbenchTab = "summary" | "files" | "changes" | "agents";
+export type WorkbenchTab =
+  | "summary"
+  | "files"
+  | "changes"
+  | "agents"
+  | "questions";
 type Entry = { name: string; path: string; directory: boolean };
 function Tree({
   cwd,
@@ -168,6 +176,7 @@ export function Workbench({
   setDraft,
   addSources,
   draftAttachments = [],
+  questions = [],
 }: {
   tab: WorkbenchTab;
   setTab: (v: WorkbenchTab) => void;
@@ -181,38 +190,55 @@ export function Workbench({
   setDraft: (v: string) => void;
   addSources?: () => void;
   draftAttachments?: ChatAttachment[];
+  questions?: Approval[];
 }) {
   useI18n();
-
+  const tabs = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    tabs.current
+      ?.querySelector(".selected")
+      ?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [tab]);
   return (
     <aside
       className={`workbench ${file ? "with-preview" : ""}`}
       aria-label={t("工作面板")}
     >
       <header className="workbench-tabs">
-        {(
-          [
-            ["summary", t("摘要"), FileText],
-            ["files", t("文件"), Folder],
-            ["changes", t("更改"), GitCompareArrows],
-            ["agents", t("代理"), Network],
-          ] as const
-        ).map(([key, label, Icon]) => (
-          <button
-            key={key}
-            className={tab === key ? "selected" : ""}
-            onClick={() => {
-              setTab(key);
-              setFile("");
-            }}
-          >
-            <Icon size={14} />
-            {label}
-            {key === "agents" && !!job?.agents?.length && (
-              <small>{job.agents.length}</small>
-            )}
-          </button>
-        ))}
+        <div className="workbench-tab-list" ref={tabs}>
+          {(
+            [
+              ["summary", t("摘要"), FileText],
+              ["files", t("文件"), Folder],
+              ["changes", t("更改"), GitCompareArrows],
+              ["agents", t("代理"), Network],
+              ["questions", t("问题"), MessageCircleQuestion],
+            ] as const
+          ).map(([key, label, Icon]) => (
+            <button
+              key={key}
+              className={tab === key ? "selected" : ""}
+              onClick={() => {
+                setTab(key);
+                setFile("");
+              }}
+            >
+              <Icon size={14} />
+              {label}
+              {key === "agents" && !!job?.agents?.length && (
+                <small>{job.agents.length}</small>
+              )}
+              {key === "questions" && !!questions.length && (
+                <small>
+                  {questions.reduce(
+                    (n, a) => n + ((a.params as any)?.questions?.length || 0),
+                    0,
+                  )}
+                </small>
+              )}
+            </button>
+          ))}
+        </div>
         <button
           className="workbench-close"
           aria-label={t("关闭工作面板")}
@@ -244,6 +270,8 @@ export function Workbench({
         <Changes cwd={cwd} call={call} openFile={setFile} comment={setDraft} />
       ) : tab === "agents" ? (
         <Agents job={job} call={call} openFile={setFile} />
+      ) : tab === "questions" ? (
+        <QuestionPanel job={job} requests={questions} />
       ) : (
         <Summary
           items={items}

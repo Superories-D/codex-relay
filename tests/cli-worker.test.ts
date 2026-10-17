@@ -106,6 +106,44 @@ beforeEach(() => {
     sandbox: "workspaceWrite",
   };
 });
+it("offers proactive question tools and resolves child-thread requests before filtering child chat events", async () => {
+  const w = worker(),
+    approval = vi.fn(),
+    resolved = vi.fn();
+  w.on("approval", approval);
+  w.on("approvalResolved", resolved);
+  await w.start(auth);
+  expect(rpc.call).toHaveBeenCalledWith(
+    "thread/start",
+    expect.objectContaining({
+      config: expect.objectContaining({
+        "features.default_mode_request_user_input": true,
+      }),
+    }),
+  );
+  rpc.notify("thread/started", {
+    thread: {
+      id: "child",
+      source: {
+        subAgent: { thread_spawn: { parent_thread_id: job.threadId } },
+      },
+    },
+  });
+  rpc.emit("request", {
+    id: 77,
+    method: "item/tool/requestUserInput",
+    params: { threadId: "child", questions: [] },
+  });
+  expect(approval).toHaveBeenCalledWith(
+    expect.objectContaining({ kind: "input", id: "77" }),
+  );
+  w.respond("77", { answers: {} });
+  expect(rpc.respond).toHaveBeenCalledWith(77, { answers: {} });
+  expect(resolved).not.toHaveBeenCalled();
+  rpc.notify("serverRequest/resolved", { threadId: "child", requestId: 77 });
+  expect(resolved).toHaveBeenCalledWith("77");
+  await w.close();
+});
 it("holds a new native Goal turn open when the previous turn's final verification completes", async () => {
   const w = worker(),
     settled = vi.fn();

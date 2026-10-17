@@ -21,6 +21,7 @@ import type { Diagnostic } from "../core/diagnostics";
 import { Dialog } from "./Dialog";
 import { operationKey, operationLabel } from "./operations";
 import { AgentApp } from "./AgentApp";
+import { QuestionRequest } from "./QuestionPanel";
 declare global {
   interface Window {
     relay: Bridge;
@@ -1655,7 +1656,6 @@ function ApprovalCard({
   useI18n();
 
   const p = a.params as any;
-  const [answers, setAnswers] = useState<Record<string, string>>({});
   const [json, setJson] = useState("{}");
   const [inputError, setInputError] = useState("");
   if (a.kind === "permissions")
@@ -1742,54 +1742,14 @@ function ApprovalCard({
     );
   return (
     <section className="approval">
-      <h3>
-        {t("需要你的")}
-        {a.kind === "input" ? t("输入") : t("审批")}
-      </h3>
+      {a.kind !== "input" && (
+        <h3>
+          {t("需要你的")}
+          {t("审批")}
+        </h3>
+      )}
       {a.kind === "input" ? (
-        <>
-          {(p.questions ?? []).map((q: any) => (
-            <label key={q.id}>
-              {q.question}
-              {q.options?.length ? (
-                <select
-                  value={answers[q.id] ?? ""}
-                  onChange={(e) =>
-                    setAnswers({ ...answers, [q.id]: e.target.value })
-                  }
-                >
-                  <option value="">{t("请选择")}</option>
-                  {q.options.map((o: any) => (
-                    <option key={o.label} value={o.label}>
-                      {o.label} — {o.description}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <input
-                  value={answers[q.id] ?? ""}
-                  onChange={(e) =>
-                    setAnswers({ ...answers, [q.id]: e.target.value })
-                  }
-                />
-              )}
-            </label>
-          ))}
-          <button
-            onClick={() =>
-              respond({
-                answers: Object.fromEntries(
-                  Object.entries(answers).map(([key, value]) => [
-                    key,
-                    { answers: [value] },
-                  ]),
-                ),
-              })
-            }
-          >
-            {t("提交回答")}
-          </button>
-        </>
+        <QuestionRequest approval={a} />
       ) : (
         <>
           <pre>{JSON.stringify(p, null, 2)}</pre>

@@ -175,6 +175,9 @@ export interface ExistingInspection {
   issue?: string;
 }
 export interface Approval {
+  historyId?: string;
+  createdAt?: number;
+  responsePending?: boolean;
   id: string;
   jobId: string;
   method: string;
@@ -186,6 +189,25 @@ export interface Approval {
     | "permissions"
     | "elicitation"
     | "unsupported";
+}
+export interface UserQuestion {
+  id: string;
+  header: string;
+  question: string;
+  isOther: boolean;
+  isSecret: boolean;
+  options: { label: string; description: string }[] | null;
+}
+export interface QuestionRecord {
+  id: string;
+  requestId: string;
+  threadId?: string;
+  turnId?: string;
+  questions: UserQuestion[];
+  status: "pending" | "answered" | "expired" | "unconfirmed";
+  isBlocking: boolean;
+  answers?: Record<string, { answers: string[] }>;
+  at: number;
 }
 export interface Log {
   id: string;
