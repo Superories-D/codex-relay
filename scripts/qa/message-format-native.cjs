@@ -91,11 +91,10 @@ const text = `### 可阅读，也可准确复制\n\n**正文**包含行内代码
   let app, page, originalClipboard;
   try {
     app = await _electron.launch({
-      executablePath: path.join(
-        root,
-        "node_modules/electron/dist/electron.exe",
-      ),
-      args: [root],
+      executablePath:
+        process.env.RELAY_EXECUTABLE ||
+        path.join(root, "node_modules/electron/dist/electron.exe"),
+      args: process.env.RELAY_EXECUTABLE ? [] : [root],
       env,
       timeout: 60000,
     });

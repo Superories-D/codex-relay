@@ -68,11 +68,10 @@ const root = path.resolve(__dirname, "../.."),
     report = { fixture, inferenceRequests: 0 };
   const launch = async () => {
     app = await _electron.launch({
-      executablePath: path.join(
-        root,
-        "node_modules/electron/dist/electron.exe",
-      ),
-      args: [root],
+      executablePath:
+        process.env.RELAY_EXECUTABLE ||
+        path.join(root, "node_modules/electron/dist/electron.exe"),
+      args: process.env.RELAY_EXECUTABLE ? [] : [root],
       env,
       timeout: 60000,
     });
