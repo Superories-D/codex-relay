@@ -21,7 +21,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { Store } from "../core/store";
 import { checkEnvironment } from "../core/diagnostics";
-import { windowsPowerShellEnv } from "../core/powershell";
+import { windowsPowerShellEnv, protectDataDirectory } from "../core/powershell";
 import { AccountImport } from "../core/account-import";
 import {
   ExistingSessions,
@@ -97,25 +97,9 @@ async function boot() {
   const realDataRoot = await fs.realpath(dataRoot);
   startupTrace("data directory resolved");
   if (process.platform === "win32")
-    await promisify(execFile)(
-      path.join(
-        process.env.SystemRoot ?? "C:\\Windows",
-        "System32",
-        "WindowsPowerShell",
-        "v1.0",
-        "powershell.exe",
-      ),
-      [
-        "-NoProfile",
-        "-NonInteractive",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        path.join(scripts, "protect-directory.ps1"),
-        "-Directory",
-        realDataRoot,
-      ],
-      { windowsHide: true, timeout: 15000, env: windowsPowerShellEnv() },
+    await protectDataDirectory(
+      path.join(scripts, "protect-directory.ps1"),
+      realDataRoot,
     );
   startupTrace("initialize system credential encryption");
   if (

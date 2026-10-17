@@ -33,24 +33,32 @@ export async function atomicWrite(
   value: string | Buffer,
 ): Promise<void> {
   await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
-  // MSIX hosts may redirect AppData to another volume. Resolve the directory
-  // before creating either path so rename remains a same-volume atomic replace.
+  // Resolve the parent first, but Windows can still redirect a newly created
+  // file while leaving this existing directory's realpath unchanged.
   const target = path.join(
     await fs.realpath(path.dirname(file)),
     path.basename(file),
   );
   const tmp = `${target}.${randomUUID()}.tmp`;
-  const handle = await fs.open(tmp, "wx", 0o600);
+  let actualTmp = tmp;
   try {
-    await handle.writeFile(value);
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
-  try {
-    await fs.rename(tmp, target);
+    const handle = await fs.open(tmp, "wx", 0o600);
+    try {
+      await handle.writeFile(value);
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    // Only the created file reveals the physical destination in a mixed
+    // global/MSIX AppData view. Rename within that directory, never copy over
+    // or truncate the existing destination as an EXDEV workaround.
+    actualTmp = await fs.realpath(tmp);
+    await fs.rename(
+      actualTmp,
+      path.join(path.dirname(actualTmp), path.basename(target)),
+    );
   } catch (error) {
-    await fs.rm(tmp, { force: true });
+    await fs.rm(actualTmp, { force: true }).catch(() => {});
     throw error;
   }
 }

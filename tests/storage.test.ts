@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -8,8 +8,89 @@ import { Store, atomicWrite } from "../src/core/store";
 import { redact } from "../src/core/redact";
 import { newJobSchema, settingsSchema } from "../src/main/validation";
 describe("credential and transcript boundaries", () => {
+  it("keeps atomic replacement on the actual new file's volume when AppData redirects only newly created files", async () => {
+    const parent = path.resolve("qa-output");
+    await fs.mkdir(parent, { recursive: true });
+    const root = await fs.mkdtemp(path.join(parent, "atomic-overlay-"));
+    const logical = path.join(root, "logical"),
+      physical = path.join(root, "physical");
+    await fs.mkdir(logical);
+    await fs.mkdir(physical);
+    const original = path.join(logical, "state.json"),
+      destination = path.join(physical, "state.json");
+    await fs.writeFile(original, "global-old");
+    await fs.writeFile(destination, "overlay-old");
+    const open = fs.open.bind(fs),
+      realpath = fs.realpath.bind(fs),
+      rename = fs.rename.bind(fs);
+    const redirected = (file: any) =>
+      typeof file === "string" &&
+      path.dirname(file) === logical &&
+      file.endsWith(".tmp");
+    const openSpy = vi
+      .spyOn(fs, "open")
+      .mockImplementation(((file: any, ...args: any[]) =>
+        open(
+          redirected(file) ? path.join(physical, path.basename(file)) : file,
+          ...args,
+        )) as any);
+    const pathSpy = vi
+      .spyOn(fs, "realpath")
+      .mockImplementation(((file: any, ...args: any[]) =>
+        realpath(
+          redirected(file) ? path.join(physical, path.basename(file)) : file,
+          ...args,
+        )) as any);
+    const renameSpy = vi
+      .spyOn(fs, "rename")
+      .mockImplementation(async (source, target) => {
+        if (path.dirname(String(source)) === logical)
+          throw Object.assign(Error("virtualized cross-device rename"), {
+            code: "EXDEV",
+          });
+        return rename(source, target);
+      });
+    try {
+      await atomicWrite(original, "overlay-new");
+      expect(await fs.readFile(destination, "utf8")).toBe("overlay-new");
+      expect(await fs.readFile(original, "utf8")).toBe("global-old");
+      expect(await fs.readdir(physical)).toEqual(["state.json"]);
+    } finally {
+      openSpy.mockRestore();
+      pathSpy.mockRestore();
+      renameSpy.mockRestore();
+      expect(path.dirname(await fs.realpath(root))).toBe(
+        await fs.realpath(parent),
+      );
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+  it("preserves an existing destination and removes its temporary file if replacement is denied", async () => {
+    const parent = path.resolve("qa-output");
+    await fs.mkdir(parent, { recursive: true });
+    const root = await fs.mkdtemp(path.join(parent, "atomic-denied-")),
+      file = path.join(root, "state.json");
+    await fs.writeFile(file, "verified-old");
+    const spy = vi
+      .spyOn(fs, "rename")
+      .mockRejectedValue(Object.assign(Error("denied"), { code: "EPERM" }));
+    try {
+      await expect(atomicWrite(file, "new")).rejects.toMatchObject({
+        code: "EPERM",
+      });
+      expect(await fs.readFile(file, "utf8")).toBe("verified-old");
+      expect(await fs.readdir(root)).toEqual(["state.json"]);
+    } finally {
+      spy.mockRestore();
+      expect(path.dirname(await fs.realpath(root))).toBe(
+        await fs.realpath(parent),
+      );
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
   it("atomically creates and replaces files in the host's application data directory", async () => {
-    const base = process.platform === "win32" ? process.env.APPDATA! : os.tmpdir();
+    const base =
+      process.platform === "win32" ? process.env.APPDATA! : os.tmpdir();
     const dir = await fs.mkdtemp(path.join(base, "relay-atomic-test-"));
     const actual = await fs.realpath(dir);
     try {
