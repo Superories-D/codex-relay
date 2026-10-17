@@ -23,6 +23,14 @@ await build({
   external: ["electron"],
 });
 await build({
+  entryPoints: ["src/core/history-import-worker.ts"],
+  outfile: "dist/main/history-import-worker.cjs",
+  bundle: true,
+  platform: "node",
+  target: "node22",
+  format: "cjs",
+});
+await build({
   entryPoints: ["src/renderer/App.tsx"],
   outfile: "dist/renderer/app.js",
   bundle: true,

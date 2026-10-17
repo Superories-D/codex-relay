@@ -55,6 +55,7 @@ import { randomUUID } from "node:crypto";
 import { Rpc } from "../core/rpc";
 import { capabilities } from "../shared/capabilities";
 import { resolveLanguage, translate } from "../shared/locale";
+import { BackgroundHistoryImport } from "../core/history-import";
 app.setName("Codex Relay");
 const startupTrace = (stage: string) => {
   if (process.env.CODEX_RELAY_STARTUP_TRACE === "1")
@@ -179,6 +180,13 @@ async function boot() {
     new WindowsExistingDriver(path.join(dataRoot, "session-requests"), scripts),
   );
   const history = new History(store, scheduler.chats);
+  const backgroundHistory = new BackgroundHistoryImport(
+    store,
+    desktop,
+    path.join(__dirname, "history-import-worker.cjs"),
+    () => scheduler.changed(),
+  );
+  await backgroundHistory.load();
   const dirtyChats = new Set<string>();
   const watchedChats = new Set<string>();
   let chatPushTimer: ReturnType<typeof setTimeout> | undefined;
@@ -642,6 +650,35 @@ async function boot() {
         );
         return result.filePath;
       }
+      case "chat.source.open": {
+        const a = z.object({ id: idSchema }).strict().parse(args);
+        const job = store.data.jobs.find((job) => job.id === a.id);
+        if (!job?.threadId) throw Error("会话尚无原始记录");
+        const file = await findTranscript(
+          store.jobHome(job.id),
+          job.threadId,
+          true,
+        );
+        const error = await shell.openPath(file);
+        if (error) throw Error(error);
+        return;
+      }
+      case "history.importAll.status":
+        return backgroundHistory.progress;
+      case "history.importAll.start": {
+        const a = z
+          .object({
+            homes: z
+              .array(z.string().refine(path.isAbsolute))
+              .max(20)
+              .optional(),
+          })
+          .strict()
+          .parse(args || {});
+        return backgroundHistory.start(a.homes);
+      }
+      case "history.importAll.cancel":
+        return backgroundHistory.cancel();
       case "history.scan": {
         const a = z
           .object({
@@ -1184,6 +1221,7 @@ async function boot() {
         .then(() =>
           Promise.all([
             importer.drain(),
+            backgroundHistory.shutdown(),
             scheduler.shutdown(),
             terminals.shutdown(),
             catalogQueue.catch(() => {}),

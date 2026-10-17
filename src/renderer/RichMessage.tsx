@@ -101,11 +101,13 @@ function RichMessageView({
   onOpen,
   onAgents,
   onChanges,
+  onSource,
 }: {
   item: ChatItem;
   onOpen: (path: string) => void;
   onAgents: () => void;
   onChanges: () => void;
+  onSource?: () => void;
 }) {
   useI18n();
 
@@ -181,6 +183,14 @@ function RichMessageView({
             <pre>{item.detail || item.text}</pre>
           )}
         </details>
+        {item.sourceTruncated && (
+          <div className="source-truncated-note">
+            <span>{t("超长内容显示预览，完整内容已保留在原始记录中。")}</span>
+            {onSource && (
+              <button onClick={onSource}>{t("查看完整原始记录")}</button>
+            )}
+          </div>
+        )}
         {files && (
           <button className="activity-action" onClick={onChanges}>
             {t("查看更改")}
@@ -198,6 +208,14 @@ function RichMessageView({
   }
   return (
     <article className={`agent-message ${item.role}`}>
+      {item.sourceTruncated && (
+        <div className="source-truncated-note">
+          <span>{t("超长内容显示预览，完整内容已保留在原始记录中。")}</span>
+          {onSource && (
+            <button onClick={onSource}>{t("查看完整原始记录")}</button>
+          )}
+        </div>
+      )}
       <MarkdownText text={item.text} onOpen={onOpen} />
       {item.detail && (
         <div className="message-attachments">

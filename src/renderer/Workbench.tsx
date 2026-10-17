@@ -862,7 +862,7 @@ function Agents({
               {error && <p className="panel-error">{error}</p>}
               {chat?.items.map((i) => (
                 <RichMessage
-                  key={i.id}
+                  key={`${selected.threadId}:${i.id}`}
                   item={i}
                   onOpen={openFile}
                   onAgents={() => {}}

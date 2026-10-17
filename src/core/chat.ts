@@ -262,27 +262,46 @@ export function protocolItem(p: any, id: string): ChatItem {
       : {}),
   };
 }
-export async function* jsonLines(file: string) {
-  const stream = createReadStream(file, { encoding: "utf8" });
-  let pending = "",
+export async function* jsonLines(
+  file: string,
+  bytes?: number,
+  maxRecordBytes = 16 * 1024 * 1024,
+) {
+  if (bytes === 0) return;
+  const stream = createReadStream(file, {
+    ...(bytes === undefined ? {} : { end: bytes - 1 }),
+  });
+  let chunks: Buffer[] = [],
+    pendingBytes = 0,
     first = true;
   try {
     for await (const chunk of stream) {
-      pending += chunk;
-      let end: number;
-      while ((end = pending.indexOf("\n")) >= 0) {
-        let line = pending.slice(0, end);
-        pending = pending.slice(end + 1);
+      let start = 0,
+        end: number;
+      while ((end = chunk.indexOf(10, start)) >= 0) {
+        const part = chunk.subarray(start, end);
+        pendingBytes += part.length;
+        if (pendingBytes > maxRecordBytes)
+          throw new Error(`单条历史记录超过 ${maxRecordBytes / 1048576} MiB`);
+        let line = chunks.length
+          ? Buffer.concat([...chunks, part], pendingBytes).toString("utf8")
+          : part.toString("utf8");
+        chunks = [];
+        pendingBytes = 0;
+        start = end + 1;
         if (first) {
           line = line.replace(/^\uFEFF/, "");
           first = false;
         }
-        if (line.length > 16 * 1024 * 1024)
-          throw new Error("单条历史记录超过 16 MiB");
         if (line.trim()) yield JSON.parse(line);
       }
-      if (pending.length > 16 * 1024 * 1024)
-        throw new Error("单条历史记录超过 16 MiB");
+      if (start < chunk.length) {
+        const remaining = chunk.subarray(start);
+        chunks.push(remaining);
+        pendingBytes += remaining.length;
+      }
+      if (pendingBytes > maxRecordBytes)
+        throw new Error(`单条历史记录超过 ${maxRecordBytes / 1048576} MiB`);
     }
     // A crash or concurrent writer may leave a partial final record. Only
     // newline-terminated records belong to a committed snapshot.
@@ -290,9 +309,12 @@ export async function* jsonLines(file: string) {
     stream.destroy();
   }
 }
-export async function* rolloutRecords(file: string) {
+export async function* rolloutRecords(
+  file: string,
+  maxRecordBytes = 16 * 1024 * 1024,
+) {
   let total = 0;
-  for await (const r of jsonLines(file)) {
+  for await (const r of jsonLines(file, undefined, maxRecordBytes)) {
     const p = r.payload;
     if (r.type !== "response_item" || !p) continue;
     let item: ChatItem | undefined;
@@ -318,19 +340,32 @@ export async function* rolloutRecords(file: string) {
         "web_search_call",
       ].includes(p.type)
     ) {
+      const rawValue =
+        typeof p.output === "string"
+          ? p.output
+          : (p.arguments ?? p.input ?? JSON.stringify(p));
+      const rawDetail =
+        typeof rawValue === "string" ? rawValue : JSON.stringify(rawValue);
       item = {
         id: `history:${total}`,
         role: "tool",
         kind: p.type,
         text: p.name ?? (p.type.endsWith("output") ? "工具结果" : "搜索"),
-        detail:
-          typeof p.output === "string"
-            ? redact(p.output)
-            : redact(p.arguments ?? p.input ?? JSON.stringify(p)),
+        detail: redact(rawDetail.slice(0, 262144)),
+        ...(rawDetail.length > 262144 ? { sourceTruncated: true } : {}),
         at: Date.parse(r.timestamp) || 0,
       };
     }
     if (item) {
+      const previewLimit = 262144;
+      if (item.text.length > previewLimit) {
+        item.text = item.text.slice(0, previewLimit);
+        item.sourceTruncated = true;
+      }
+      if (item.detail && item.detail.length > previewLimit) {
+        item.detail = item.detail.slice(0, previewLimit);
+        item.sourceTruncated = true;
+      }
       total++;
       yield item;
     }

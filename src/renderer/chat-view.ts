@@ -9,6 +9,7 @@ export function sameChatItem(previous: ChatItem, next: ChatItem) {
       previous.text === next.text &&
       previous.detail === next.detail &&
       previous.status === next.status &&
+      previous.sourceTruncated === next.sourceTruncated &&
       (previous.data === next.data ||
         JSON.stringify(previous.data) === JSON.stringify(next.data)))
   );

@@ -5,6 +5,8 @@ import { createHash, randomUUID } from "node:crypto";
 import type { HistoryEntry, Job } from "../shared/types";
 import { Store } from "./store";
 import { Chats, jsonLines, rolloutRecords } from "./chat";
+import { captureRollout, HistoryDependencyError } from "./rollout-snapshot";
+import { TextWriter } from "./text-writer";
 
 export class History {
   private entries = new Map<
@@ -15,10 +17,16 @@ export class History {
   constructor(
     private store: Store,
     private chats: Chats,
+    private maxRecordBytes = 16 * 1024 * 1024,
   ) {}
-  async scan(homes?: string[]) {
+  async scan(
+    homes?: string[],
+    progress?: (scanned: number) => void,
+    cancelled?: () => boolean,
+  ) {
     if (this.busy) throw new Error("正在导入历史，请稍后扫描");
     this.entries.clear();
+    let scanned = 0;
     const warnings: string[] = [],
       roots: string[] = [];
     for (const root of homes ??
@@ -36,7 +44,7 @@ export class History {
       const titles = new Map<string, string>();
       try {
         for await (const r of jsonLines(path.join(home, "session_index.jsonl")))
-          if (r.id && r.thread_name) titles.set(r.id, r.thread_name);
+                  if (r.id && typeof r.thread_name==="string") titles.set(r.id, r.thread_name);
       } catch {}
       const walk = async (dir: string) => {
         let files;
@@ -47,6 +55,7 @@ export class History {
           return;
         }
         for (const f of files) {
+          if (cancelled?.()) throw Error("导入已停止");
           const file = path.join(dir, f.name);
           if (f.isDirectory()) await walk(file);
           else if (f.isFile() && f.name.endsWith(".jsonl")) {
@@ -58,7 +67,11 @@ export class History {
               let meta: any,
                 prompt = "",
                 count = 0;
-              for await (const row of jsonLines(real)) {
+              for await (const row of jsonLines(
+                real,
+                undefined,
+                this.maxRecordBytes,
+              )) {
                 if (!meta) {
                   if (row.type !== "session_meta")
                     throw new Error("缺少 session_meta");
@@ -84,7 +97,7 @@ export class History {
                 title:
                   titles.get(meta.id) ??
                   (prompt || "Codex 会话").replace(/\s+/g, " ").slice(0, 100),
-                cwd: meta.cwd ?? "",
+                cwd: typeof meta.cwd==="string"?meta.cwd:"",
                 source,
                 updatedAt: (await fs.stat(file)).mtimeMs,
                 archived: relative.split(path.sep)[0] === "archived_sessions",
@@ -101,6 +114,7 @@ export class History {
                 ),
               };
               this.entries.set(id, { entry, file: real, home });
+              progress?.(++scanned);
             } catch (e) {
               warnings.push(`${f.name}：${String(e)}`);
             }
@@ -118,6 +132,11 @@ export class History {
       warnings,
     };
   }
+  async copyEntry(id: string) {
+    const found = this.entries.get(id);
+    if (!found) throw Error("扫描记录已过期");
+    return this.copy(found.file, found.entry, found.home);
+  }
   async import(ids?: string[]) {
     if (this.busy) throw new Error("导入正在进行中");
     this.busy = true;
@@ -131,7 +150,7 @@ export class History {
           errors.push(`扫描记录已过期：${id}`);
           continue;
         }
-        const { entry, file } = found;
+        const { entry, file, home } = found;
         if (
           this.store.data.jobs.some(
             (j) => j.historySource?.threadId === entry.threadId,
@@ -141,7 +160,7 @@ export class History {
           continue;
         }
         try {
-          const job = await this.copy(file, entry);
+          const job = await this.copy(file, entry, home);
           this.store.data.jobs.push(job);
           await this.store.save();
           imported.push(job.id);
@@ -154,42 +173,51 @@ export class History {
       this.busy = false;
     }
   }
-  async copy(file: string, entry: HistoryEntry): Promise<Job> {
+  async copy(
+    file: string,
+    entry: HistoryEntry,
+    sourceHome = path.dirname(file),
+  ): Promise<Job> {
     const id = randomUUID(),
       threadId = randomUUID(),
       home = this.store.jobHome(id);
     await fs.mkdir(home, { recursive: true, mode: 0o700 });
     const realHome = await fs.realpath(home);
     const snapshot = path.join(realHome, "import-source.jsonl");
-    // Snapshot only complete records at the initial size. Appending source processes
-    // are untouched; source truncation/replacement is detected before committing.
-    const stat = await fs.stat(file);
-    await fs.copyFile(file, snapshot);
-    const after = await fs.stat(file);
-    if (
-      after.ino !== stat.ino ||
-      after.size < stat.size ||
-      (after.size === stat.size && after.mtimeMs !== stat.mtimeMs)
-    )
-      throw new Error("源会话已改变，请重新导入");
-    const handle = await fs.open(snapshot, "r+");
+    const resolve = (id: string) =>
+      [...this.entries.values()].find(
+        (found) => found.home === sourceHome && found.entry.threadId === id,
+      )?.file;
+    let issue = entry.issue;
     try {
-      await handle.truncate(stat.size);
-      let end = stat.size,
-        found = false;
-      while (end > 0 && !found) {
-        const start = Math.max(0, end - 65536),
-          b = Buffer.alloc(end - start);
-        await handle.read(b, 0, b.length, start);
-        const newline = b.lastIndexOf(10);
-        if (newline >= 0) {
-          await handle.truncate(start + newline + 1);
-          found = true;
-        } else end = start;
-      }
-      if (!found) throw new Error("会话没有完整记录");
-    } finally {
-      await handle.close();
+      const captured = await captureRollout(
+        file,
+        sourceHome,
+        snapshot,
+        resolve,
+        true,
+        this.maxRecordBytes,
+      );
+      if (captured.privateTools)
+        issue =
+          "此会话使用 Desktop 专属工具，可阅读历史；CLI 无法提供原应用工具。";
+      else if (
+        captured.flattened &&
+        !captured.meta.parent_thread_id &&
+        entry.source !== "subagent"
+      )
+        issue = undefined;
+    } catch (error) {
+      if (!(error instanceof HistoryDependencyError)) throw error;
+      await captureRollout(
+        file,
+        sourceHome,
+        snapshot,
+        resolve,
+        false,
+        this.maxRecordBytes,
+      );
+      issue = `父会话历史未完整恢复，仅可阅读已复制记录：${error.message}`;
     }
     const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, "-");
     const dir = path.join(
@@ -200,15 +228,21 @@ export class History {
     await fs.mkdir(dir, { recursive: true });
     const rollout = path.join(dir, `rollout-${timestamp}-${threadId}.jsonl`);
     const out = await fs.open(rollout, "wx", 0o600);
+    const writer = new TextWriter(out);
     let model = "",
       effort = "";
     try {
       let first = true;
-      for await (const row of jsonLines(snapshot)) {
+      for await (const row of jsonLines(
+        snapshot,
+        undefined,
+        this.maxRecordBytes,
+      )) {
         if (first) {
           if (row.type !== "session_meta" || row.payload?.id !== entry.threadId)
             throw new Error("会话身份发生变化");
           row.payload.id = threadId;
+          if (row.payload.session_id) row.payload.session_id = threadId;
           first = false;
         }
         if (row.type === "turn_context") {
@@ -216,17 +250,20 @@ export class History {
           const level = row.payload?.effort ?? row.payload?.reasoning_effort;
           if (typeof level === "string") effort = level;
         }
-        await out.writeFile(JSON.stringify(row) + "\n");
+        await writer.write(JSON.stringify(row) + "\n");
       }
+      await writer.flush();
       await out.sync();
     } finally {
       await out.close();
     }
     await fs.mkdir(path.dirname(this.chats.file(id)), { recursive: true });
     const transcript = await fs.open(this.chats.file(id), "wx", 0o600);
+    const transcriptWriter = new TextWriter(transcript);
     try {
-      for await (const item of rolloutRecords(snapshot))
-        await transcript.writeFile(JSON.stringify(item) + "\n");
+      for await (const item of rolloutRecords(snapshot, this.maxRecordBytes))
+        await transcriptWriter.write(JSON.stringify(item) + "\n");
+      await transcriptWriter.flush();
     } finally {
       await transcript.close();
     }
@@ -247,7 +284,7 @@ export class History {
       historySource: {
         threadId: entry.threadId,
         source: entry.source,
-        issue: entry.issue,
+        issue,
       },
       rotations: 0,
       createdAt: entry.updatedAt,

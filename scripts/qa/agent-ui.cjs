@@ -203,6 +203,24 @@ const root = path.resolve(__dirname, "../..");
         },
         command: async (name, args) => {
           window.qaCalls.push({ name, args });
+          if (name === "history.importAll.status")
+            return {
+              id: "",
+              phase: "idle",
+              scanned: 0,
+              total: 0,
+              processed: 0,
+              imported: 0,
+              skipped: 0,
+              failed: 0,
+              projects: 0,
+              missingProjects: 0,
+              readOnly: 0,
+              current: "",
+              roots: [],
+              warnings: [],
+              failures: [],
+            };
           if (name === "desktop.read") return structuredClone(desktopData);
           if (name === "desktop.preferences") {
             Object.assign(desktopData.preferences, args);

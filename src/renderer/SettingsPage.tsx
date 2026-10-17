@@ -31,6 +31,7 @@ import {
 import type { DesktopData } from "../core/desktop";
 import type { Account, Snapshot } from "../shared/types";
 import type { ImportPreview } from "../core/account-import";
+import { ImportAllControl } from "./ImportAllControl";
 type Call = (name: string, args?: unknown) => Promise<any>;
 export function SettingsPage({
   initial,
@@ -167,6 +168,7 @@ export function SettingsPage({
           {tab === "general" && (
             <>
               <h1>{t("常规")}</h1>
+              <ImportAllControl call={call} changed={refresh} />
               <SettingRow
                 title={t("语言")}
                 description={t(

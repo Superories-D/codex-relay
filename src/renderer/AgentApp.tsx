@@ -1,5 +1,5 @@
 import { t, useI18n, setLanguage } from "./i18n";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useMemo } from "react";
 import type {
   Approval,
   ChatAttachment,
@@ -19,6 +19,7 @@ import { Workbench, type WorkbenchTab } from "./Workbench";
 import { ExtensionsPage, SchedulesPage } from "./FeaturePages";
 import { SettingsPage } from "./SettingsPage";
 import { TurnHistory } from "./TurnHistory";
+import { ImportAllControl } from "./ImportAllControl";
 import type { DesktopData } from "../core/desktop";
 import {
   Archive,
@@ -109,6 +110,8 @@ export function AgentApp({
 
   const [snapshot, setSnapshot] = useState<Snapshot>();
   const [turnHistory, setTurnHistory] = useState(false);
+  const [visibleProjects, setVisibleProjects] = useState(30),
+    [visibleThreads, setVisibleThreads] = useState<Record<string, number>>({});
   const [selected, setSelected] = useState<string | undefined>(
     () => localStorage.getItem("relay.lastChat") || undefined,
   );
@@ -526,6 +529,46 @@ export function AgentApp({
     setFiles((f) => ({ ...f, [key]: [] }));
     following.current = true;
   };
+  const jobs = useMemo(() => {
+    const projectMatches = new Set(
+      (desktop.projects ?? [])
+        .filter((project) =>
+          `${project.name} ${project.cwd}`
+            .toLowerCase()
+            .includes(search.toLowerCase()),
+        )
+        .map((project) => project.cwd),
+    );
+    return (snapshot?.jobs ?? []).filter(
+      (j) =>
+        !!j.archived === archived &&
+        (projectMatches.has(j.cwd) ||
+          `${j.title} ${j.cwd}`.toLowerCase().includes(search.toLowerCase())),
+    );
+  }, [snapshot?.jobs, desktop.projects, archived, search]);
+  const groups = useMemo(() => {
+    const groups = new Map<string, Job[]>();
+    for (const project of desktop.projects ?? [])
+      if (
+        !search ||
+        `${project.name} ${project.cwd}`
+          .toLowerCase()
+          .includes(search.toLowerCase())
+      )
+        groups.set(project.cwd, []);
+    for (const j of [...jobs].sort((a, b) => b.updatedAt - a.updatedAt)) {
+      const group = groups.get(j.cwd);
+      if (group) group.push(j);
+      else groups.set(j.cwd, [j]);
+    }
+    return groups;
+  }, [desktop.projects, jobs, search]);
+  const visibleGroups = useMemo(() => {
+    const entries = [...groups].slice(0, visibleProjects);
+    if (job && groups.has(job.cwd) && !entries.some(([cwd]) => cwd === job.cwd))
+      entries.push([job.cwd, groups.get(job.cwd)!]);
+    return entries;
+  }, [groups, visibleProjects, job?.cwd]);
   if (manage.startsWith("advanced:"))
     return (
       <div className="legacy-window">
@@ -538,15 +581,6 @@ export function AgentApp({
         {management(manage.slice(9))}
       </div>
     );
-  const jobs = (snapshot?.jobs ?? []).filter(
-    (j) =>
-      !!j.archived === archived &&
-      `${j.title} ${j.cwd}`.toLowerCase().includes(search.toLowerCase()),
-  );
-  const groups = new Map<string, Job[]>();
-  for (const project of desktop.projects ?? []) groups.set(project.cwd, []);
-  for (const j of [...jobs].sort((a, b) => b.updatedAt - a.updatedAt))
-    groups.set(j.cwd, [...(groups.get(j.cwd) ?? []), j]);
   const ready =
     snapshot?.accounts.filter((a) => a.enabled && a.status === "ready")
       .length ?? 0;
@@ -764,7 +798,7 @@ export function AgentApp({
                   ))}
               </section>
             )}
-            {[...groups].map(([dir, group]) => (
+            {visibleGroups.map(([dir, group]) => (
               <details key={dir} open className="agent-project">
                 <summary title={dir}>
                   <Folder size={17} />{" "}
@@ -783,26 +817,61 @@ export function AgentApp({
                     <Plus size={14} />
                   </button>
                 </summary>
-                {group.map((j) => (
+                {group
+                  .slice(0, visibleThreads[dir] || 20)
+                  .concat(
+                    group.find((j) => j.id === selected) &&
+                      !group
+                        .slice(0, visibleThreads[dir] || 20)
+                        .some((j) => j.id === selected)
+                      ? [group.find((j) => j.id === selected)!]
+                      : [],
+                  )
+                  .map((j) => (
+                    <button
+                      key={j.id}
+                      className={`agent-thread ${j.id === selected ? "selected" : ""}`}
+                      onClick={() => select(j)}
+                      title={j.title}
+                    >
+                      <span className={running(j) ? "agent-pulse" : ""}>
+                        {running(j) ? (
+                          <span className="thread-running-dot" />
+                        ) : j.pinned ? (
+                          <Pin size={12} />
+                        ) : null}
+                      </span>
+                      <span>{j.title}</span>
+                      {j.state === "needs_attention" && <b>!</b>}
+                    </button>
+                  ))}
+                {group.length > (visibleThreads[dir] || 20) && (
                   <button
-                    key={j.id}
-                    className={`agent-thread ${j.id === selected ? "selected" : ""}`}
-                    onClick={() => select(j)}
-                    title={j.title}
+                    className="sidebar-show-more"
+                    onClick={() =>
+                      setVisibleThreads((previous) => ({
+                        ...previous,
+                        [dir]: (previous[dir] || 20) + 20,
+                      }))
+                    }
                   >
-                    <span className={running(j) ? "agent-pulse" : ""}>
-                      {running(j) ? (
-                        <span className="thread-running-dot" />
-                      ) : j.pinned ? (
-                        <Pin size={12} />
-                      ) : null}
-                    </span>
-                    <span>{j.title}</span>
-                    {j.state === "needs_attention" && <b>!</b>}
+                    {t("显示更多对话（{count}）", {
+                      count: group.length - (visibleThreads[dir] || 20),
+                    })}
                   </button>
-                ))}
+                )}
               </details>
             ))}
+            {groups.size > visibleProjects && (
+              <button
+                className="sidebar-show-more"
+                onClick={() => setVisibleProjects((count) => count + 30)}
+              >
+                {t("显示更多项目（{count}）", {
+                  count: groups.size - visibleProjects,
+                })}
+              </button>
+            )}
             {!groups.size && (
               <p className="agent-sidebar-empty">
                 {search
@@ -811,6 +880,7 @@ export function AgentApp({
               </p>
             )}
           </div>
+          <ImportAllControl compact call={call} changed={refreshDesktop} />
           <button
             className="agent-sidebar-link"
             onClick={() => setHistory(true)}
@@ -1053,8 +1123,13 @@ export function AgentApp({
                     )}
                     {allItems.map((item) => (
                       <RichMessage
-                        key={item.id}
+                        key={`${job?.id}:${item.id}`}
                         item={item}
+                        onSource={() => {
+                          void call("chat.source.open", {
+                            id: selectedRef.current,
+                          }).catch(() => {});
+                        }}
                         onOpen={openFile}
                         onAgents={() => {
                           setWorkspaceTab("agents");

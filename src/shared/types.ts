@@ -221,6 +221,7 @@ export interface ChatAttachment {
   name: string;
 }
 export interface ChatItem {
+  sourceTruncated?: boolean;
   turnId?: string;
   id: string;
   role: "user" | "assistant" | "tool" | "system";

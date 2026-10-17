@@ -3,6 +3,33 @@ import { nativeEnglish } from "./native-en";
 export const english: Record<string, string> = {
   ...legacyEnglish,
   ...nativeEnglish,
+  "超长内容显示预览，完整内容已保留在原始记录中。":
+    "Very long content is previewed. Its full contents are preserved in the original record.",
+  查看完整原始记录: "Open full original record",
+  批量导入项目和对话: "Import projects and chats",
+  "导入 Desktop 和 CLI": "Import Desktop and CLI",
+  "自动发现本机的全部项目、会话和归档，在后台导入独立副本。重复记录会自动跳过，导入时可以继续使用界面。":
+    "Find all local projects, chats, and archives and import independent copies in the background. Duplicates are skipped. You can keep using the app while importing.",
+  一键导入全部项目和对话: "Import all projects and chats",
+  "正在扫描本机 Desktop 和 CLI…": "Scanning local Desktop and CLI…",
+  "正在停止，已导入记录会保留…": "Stopping. Imported records will be kept…",
+  "正在后台导入…": "Importing in the background…",
+  全部扫描完成: "Import finished",
+  "导入已停止，可以继续导入": "Import stopped. You can run it again",
+  "导入未完成，请查看详情": "Import incomplete. See details",
+  导入进度: "Import progress",
+  "项目 {projects} · 对话 {chats} · 跳过 {skipped} · 失败 {failed}":
+    "Projects {projects} · Chats {chats} · Skipped {skipped} · Failed {failed}",
+  "已发现 {count} 个会话": "Found {count} chats",
+  "已处理 {done} / {total}": "Processed {done} / {total}",
+  停止导入: "Stop import",
+  "{count} 个项目目录当前不可用，项目信息已保留。":
+    "{count} project folders are unavailable. Their project details have been kept.",
+  "{count} 个会话有兼容性限制，已导入可读取的记录并标明原因。":
+    "{count} chats have compatibility limits. Readable history has been imported with an explanation.",
+  查看导入详情: "View import details",
+  "显示更多对话（{count}）": "Show more chats ({count})",
+  "显示更多项目（{count}）": "Show more projects ({count})",
   会话历史: "Chat history",
   会话历史与编辑: "History and editing",
   "选择一个轮次继续。编辑会创建独立分支，保留原聊天；项目文件保持当前内容。":
