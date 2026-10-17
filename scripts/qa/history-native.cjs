@@ -51,7 +51,14 @@ const root = path.resolve(__dirname, "../.."),
       .getByRole("button", { name: "Desktop 真实子代理验收", exact: true })
       .click();
     const source = await call("chat.turns", { id: seed.jobId });
-    assert.equal(source.data.length, 2);
+    let cursor = source.nextCursor;
+    while (cursor) {
+      const page = await call("chat.turns", { id: seed.jobId, cursor });
+      source.data.push(...page.data);
+      cursor = page.nextCursor;
+    }
+    const sourceCount = source.data.length;
+    assert(sourceCount >= 2);
     const target = source.data[0],
       draft = target.items
         .filter((i) => i.type === "userMessage")
@@ -87,24 +94,43 @@ const root = path.resolve(__dirname, "../.."),
     assert.notEqual(fork.threadId, seed.parent.threadId);
     assert.equal(fork.runtimeHomeId, seed.jobId);
     const retained = await call("chat.turns", { id: fork.id });
-    assert.equal(retained.data.length, 1);
+    let retainedCursor = retained.nextCursor;
+    while (retainedCursor) {
+      const page = await call("chat.turns", {
+        id: fork.id,
+        cursor: retainedCursor,
+      });
+      retained.data.push(...page.data);
+      retainedCursor = page.nextCursor;
+    }
+    assert.equal(retained.data.length, sourceCount - 1);
+    assert.deepEqual(
+      retained.data.map((turn) => turn.id),
+      source.data.slice(1).map((turn) => turn.id),
+    );
     assert.ok(
       (await call("chat.read", { id: fork.id })).items.some((i) =>
         i.text.includes("SUBAGENTS_OK"),
       ),
     );
     assert.ok(
-      !(await call("chat.read", { id: fork.id })).items.some((i) =>
-        i.text.includes("MEMORY_OK:"),
+      !(await call("chat.read", { id: fork.id })).items.some(
+        (i) => i.turnId === target.id,
       ),
     );
-    assert.equal((await call("chat.turns", { id: seed.jobId })).data.length, 2);
+    assert.equal(
+      (await call("chat.turns", { id: seed.jobId })).data[0].id,
+      target.id,
+    );
     const nested = await call("chat.branchAt", {
       id: fork.id,
       lastTurnId: retained.data[0].id,
     });
     assert.equal(nested.runtimeHomeId, seed.jobId);
-    assert.equal((await call("chat.turns", { id: nested.id })).data.length, 1);
+    assert.equal(
+      (await call("chat.turns", { id: nested.id })).data.length,
+      Math.min(20, sourceCount - 1),
+    );
     const empty = await call("chat.branchAt", {
       id: seed.jobId,
       beforeTurnId: source.data.at(-1).id,
@@ -125,8 +151,14 @@ const root = path.resolve(__dirname, "../.."),
         args,
       });
     await page.getByRole("button", { name: "新聊天", exact: true }).waitFor();
-    assert.equal((await call("chat.turns", { id: fork.id })).data.length, 1);
-    assert.equal((await call("chat.turns", { id: seed.jobId })).data.length, 2);
+    assert.equal(
+      (await call("chat.turns", { id: fork.id })).data.length,
+      Math.min(20, sourceCount - 1),
+    );
+    assert.equal(
+      (await call("chat.turns", { id: seed.jobId })).data.length,
+      Math.min(20, sourceCount),
+    );
     assert.deepEqual(errors, []);
     report.restartPersistence = "passed";
     report.rendererErrors = errors;

@@ -1,5 +1,5 @@
 import { t, useI18n } from "./i18n";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
   Check,
@@ -36,8 +36,36 @@ import type {
 import { MarkdownText } from "./RichMessage";
 import { ActivityTimeline } from "./ActivityTimeline";
 import { ImageThumbnail } from "./ChatImages";
-import { mergePage } from "./chat-view";
+import { mergePage, agentRows } from "./chat-view";
 type Call = (name: string, args?: unknown) => Promise<any>;
+function readAgentDrafts(): Record<string, string> {
+  try {
+    const value = JSON.parse(localStorage.getItem("relay.agentDrafts") || "{}");
+    return value && typeof value === "object" && !Array.isArray(value)
+      ? Object.fromEntries(
+          Object.entries(value).filter(
+            (entry): entry is [string, string] => typeof entry[1] === "string",
+          ),
+        )
+      : {};
+  } catch {
+    return {};
+  }
+}
+function saveAgentDrafts(values: Record<string, string>) {
+  try {
+    localStorage.setItem(
+      "relay.agentDrafts",
+      JSON.stringify(
+        Object.fromEntries(
+          Object.entries(values)
+            .filter(([, text]) => text.trim())
+            .slice(-40),
+        ),
+      ),
+    );
+  } catch {}
+}
 export type WorkbenchTab = "summary" | "files" | "changes" | "agents";
 type Entry = { name: string; path: string; directory: boolean };
 function Tree({
@@ -879,13 +907,24 @@ function Agents({
   const [selectedId, setSelectedId] = useState(""),
     [chat, setChat] = useState<ChatPage>(),
     [error, setError] = useState(""),
-    [message, setMessage] = useState("");
+    [messages, setMessages] = useState<Record<string, string>>(readAgentDrafts),
+    [controlling, setControlling] = useState(false);
+  const controlLock = useRef(false),
+    currentSelection = useRef(selectedId);
+  currentSelection.current = selectedId;
+  const latestMessages = useRef(messages);
+  latestMessages.current = messages;
+  useEffect(() => {
+    const timer = setTimeout(() => saveAgentDrafts(messages), 300);
+    return () => clearTimeout(timer);
+  }, [messages]);
+  useEffect(() => () => saveAgentDrafts(latestMessages.current), []);
+  const message = messages[selectedId] || "";
   const selected = job?.agents?.find((agent) => agent.threadId === selectedId);
   useEffect(() => {
     setSelectedId("");
     setChat(undefined);
     setError("");
-    setMessage("");
   }, [job?.id]);
   useEffect(() => {
     if (!job || !selected) return;
@@ -934,6 +973,36 @@ function Agents({
       }).catch(() => {});
     };
   }, [job?.id, selected?.threadId]);
+  const control = (action: "send" | "interrupt") => {
+    if (controlLock.current || !job || !selected || job.state !== "running")
+      return;
+    const threadId = selected.threadId;
+    if (action === "send" && !message.trim()) return;
+    controlLock.current = true;
+    setControlling(true);
+    setError("");
+    void call("chat.agent.control", {
+      id: job.id,
+      threadId,
+      action,
+      ...(action === "send" ? { text: message } : {}),
+    })
+      .then(() => {
+        if (action === "send")
+          setMessages((previous) =>
+            previous[threadId] === message
+              ? { ...previous, [threadId]: "" }
+              : previous,
+          );
+      })
+      .catch((error) => {
+        if (currentSelection.current === threadId) setError(String(error));
+      })
+      .finally(() => {
+        controlLock.current = false;
+        setControlling(false);
+      });
+  };
   const states: Record<string, string> = {
     running: t("运行中"),
     pendingInit: t("初始化"),
@@ -941,7 +1010,10 @@ function Agents({
     shutdown: t("已关闭"),
     interrupted: t("已停止"),
     errored: t("出错"),
+    failed: t("出错"),
+    pending: t("初始化"),
     waiting: t("等待中"),
+    interrupting: t("正在停止"),
   };
   return (
     <div className="agents-pane">
@@ -965,10 +1037,12 @@ function Agents({
             </small>
           </div>
           <div className="agent-tree">
-            {job.agents.map((a) => (
+            {agentRows(job.agents).map(({ agent: a, depth }) => (
               <button
                 key={a.threadId}
                 className={selected?.threadId === a.threadId ? "selected" : ""}
+                style={{ paddingLeft: 10 + Math.min(depth, 5) * 14 }}
+                data-depth={depth}
                 onClick={() => {
                   setSelectedId(a.threadId);
                   setChat(undefined);
@@ -980,6 +1054,9 @@ function Agents({
                   <small>
                     {a.role || t("子代理")}
                     {a.model ? ` · ${a.model}` : ""}
+                    {depth > 0 && a.parentThreadId
+                      ? ` · ${t("来自 {p0}", { p0: job.agents?.find((parent) => parent.threadId === a.parentThreadId)?.name || t("子代理") })}`
+                      : ""}
                   </small>
                 </span>
                 <em>{states[a.status] || a.status}</em>
@@ -993,18 +1070,13 @@ function Agents({
                 <button
                   title={t("停止子代理")}
                   disabled={
+                    controlling ||
                     job.state !== "running" ||
                     !["running", "pendingInit", "waiting"].includes(
                       selected.status,
                     )
                   }
-                  onClick={() =>
-                    void call("chat.agent.control", {
-                      id: job.id,
-                      threadId: selected.threadId,
-                      action: "interrupt",
-                    }).catch((e) => setError(String(e)))
-                  }
+                  onClick={() => control("interrupt")}
                 >
                   <Square size={13} />
                 </button>
@@ -1031,43 +1103,48 @@ function Agents({
                 className="child-composer"
                 onSubmit={(e) => {
                   e.preventDefault();
-                  void call("chat.agent.control", {
-                    id: job.id,
-                    threadId: selected.threadId,
-                    action: "send",
-                    text: message,
-                  })
-                    .then(() => setMessage(""))
-                    .catch((e) => setError(String(e)));
+                  control("send");
                 }}
               >
                 <input
                   aria-label={t("给子代理发送消息")}
                   placeholder={
                     job.state === "running"
-                      ? t("向子代理补充要求…")
+                      ? selected.status === "interrupting"
+                        ? t("正在停止子代理，确认后可继续…")
+                        : [
+                              "running",
+                              "pendingInit",
+                              "pending",
+                              "waiting",
+                            ].includes(selected.status)
+                          ? t("向子代理补充要求…")
+                          : t("发送消息继续这个子代理…")
                       : t("父会话结束后，子代理记录为只读")
                   }
-                  disabled={
-                    job.state !== "running" ||
-                    ["shutdown", "interrupted", "errored"].includes(
-                      selected.status,
-                    )
-                  }
+                  disabled={job.state !== "running"}
                   value={message}
-                  onChange={(e) => setMessage(e.target.value)}
+                  onChange={(e) =>
+                    setMessages((previous) => {
+                      const { [selectedId]: old, ...rest } = previous;
+                      return { ...rest, [selectedId]: e.target.value };
+                    })
+                  }
                 />
                 <button
                   disabled={
+                    controlling ||
                     !message.trim() ||
                     job.state !== "running" ||
-                    ["shutdown", "interrupted", "errored"].includes(
-                      selected.status,
-                    )
+                    selected.status === "interrupting"
                   }
                   title={t("发送给子代理")}
                 >
-                  <ChevronRight size={16} />
+                  {controlling ? (
+                    <LoaderCircle size={16} className="spin" />
+                  ) : (
+                    <ChevronRight size={16} />
+                  )}
                 </button>
               </form>
             </div>

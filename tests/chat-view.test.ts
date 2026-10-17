@@ -1,6 +1,29 @@
 import { expect, it } from "vitest";
-import { mergePage, activityRuns } from "../src/renderer/chat-view";
+import { mergePage, activityRuns, agentRows } from "../src/renderer/chat-view";
 import type { ChatPage } from "../src/shared/types";
+it("renders descendants under their parents without losing or looping on damaged ancestry", () => {
+  const make = (threadId: string, parentThreadId: string) => ({
+    threadId,
+    parentThreadId,
+    name: threadId,
+    status: "completed",
+    updatedAt: 0,
+  });
+  const rows = agentRows([
+    make("nested", "child"),
+    make("child", "root"),
+    make("missing-parent", "absent"),
+    make("cycle-a", "cycle-b"),
+    make("cycle-b", "cycle-a"),
+  ]);
+  expect(rows.map((row) => [row.agent.threadId, row.depth])).toEqual([
+    ["child", 0],
+    ["nested", 1],
+    ["missing-parent", 0],
+    ["cycle-a", 0],
+    ["cycle-b", 1],
+  ]);
+});
 it("groups sequential work while preserving commentary, reasoning, agent controls and turn boundaries", () => {
   const make = (id: string, role: any, kind: string, turnId = "t1") => ({
     id,

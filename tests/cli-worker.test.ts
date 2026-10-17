@@ -28,10 +28,13 @@ class FakeRpc extends EventEmitter {
         },
       };
     if (method === "thread/start" || method === "thread/resume")
-      return { thread: { id: "thread-1" }, model: "model-1" };
+      return {
+        thread: { id: params.threadId || "thread-1" },
+        model: "model-1",
+      };
     if (method === "turn/start") {
       this.notify("turn/started", {
-        threadId: "thread-1",
+        threadId: params.threadId,
         turn: { id: "turn-2" },
       });
       return { turn: { id: "turn-2" } };
@@ -91,6 +94,314 @@ beforeEach(() => {
     approvalPolicy: "on-request",
     sandbox: "workspaceWrite",
   };
+});
+it("restores owned nested children after reconnect and resumes them using the current sandbox before sending", async () => {
+  job.threadId = "thread-1";
+  job.planMode = true;
+  job.sandbox = "dangerFullAccess";
+  job.agents = [
+    {
+      threadId: "grandchild",
+      parentThreadId: "child",
+      name: "Nested",
+      status: "interrupted",
+      updatedAt: 0,
+    },
+    {
+      threadId: "unrelated",
+      parentThreadId: "other-parent",
+      name: "Other",
+      status: "completed",
+      updatedAt: 0,
+    },
+    {
+      threadId: "child",
+      parentThreadId: "thread-1",
+      name: "Scout",
+      model: "child-model",
+      effort: "low",
+      status: "shutdown",
+      updatedAt: 0,
+    },
+  ];
+  const w = worker(),
+    updates = vi.fn();
+  w.on("agent", updates);
+  await w.start(auth);
+  await w.agentControl("child", "send", "continue child");
+  expect(rpc.call).toHaveBeenCalledWith(
+    "thread/resume",
+    expect.objectContaining({
+      threadId: "child",
+      model: "child-model",
+      sandbox: "read-only",
+      excludeTurns: true,
+    }),
+  );
+  expect(rpc.call).toHaveBeenCalledWith(
+    "turn/start",
+    expect.objectContaining({
+      threadId: "child",
+      parentTurnId: "turn-2",
+      rootTurnId: "turn-2",
+      effort: "low",
+    }),
+  );
+  await w.agentControl("grandchild", "send", "continue nested");
+  await expect(
+    w.agentControl("unrelated", "send", "not owned"),
+  ).rejects.toThrow("不可控制");
+  expect(updates).toHaveBeenCalledWith(
+    expect.objectContaining({ threadId: "grandchild", status: "running" }),
+  );
+  await w.close();
+});
+function beginChild(id = "child", turnId = "child-turn") {
+  rpc.notify("thread/started", {
+    thread: {
+      id,
+      source: { subAgent: { thread_spawn: { parent_thread_id: "thread-1" } } },
+    },
+  });
+  rpc.notify("turn/started", { threadId: id, turn: { id: turnId } });
+}
+function endParent() {
+  rpc.notify("item/completed", {
+    threadId: "thread-1",
+    turnId: "turn-2",
+    item: {
+      type: "agentMessage",
+      phase: "final_answer",
+      text: "Parent result",
+    },
+  });
+  rpc.notify("turn/completed", {
+    threadId: "thread-1",
+    turn: { id: "turn-2", status: "completed" },
+  });
+}
+it("keeps a manual child interruption pending until the terminal event and refuses a premature restart", async () => {
+  const w = worker();
+  await w.start(auth);
+  beginChild();
+  rpc.interruptEmits = false;
+  const done = vi.fn(),
+    stopping = w.agentControl("child", "interrupt").then(done);
+  await vi.advanceTimersByTimeAsync(100);
+  expect(done).not.toHaveBeenCalled();
+  await expect(w.agentControl("child", "send", "too early")).rejects.toThrow(
+    "等待停止确认",
+  );
+  rpc.notify("turn/completed", {
+    threadId: "child",
+    turn: { id: "child-turn", status: "interrupted" },
+  });
+  await stopping;
+  expect(done).toHaveBeenCalledTimes(1);
+  await w.close();
+});
+it("preserves root quota evidence while waiting for active children to stop", async () => {
+  const w = worker();
+  await w.start(auth);
+  beginChild();
+  rpc.used = 100;
+  endParent();
+  await vi.advanceTimersByTimeAsync(1000);
+  expect((await w.done).kind).toBe("quota");
+  expect(rpc.call).toHaveBeenCalledWith("turn/interrupt", {
+    threadId: "child",
+    turnId: "child-turn",
+  });
+  await w.close();
+});
+it("never sends a turn when child resume returns a different identity", async () => {
+  job.threadId = "thread-1";
+  job.agents = [
+    {
+      threadId: "child",
+      parentThreadId: "thread-1",
+      name: "Child",
+      status: "shutdown",
+      updatedAt: 0,
+    },
+  ];
+  const w = worker();
+  await w.start(auth);
+  const original = rpc.call.getMockImplementation()!;
+  rpc.call.mockImplementation((method, params) =>
+    method === "thread/resume" && params.threadId === "child"
+      ? Promise.resolve({ thread: { id: "unrelated" }, model: "model-1" })
+      : original(method, params),
+  );
+  await expect(w.agentControl("child", "send", "safe")).rejects.toThrow(
+    "ID 不匹配",
+  );
+  expect(
+    rpc.call.mock.calls.filter(
+      ([method, params]) =>
+        method === "turn/start" && params.threadId === "child",
+    ),
+  ).toEqual([]);
+  await w.close();
+});
+it("does not start a restored child if the parent begins stopping while resume is in flight", async () => {
+  job.threadId = "thread-1";
+  job.agents = [
+    {
+      threadId: "child",
+      parentThreadId: "thread-1",
+      name: "Child",
+      status: "completed",
+      updatedAt: 0,
+    },
+  ];
+  const w = worker();
+  await w.start(auth);
+  const original = rpc.call.getMockImplementation()!;
+  let release!: (value: any) => void;
+  rpc.call.mockImplementation((method, params) =>
+    method === "thread/resume" && params.threadId === "child"
+      ? new Promise((resolve) => {
+          release = resolve;
+        })
+      : original(method, params),
+  );
+  const sending = w.agentControl("child", "send", "do not start after stop");
+  const rejected = expect(sending).rejects.toThrow("正在停止");
+  const stopping = w.stop();
+  release({ thread: { id: "child" } });
+  await rejected;
+  await vi.advanceTimersByTimeAsync(1000);
+  await stopping;
+  expect(
+    rpc.call.mock.calls.filter(
+      ([method, params]) =>
+        method === "turn/start" && params.threadId === "child",
+    ),
+  ).toEqual([]);
+  await w.close();
+});
+it("pauses children during the parent's final quota check and waits for the child's terminal event", async () => {
+  const w = worker(),
+    done = vi.fn();
+  w.done.then(done);
+  await w.start(auth);
+  beginChild();
+  rpc.interruptEmits = false;
+  endParent();
+  const stop = w.stop();
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(rpc.call).toHaveBeenCalledWith("turn/interrupt", {
+    threadId: "child",
+    turnId: "child-turn",
+  });
+  expect(done).not.toHaveBeenCalled();
+  rpc.notify("turn/completed", {
+    threadId: "child",
+    turn: { id: "child-turn", status: "interrupted" },
+  });
+  await stop;
+  expect((await w.done).kind).toBe("interrupted");
+  await w.close();
+});
+it("never mistakes an interrupt acknowledgement for a child terminal event after the parent has ended", async () => {
+  const w = worker(),
+    done = vi.fn();
+  w.done.then(done);
+  await w.start(auth);
+  beginChild();
+  endParent();
+  await vi.advanceTimersByTimeAsync(1000);
+  rpc.interruptEmits = false;
+  const stop = w.stop();
+  await vi.advanceTimersByTimeAsync(500);
+  expect(done).not.toHaveBeenCalled();
+  await expect(w.agentControl("child", "send", "late message")).rejects.toThrow(
+    "不可控制",
+  );
+  rpc.notify("turn/completed", {
+    threadId: "child",
+    turn: { id: "child-turn", status: "interrupted" },
+  });
+  await stop;
+  expect((await w.done).kind).toBe("interrupted");
+  await w.close();
+});
+it("interrupts a late-starting child and preserves child-only quota evidence over a normal parent result", async () => {
+  const w = worker();
+  await w.start(auth);
+  beginChild();
+  endParent();
+  await vi.advanceTimersByTimeAsync(1000);
+  rpc.notify("error", {
+    threadId: "child",
+    error: { codexErrorInfo: "usageLimitExceeded", message: "exhausted" },
+  });
+  expect((await w.done).kind).toBe("quota");
+  await w.close();
+  rpc = new FakeRpc();
+  vi.mocked(Rpc.open).mockResolvedValue(rpc as any);
+  const second = worker();
+  await second.start(auth);
+  rpc.interruptEmits = false;
+  const stop = second.stop();
+  beginChild("late", "late-turn");
+  await vi.advanceTimersByTimeAsync(50);
+  expect(rpc.call).toHaveBeenCalledWith("turn/interrupt", {
+    threadId: "late",
+    turnId: "late-turn",
+  });
+  rpc.notify("turn/completed", {
+    threadId: "thread-1",
+    turn: { id: "turn-2", status: "interrupted" },
+  });
+  rpc.notify("turn/completed", {
+    threadId: "late",
+    turn: { id: "late-turn", status: "interrupted" },
+  });
+  await vi.advanceTimersByTimeAsync(800);
+  await stop;
+  await second.close();
+});
+it("ignores stale child-turn completion and parent snapshots while a newer child turn is active", async () => {
+  const w = worker(),
+    updates = vi.fn(),
+    done = vi.fn();
+  w.on("agent", updates);
+  w.done.then(done);
+  await w.start(auth);
+  beginChild("child", "old");
+  rpc.notify("turn/started", { threadId: "child", turn: { id: "new" } });
+  rpc.notify("turn/completed", {
+    threadId: "child",
+    turn: { id: "old", status: "completed" },
+  });
+  rpc.notify("item/completed", {
+    threadId: "thread-1",
+    turnId: "turn-2",
+    item: {
+      type: "collabAgentToolCall",
+      senderThreadId: "thread-1",
+      receiverThreadIds: ["child"],
+      agentsStates: { child: { status: "completed" } },
+    },
+  });
+  expect(updates).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      threadId: "child",
+      turnId: "new",
+      status: "running",
+    }),
+  );
+  endParent();
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(done).not.toHaveBeenCalled();
+  rpc.notify("turn/completed", {
+    threadId: "child",
+    turn: { id: "new", status: "completed" },
+  });
+  expect((await w.done).kind).toBe("completed");
+  await w.close();
 });
 afterEach(() => {
   vi.useRealTimers();

@@ -17,6 +17,13 @@ import {
 } from "./worker";
 import type { Quota, ChatAttachment, AgentState } from "../shared/types";
 import { ensureWindowsSandbox } from "./windows-sandbox";
+const activeAgentStatuses = new Set([
+  "running",
+  "pendingInit",
+  "pending",
+  "waiting",
+  "interrupting",
+]);
 export class CliWorker extends EventEmitter implements Worker {
   private rpc?: Rpc;
   private threadId?: string;
@@ -26,6 +33,9 @@ export class CliWorker extends EventEmitter implements Worker {
   private terminal = false;
   private completing = false;
   private stopping?: Promise<void>;
+  private stopRequested = false;
+  private interruptingAgents = new Map<string, Promise<unknown>>();
+  private activeAgentTurns = new Map<string, string>();
   private finalText = "";
   private quotas: Record<string, Quota> = {};
   private requests = new Map<string, number | string>();
@@ -70,17 +80,7 @@ export class CliWorker extends EventEmitter implements Worker {
     const quota = await this.quota();
     if (isExhausted(quota[this.ctx.job.bucket]))
       throw new Error("Usage limit exceeded before turn start");
-    const config = {
-      cwd: this.ctx.job.cwd,
-      approvalPolicy: this.ctx.job.approvalPolicy,
-      sandbox: {
-        workspaceWrite: "workspace-write",
-        readOnly: "read-only",
-        dangerFullAccess: "danger-full-access",
-      }[sandbox],
-      ...(this.ctx.job.model ? { model: this.ctx.job.model } : {}),
-      config: { "features.multi_agent": this.ctx.job.multiAgent !== false },
-    };
+    const config = this.threadConfig();
     this.emit("stage", "创建或恢复本地会话");
     const result = await prepareThread(
       this.rpc,
@@ -89,6 +89,24 @@ export class CliWorker extends EventEmitter implements Worker {
       this.ctx.job.importedRollout,
     );
     this.threadId = result.thread.id;
+    // Only restore descendants of this root, including nested descendants. The
+    // old owned process was confirmed closed before a new worker was allowed.
+    const pending = [...(this.ctx.job.agents || [])];
+    while (pending.length) {
+      const index = pending.findIndex(
+        (agent) =>
+          agent.parentThreadId === this.threadId ||
+          (!!agent.parentThreadId && this.agents.has(agent.parentThreadId)),
+      );
+      if (index < 0) break;
+      const [agent] = pending.splice(index, 1);
+      this.agent(agent.threadId, {
+        ...agent,
+        status: activeAgentStatuses.has(agent.status)
+          ? "interrupted"
+          : agent.status,
+      });
+    }
     if (!this.ctx.job.model && typeof result.model === "string")
       this.ctx.job.model = result.model;
     await this.ctx.checkpoint(this.threadId!);
@@ -145,8 +163,26 @@ export class CliWorker extends EventEmitter implements Worker {
     this.emit("stage", "Codex 正在执行");
     if (this.quotaSeen && !this.terminal) await this.stop();
   }
+  private threadConfig(model = this.ctx.job.model) {
+    const sandbox = this.ctx.job.planMode ? "readOnly" : this.ctx.job.sandbox;
+    return {
+      cwd: this.ctx.job.cwd,
+      approvalPolicy: this.ctx.job.approvalPolicy,
+      sandbox: {
+        workspaceWrite: "workspace-write",
+        readOnly: "read-only",
+        dangerFullAccess: "danger-full-access",
+      }[sandbox],
+      ...(model ? { model } : {}),
+      config: { "features.multi_agent": this.ctx.job.multiAgent !== false },
+    };
+  }
   private finish(result: Outcome) {
     if (!this.terminal) {
+      if (result.kind === "completed" && this.quotaSeen)
+        result = { kind: "quota", error: this.lastError };
+      else if (result.kind === "completed" && this.stopRequested)
+        result = { kind: "interrupted" };
       this.terminal = true;
       this.settle(result);
       this.emit("settled", result);
@@ -154,6 +190,17 @@ export class CliWorker extends EventEmitter implements Worker {
   }
   private agent(id: string, patch: Partial<AgentState>) {
     if (id === this.threadId) return;
+    if (
+      this.activeAgentTurns.has(id) &&
+      patch.turnId === undefined &&
+      patch.status &&
+      !activeAgentStatuses.has(patch.status)
+    ) {
+      // A parent wait/close snapshot may arrive after a newer child turn starts.
+      // Use that turn's terminal event (or thread/closed) as the authority.
+      const { status, ...metadata } = patch;
+      patch = metadata;
+    }
     const previous = this.agents.get(id);
     const value: AgentState = {
       threadId: id,
@@ -168,8 +215,29 @@ export class CliWorker extends EventEmitter implements Worker {
   }
   private agentsRunning() {
     return [...this.agents.values()].some((a) =>
-      ["running", "pendingInit", "pending", "waiting"].includes(a.status),
+      activeAgentStatuses.has(a.status),
     );
+  }
+  private completeAfterChildren(outcome: Outcome) {
+    if (outcome.kind === "quota") this.quotaSeen = true;
+    if (this.quotaSeen)
+      outcome = { kind: "quota", error: this.lastError || outcome.error };
+    else if (this.stopRequested) outcome = { kind: "interrupted" };
+    if (
+      this.agentsRunning() &&
+      (outcome.kind === "completed" ||
+        outcome.kind === "quota" ||
+        this.stopRequested)
+    ) {
+      this.parentOutcome = outcome;
+      this.emit(
+        "stage",
+        this.stopRequested || outcome.kind === "quota"
+          ? "等待子代理确认停止"
+          : "主轮次已结束，等待子代理完成",
+      );
+      if (outcome.kind === "quota") void this.stop().catch(() => {});
+    } else this.finish(outcome);
   }
   private async notification(msg: RpcMessage) {
     const p = msg.params ?? {};
@@ -242,18 +310,51 @@ export class CliWorker extends EventEmitter implements Worker {
     }
     if (p.threadId && this.agents.has(p.threadId)) {
       this.emit("childChat", p.threadId, msg.method, p);
-      if (msg.method === "turn/started")
+      if (msg.method === "turn/started") {
+        this.activeAgentTurns.set(p.threadId, p.turn.id);
         this.agent(p.threadId, { turnId: p.turn.id, status: "running" });
+        if (this.stopRequested)
+          void this.interruptAgent(this.agents.get(p.threadId)!).catch(
+            (error) => {
+              this.emit("stopError", error);
+              this.finish({ kind: "error", error });
+            },
+          );
+      }
       if (msg.method === "item/completed" && p.item?.type === "agentMessage")
         this.agent(p.threadId, { message: p.item.text });
       if (msg.method === "turn/completed") {
-        this.agent(p.threadId, {
-          status: p.turn.status === "completed" ? "completed" : p.turn.status,
-          turnId: p.turn.id,
-        });
-        if (this.parentOutcome && !this.agentsRunning())
-          this.finish(this.parentOutcome);
+        const current = this.agents.get(p.threadId)!;
+        if (!current.turnId || current.turnId === p.turn.id) {
+          this.activeAgentTurns.delete(p.threadId);
+          this.agent(p.threadId, {
+            status: p.turn.status === "completed" ? "completed" : p.turn.status,
+            turnId: p.turn.id,
+          });
+        }
       }
+      if (msg.method === "thread/closed") {
+        this.activeAgentTurns.delete(p.threadId);
+        this.agent(p.threadId, { status: "shutdown" });
+      }
+      const childError =
+        msg.method === "turn/completed"
+          ? p.turn.error
+          : msg.method === "error"
+            ? p.error
+            : undefined;
+      if (
+        errorKind(childError) === "quota" ||
+        (msg.method === "item/completed" &&
+          p.item?.type === "agentMessage" &&
+          isQuotaNotice(p.item.text))
+      ) {
+        this.quotaSeen = true;
+        this.lastError = childError || p.item.text;
+        if (!this.terminal) void this.stop().catch(() => {});
+      }
+      if (this.parentOutcome && !this.agentsRunning())
+        this.finish(this.parentOutcome);
       return;
     }
     if (p.threadId && this.threadId && p.threadId !== this.threadId) return;
@@ -314,9 +415,9 @@ export class CliWorker extends EventEmitter implements Worker {
       }
       const error = p.turn.error ?? this.lastError;
       if (this.quotaSeen || errorKind(error) === "quota")
-        this.finish({ kind: "quota", error });
-      else if (p.turn.status === "interrupted")
-        this.finish({ kind: "interrupted" });
+        this.completeAfterChildren({ kind: "quota", error });
+      else if (p.turn.status === "interrupted" || this.stopRequested)
+        this.completeAfterChildren({ kind: "interrupted" });
       else if (error || p.turn.status !== "completed")
         this.finish({
           kind: "error",
@@ -329,10 +430,7 @@ export class CliWorker extends EventEmitter implements Worker {
         });
       else {
         const outcome = completionOutcome(this.ctx.job, this.finalText);
-        if (outcome.kind === "completed" && this.agentsRunning()) {
-          this.parentOutcome = outcome;
-          this.emit("stage", "主轮次已结束，等待子代理完成");
-        } else this.finish(outcome);
+        this.completeAfterChildren(outcome);
       }
     }
   }
@@ -403,32 +501,99 @@ export class CliWorker extends EventEmitter implements Worker {
     text?: string,
   ) {
     const agent = this.agents.get(threadId);
-    if (!agent || !this.rpc || this.terminal)
+    if (!agent || !this.rpc || this.terminal || this.stopRequested)
       throw new Error("子代理会话当前不可控制，请在主会话中继续任务");
     if (action === "interrupt") {
-      if (
-        !agent.turnId ||
-        !["running", "waiting", "pendingInit"].includes(agent.status)
-      )
+      if (!agent.turnId || !activeAgentStatuses.has(agent.status))
         throw new Error("子代理当前没有正在运行的轮次");
-      return this.rpc.call("turn/interrupt", {
-        threadId,
-        turnId: agent.turnId,
-      });
+      const turnId = agent.turnId;
+      this.agent(threadId, { turnId, status: "interrupting" });
+      await this.interruptAgent(agent);
+      return this.waitForAgentEnd(threadId, turnId);
     }
     if (!text?.trim()) throw new Error("请输入给子代理的消息");
     const input = [{ type: "text", text, text_elements: [] }];
-    if (agent.turnId && ["running", "waiting"].includes(agent.status))
+    if (agent.status === "interrupting")
+      throw Error("子代理正在停止，请等待停止确认后继续");
+    if (agent.turnId && activeAgentStatuses.has(agent.status))
       return this.rpc.call("turn/steer", {
         threadId,
         expectedTurnId: agent.turnId,
         input,
       });
-    return this.rpc.call("turn/start", {
+    const resumed = await this.rpc.call("thread/resume", {
+      threadId,
+      ...this.threadConfig(agent.model || this.ctx.job.model),
+      excludeTurns: true,
+    });
+    if (resumed.thread?.id !== threadId)
+      throw Error("子代理恢复后的会话 ID 不匹配，停止发送消息");
+    if (this.stopRequested || this.terminal)
+      throw Error("会话正在停止，请稍后继续");
+    const result = await this.rpc.call("turn/start", {
       threadId,
       input,
       parentTurnId: this.turnId,
       rootTurnId: this.turnId,
+      ...(agent.effort || this.ctx.job.effort
+        ? { effort: agent.effort || this.ctx.job.effort }
+        : {}),
+    });
+    if (
+      result.turn?.id &&
+      this.agents.get(threadId)?.turnId !== result.turn.id
+    ) {
+      this.activeAgentTurns.set(threadId, result.turn.id);
+      this.agent(threadId, { turnId: result.turn.id, status: "running" });
+    }
+    if (this.stopRequested) {
+      await this.interruptAgent(this.agents.get(threadId)!);
+      throw Error("会话正在停止，请稍后继续");
+    }
+    return result;
+  }
+  private interruptAgent(agent: AgentState) {
+    if (!agent.turnId || !this.rpc) return Promise.resolve();
+    const key = `${agent.threadId}:${agent.turnId}`;
+    let task = this.interruptingAgents.get(key);
+    if (!task) {
+      task = this.rpc
+        .call("turn/interrupt", {
+          threadId: agent.threadId,
+          turnId: agent.turnId,
+        })
+        .catch((error) => {
+          this.interruptingAgents.delete(key);
+          throw error;
+        });
+      this.interruptingAgents.set(key, task);
+    }
+    return task;
+  }
+  private waitForAgentEnd(threadId: string, turnId: string) {
+    const ended = () => {
+      const current = this.agents.get(threadId);
+      return (
+        !current ||
+        current.turnId !== turnId ||
+        !activeAgentStatuses.has(current.status)
+      );
+    };
+    if (ended()) return Promise.resolve();
+    return new Promise<void>((resolve, reject) => {
+      const check = () => {
+        if (ended()) {
+          clearTimeout(timer);
+          this.off("agent", check);
+          resolve();
+        }
+      };
+      const timer = setTimeout(() => {
+        this.off("agent", check);
+        reject(Error("子代理停止尚未确认，请停止主任务后检查恢复状态"));
+      }, 20000);
+      this.on("agent", check);
+      check();
     });
   }
   async quota(): Promise<Record<string, Quota>> {
@@ -445,43 +610,25 @@ export class CliWorker extends EventEmitter implements Worker {
     return quotas;
   }
   async stop() {
-    if (this.parentEnded && this.parentOutcome && !this.terminal) {
-      this.parentOutcome = undefined;
-      for (const agent of this.agents.values())
-        if (
-          agent.turnId &&
-          ["running", "pendingInit", "waiting"].includes(agent.status)
-        )
-          await this.rpc!.call("turn/interrupt", {
-            threadId: agent.threadId,
-            turnId: agent.turnId,
-          });
-      this.finish({ kind: this.quotaSeen ? "quota" : "interrupted" });
-      return;
-    }
-    if (
-      this.terminal ||
-      this.completing ||
-      !this.rpc ||
-      !this.turnId ||
-      !this.threadId
-    )
-      return;
+    if (this.terminal || !this.rpc || !this.turnId || !this.threadId) return;
     if (this.stopping) return this.stopping;
+    this.stopRequested = true;
+    if (this.parentOutcome)
+      this.parentOutcome = {
+        kind: this.quotaSeen ? "quota" : "interrupted",
+        error: this.lastError,
+      };
     this.stopping = (async () => {
       for (const agent of this.agents.values())
-        if (
-          agent.turnId &&
-          ["running", "pendingInit", "waiting"].includes(agent.status)
-        )
-          await this.rpc!.call("turn/interrupt", {
-            threadId: agent.threadId,
-            turnId: agent.turnId,
-          });
-      await this.rpc!.call("turn/interrupt", {
-        threadId: this.threadId,
-        turnId: this.turnId,
-      });
+        if (agent.turnId && activeAgentStatuses.has(agent.status))
+          await this.interruptAgent(agent);
+      if (!this.parentEnded)
+        await this.rpc!.call("turn/interrupt", {
+          threadId: this.threadId,
+          turnId: this.turnId,
+        });
+      if (this.parentOutcome && !this.agentsRunning())
+        this.finish(this.parentOutcome);
       // The successful RPC response only acknowledges the request. Wait for the
       // terminal notification before credentials, workers, or processes can change.
       await Promise.race([
@@ -503,8 +650,9 @@ export class CliWorker extends EventEmitter implements Worker {
   }
   async close() {
     if (this.rpc) await this.rpc.close();
+    this.activeAgentTurns.clear();
     for (const agent of this.agents.values())
-      if (["running", "pendingInit", "waiting"].includes(agent.status))
+      if (activeAgentStatuses.has(agent.status))
         this.agent(agent.threadId, { status: "interrupted" });
     this.rpc = undefined;
   }

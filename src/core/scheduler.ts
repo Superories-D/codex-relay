@@ -934,21 +934,38 @@ export class Scheduler extends EventEmitter {
       return fork;
     });
   }
-  async agentControl(
+  agentControl(
     id: string,
     threadId: string,
     action: "send" | "interrupt",
     text?: string,
   ) {
-    if (this.active?.job.id !== id || !this.active.worker?.agentControl)
-      throw new Error("主会话当前未运行，请在主会话中继续任务");
-    const result = await this.active.worker.agentControl(
-      threadId,
-      action,
-      text,
-    );
-    if (action === "send") await this.chats.user(threadId, text || "");
-    return result;
+    const operation = this.controls
+      .catch(() => {})
+      .then(async () => {
+        if (
+          this.closing ||
+          this.active?.job.id !== id ||
+          this.active.reason ||
+          this.active.failedStop ||
+          this.active.job.state !== "running" ||
+          !this.active.worker?.agentControl
+        )
+          throw new Error("主会话当前未运行，请在主会话中继续任务");
+        if (
+          !this.active.job.agents?.some((agent) => agent.threadId === threadId)
+        )
+          throw Error("该子代理不属于当前会话");
+        const result = await this.active.worker.agentControl(
+          threadId,
+          action,
+          text,
+        );
+        if (action === "send") await this.chats.user(threadId, text || "");
+        return result;
+      });
+    this.controls = operation;
+    return operation;
   }
   private async controlOnce(id: string, action: "pause" | "resume" | "cancel") {
     const job = this.store.data.jobs.find((j) => j.id === id);

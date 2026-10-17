@@ -12,6 +12,13 @@ import { taskPrompt } from "../src/core/completion";
 class FakeWorker extends EventEmitter implements Worker {
   submitted = "";
   steer = vi.fn(async () => {});
+  agentControl = vi.fn(
+    async (
+      _threadId: string,
+      _action: "send" | "interrupt",
+      _text?: string,
+    ): Promise<unknown> => ({}),
+  );
   settle!: (o: Outcome) => void;
   done = new Promise<Outcome>((r) => {
     this.settle = r;
@@ -66,6 +73,56 @@ it("sends follow-up text on the same thread instead of replaying the recovery pr
   expect((await scheduler.chats.read(job.id)).items.map((i) => i.text)).toEqual(
     ["first user request", "second user request"],
   );
+});
+it("serializes child messages with parent pause and rejects further child work after pausing", async () => {
+  const job = await scheduler.add({ ...input, cwd: root, interactive: true });
+  await until(() => workers[0]?.started);
+  job.agents = [
+    {
+      threadId: "child",
+      parentThreadId: job.threadId,
+      name: "Child",
+      status: "completed",
+      updatedAt: Date.now(),
+    },
+  ];
+  let release!: (value: unknown) => void;
+  workers[0].agentControl.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+  );
+  const stop = vi.spyOn(workers[0], "stop");
+  const sending = scheduler.agentControl(
+    job.id,
+    "child",
+    "send",
+    "one message",
+  );
+  await until(() => workers[0].agentControl.mock.calls.length === 1);
+  const pausing = scheduler.control(job.id, "pause");
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(stop).not.toHaveBeenCalled();
+  release({});
+  await sending;
+  await pausing;
+  expect(job.state).toBe("paused");
+  expect(
+    (await scheduler.chats.read("child")).items.map((item) => item.text),
+  ).toEqual(["one message"]);
+  await expect(
+    scheduler.agentControl(job.id, "child", "send", "too late"),
+  ).rejects.toThrow("未运行");
+  expect(workers[0].agentControl).toHaveBeenCalledTimes(1);
+});
+it("refuses a child from a different parent even if the worker exposes a generic child operation", async () => {
+  const job = await scheduler.add({ ...input, cwd: root });
+  await until(() => workers[0]?.started);
+  await expect(
+    scheduler.agentControl(job.id, "unrelated", "send", "no"),
+  ).rejects.toThrow("不属于");
+  expect(workers[0].agentControl).not.toHaveBeenCalled();
 });
 it("queues inputs until normal completion and steers only a running turn", async () => {
   const job = await scheduler.add({ ...input, cwd: root, interactive: true });

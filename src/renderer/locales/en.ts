@@ -597,6 +597,10 @@ export const english: Record<string, string> = {
   在浏览器中打开: "Open in browser",
   图片暂时无法加载: "The image could not be loaded",
   图片画布: "Image canvas",
+  "来自 {p0}": "From {p0}",
+  "发送消息继续这个子代理…": "Send a message to continue this agent…",
+  "正在停止子代理，确认后可继续…":
+    "Stopping this agent. You can continue after confirmation…",
   "已导入 {p0} 个账户。额度将由后台核实。":
     "Imported {p0} accounts. Limits will be checked in the background.",
   "正在后台导入，请稍后再进行手动导入":

@@ -152,6 +152,20 @@ const root = path.resolve(__dirname, "../..");
         preferences: { theme: "dark", notifications: true },
       };
       window.qaCalls = [];
+      window.qaAgentScenario = (active) => {
+        job.state = active ? "running" : "completed";
+        job.agents = [
+          { ...job.agents[0], status: "interrupted" },
+          {
+            threadId: "55555555-5555-4555-8555-555555555555",
+            parentThreadId: job.agents[0].threadId,
+            name: "Nested",
+            status: "shutdown",
+            updatedAt: Date.now(),
+          },
+        ];
+        listener?.(structuredClone(data));
+      };
       window.qaPushChat = (id, value) => {
         for (const fn of chatListeners)
           fn({ id, page: structuredClone(value) });
@@ -203,6 +217,10 @@ const root = path.resolve(__dirname, "../..");
         },
         command: async (name, args) => {
           window.qaCalls.push({ name, args });
+          if (name === "chat.agent.control")
+            return new Promise((resolve) => {
+              window.qaResolveAgent = resolve;
+            });
           if (name === "history.importAll.status")
             return {
               id: "",
@@ -665,6 +683,59 @@ const root = path.resolve(__dirname, "../..");
       await page.getByLabel("给子代理发送消息", { exact: true }).isDisabled(),
       true,
     );
+    await page.evaluate(() => window.qaAgentScenario(true));
+    const childInput = page.getByLabel("给子代理发送消息", { exact: true });
+    await childInput.fill("draft A");
+    await page.locator(".agent-tree button").nth(1).click();
+    assert.equal(await childInput.inputValue(), "");
+    await childInput.fill("draft B");
+    assert.equal(
+      await page
+        .locator(".agent-tree button")
+        .nth(1)
+        .getAttribute("data-depth"),
+      "1",
+    );
+    await page.locator(".agent-tree button").first().click();
+    assert.equal(await childInput.inputValue(), "draft A");
+    await page.getByTitle("发送给子代理", { exact: true }).click();
+    await childInput.fill("draft A amended during send");
+    await page.evaluate(() =>
+      document
+        .querySelector(".child-composer")
+        .dispatchEvent(
+          new Event("submit", { bubbles: true, cancelable: true }),
+        ),
+    );
+    await page.locator(".agent-tree button").nth(1).click();
+    assert.equal(await childInput.inputValue(), "draft B");
+    await page.evaluate(() => window.qaResolveAgent({}));
+    await page.locator(".agent-tree button").first().click();
+    assert.equal(await childInput.inputValue(), "draft A amended during send");
+    assert.equal(
+      await page.evaluate(
+        () =>
+          window.qaCalls.filter((call) => call.name === "chat.agent.control")
+            .length,
+      ),
+      1,
+    );
+    await page.evaluate(() => window.qaAgentScenario(false));
+    await page
+      .getByRole("button", { name: "关闭工作面板", exact: true })
+      .click();
+    await page.locator(".workbench").waitFor({ state: "hidden" });
+    await page.getByRole("button", { name: "会话信息", exact: true }).click();
+    await page
+      .locator(".workbench-tabs")
+      .getByRole("button", { name: /代理/ })
+      .click();
+    await page.locator(".agent-tree button").first().click();
+    assert.equal(
+      await childInput.inputValue(),
+      "draft A amended during send",
+      "hiding and reopening the panel preserves child drafts",
+    );
     await page
       .getByRole("button", { name: "关闭工作面板", exact: true })
       .click();
@@ -704,6 +775,7 @@ const root = path.resolve(__dirname, "../..");
           liveLanguageSwitch: ["en", "zh-TW", "zh-CN"],
           smoothness,
           childLiveUpdatesAndReadOnlyHistory: true,
+          childHierarchyDraftIsolationAndDuplicateSendGuard: true,
           rendererErrors: errors,
         },
         null,

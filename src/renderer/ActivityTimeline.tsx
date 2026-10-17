@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import {
   ChevronDown,
   FilePenLine,
@@ -76,10 +76,12 @@ export function ActivityTimeline({
   jobId,
   ...props
 }: Props & { items: ChatItem[]; scope: string; jobId?: string }) {
+  const mediaContext = useMemo(
+    () => ({ id: jobId || scope, ...(jobId ? { threadId: scope } : {}) }),
+    [jobId, scope],
+  );
   return (
-    <MediaContext.Provider
-      value={{ id: jobId || scope, ...(jobId ? { threadId: scope } : {}) }}
-    >
+    <MediaContext.Provider value={mediaContext}>
       {activityRuns(items).map((run) =>
         run.group ? (
           <ActivityGroup
