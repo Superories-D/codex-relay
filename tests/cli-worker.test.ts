@@ -423,6 +423,54 @@ it("does not automatically reactivate a paused Goal after quota recovery", async
   ).toBe(false);
   await w.close();
 });
+it("retains ordinary chat input until a delayed turn/start response is acknowledged", async () => {
+  job.pendingMessage = "NORMAL_PENDING_42";
+  job.attachments = [
+    { type: "mention", path: "/tmp/note.txt", name: "note.txt" },
+  ];
+  const original = rpc.call.getMockImplementation()!;
+  let accept!: () => void;
+  rpc.call.mockImplementation(async (method, params) => {
+    const value = await original(method, params);
+    if (method === "turn/start")
+      await new Promise<void>((resolve) => {
+        accept = resolve;
+      });
+    return value;
+  });
+  const w = worker(),
+    start = w.start(auth);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(job.turnId).toBe("turn-2");
+  expect(job.pendingMessage).toBe("NORMAL_PENDING_42");
+  expect(job.attachments).toHaveLength(1);
+  accept();
+  await start;
+  expect(job.pendingMessage).toBeUndefined();
+  expect(job.attachments).toBeUndefined();
+  await w.close();
+});
+it("preserves ordinary chat input when a started turn loses its acknowledgement", async () => {
+  job.pendingMessage = "NORMAL_PENDING_42";
+  job.attachments = [
+    { type: "mention", path: "/tmp/note.txt", name: "note.txt" },
+  ];
+  const original = rpc.call.getMockImplementation()!;
+  rpc.call.mockImplementation(async (method, params) => {
+    const value = await original(method, params);
+    if (method === "turn/start") throw Error("network timeout");
+    return value;
+  });
+  const w = worker();
+  await expect(w.start(auth)).rejects.toThrow("启动结果不确定");
+  expect(job.turnId).toBe("turn-2");
+  expect(job.pendingMessage).toBe("NORMAL_PENDING_42");
+  expect(job.attachments).toHaveLength(1);
+  expect(rpc.call.mock.calls.filter(([m]) => m === "turn/start")).toHaveLength(
+    1,
+  );
+  await w.close();
+});
 function pendingGoal() {
   job.threadId = "thread-1";
   job.goalResumeAfterQuota = true;
