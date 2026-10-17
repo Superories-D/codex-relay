@@ -677,6 +677,16 @@ function Accounts({ snapshot, call }: { snapshot: Snapshot; call: Call }) {
         </button>
       </div>
       <div className="settings-button-row">
+        <button
+          disabled={!!busy || !!snapshot.login}
+          onClick={() =>
+            void run("login", () =>
+              call("account.login", { label: "", device: true }),
+            )
+          }
+        >
+          <ExternalLink size={14} /> {t("使用设备验证码登录")}
+        </button>
         <button disabled={!!busy} onClick={() => void importAccounts(true)}>
           <Download size={14} />
           {t("导入本机登录")}
@@ -704,6 +714,25 @@ function Accounts({ snapshot, call }: { snapshot: Snapshot; call: Call }) {
       )}
       {snapshot.loginError && (
         <p className="panel-error">{snapshot.loginError}</p>
+      )}
+      {snapshot.loginResult && (
+        <div className="login-banner" role="status">
+          <strong>
+            {t(
+              snapshot.loginResult.updated
+                ? "已更新现有账户：{email}"
+                : "已添加新账户：{email}",
+              { email: snapshot.loginResult.email },
+            )}
+          </strong>
+          {snapshot.loginResult.updated && (
+            <p>
+              {t(
+                "浏览器返回了已存在的账户，因此没有新增卡片。添加其他账户时，请在官方页面切换到目标邮箱后再授权。",
+              )}
+            </p>
+          )}
+        </div>
       )}
       {error && (
         <p className="panel-error" role="alert">

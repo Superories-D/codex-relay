@@ -4472,3 +4472,12 @@
   font-size: 12px;
   margin-top: 4px;
 }
+.sidebar-background {
+  margin: 4px 0 8px 18px;
+}
+.sidebar-background > summary {
+  padding: 9px 8px;
+  font-size: 11px;
+  color: var(--subtle);
+  cursor: pointer;
+}

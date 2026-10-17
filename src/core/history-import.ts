@@ -64,6 +64,18 @@ export class BackgroundHistoryImport {
         knownSources: this.store.data.jobs
           .map((job) => job.historySource?.threadId)
           .filter(Boolean),
+        knownEntries: this.store.data.jobs
+          .filter((j) => j.historySource)
+          .map((j) => ({
+            threadId: j.historySource!.threadId,
+            id: j.id,
+            storage: j.historySource!.storage,
+            upgradable:
+              j.state === "completed" &&
+              !j.turnId &&
+              !j.pendingMessage &&
+              !j.queuedMessages?.length,
+          })),
       },
     });
     this.worker = worker;
@@ -149,6 +161,39 @@ export class BackgroundHistoryImport {
           .filter(Boolean),
       );
       for (const job of message.jobs) {
+        if (job.replaceId) {
+          const index = this.store.data.jobs.findIndex(
+            (j) =>
+              j.id === job.replaceId &&
+              j.historySource?.threadId === job.historySource?.threadId &&
+              j.state === "completed" &&
+              !j.turnId &&
+              !j.pendingMessage &&
+              !j.queuedMessages?.length,
+          );
+          delete job.replaceId;
+          if (index >= 0) {
+            const old = this.store.data.jobs[index];
+            const incoming = await fs.realpath(
+              path.join(this.store.root, "chats", `${job.id}.jsonl`),
+            );
+            await fs.rename(
+              incoming,
+              path.join(path.dirname(incoming), `${old.id}.jsonl`),
+            );
+            this.store.data.jobs[index] = {
+              ...job,
+              id: old.id,
+              pinned: old.pinned,
+              archived: old.archived,
+            };
+            this.progress.updated++;
+            continue;
+          }
+          this.progress.warnings.push(
+            "已有会话在导入期间发生变化，保留原记录；请完成当前操作后重新导入。",
+          );
+        }
         if (known.has(job.historySource?.threadId)) {
           this.duplicateSkipped++;
           this.progress.skipped++;

@@ -1,4 +1,4 @@
-export function redact(value: unknown): string {
+export function redact(value: unknown, limit = 16000): string {
   return String(value ?? "")
     .replace(
       /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g,
@@ -9,5 +9,5 @@ export function redact(value: unknown): string {
       /("?(?:access_token|refresh_token|id_token|authorization|api_key)"?\s*[:=]\s*)("[^"\n]*"|[^\s,}]+)/gi,
       "$1[REDACTED]",
     )
-    .slice(0, 16000);
+    .slice(0, limit);
 }

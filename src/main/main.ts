@@ -61,6 +61,7 @@ import { capabilities } from "../shared/capabilities";
 import { resolveLanguage, translate } from "../shared/locale";
 import { BackgroundHistoryImport } from "../core/history-import";
 import { Attachments, clipboardFilePaths } from "../core/attachments";
+import { exportNativeThread } from "../core/native-history";
 import { importRunning } from "../shared/history-import";
 app.setName("Codex Relay");
 const startupTrace = (stage: string) => {
@@ -779,11 +780,10 @@ async function boot() {
         const a = z.object({ id: idSchema }).strict().parse(args);
         const job = store.data.jobs.find((job) => job.id === a.id);
         if (!job?.threadId) throw Error("会话尚无原始记录");
-        const file = await findTranscript(
-          store.jobHome(job.id),
-          job.threadId,
-          true,
-        );
+        const file =
+          job.historySource?.storage === "sqlite"
+            ? await exportNativeThread(store.jobHome(job.id), job.threadId)
+            : await findTranscript(store.jobHome(job.id), job.threadId, true);
         const error = await shell.openPath(file);
         if (error) throw Error(error);
         return;

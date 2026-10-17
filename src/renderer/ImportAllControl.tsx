@@ -39,7 +39,7 @@ export function ImportAllControl({
         const next = await call("history.importAll.status");
         if (alive && next?.phase) {
           setProgress(next);
-          const key = `${next.id}:${next.imported}:${next.projects}`;
+          const key = `${next.id}:${next.imported}:${next.updated}:${next.projects}`;
           if (key !== previous && (previous || next.imported || next.projects))
             changedRef.current?.();
           previous = key;
@@ -77,7 +77,7 @@ export function ImportAllControl({
         : active
           ? t("正在后台导入…")
           : progress.phase === "completed"
-            ? t("全部扫描完成")
+            ? t("扫描及导入完成")
             : progress.phase === "cancelled" || progress.phase === "interrupted"
               ? t("导入已停止，可以继续导入")
               : progress.phase === "failed"
@@ -132,16 +132,26 @@ export function ImportAllControl({
             />
           )}
           <small>
-            {t(
-              "项目 {projects} · 对话 {chats} · 跳过 {skipped} · 失败 {failed}",
-              {
-                projects: progress.projects,
-                chats: progress.imported,
-                skipped: progress.skipped,
-                failed: progress.failed,
-              },
-            )}
+            {t("项目 {projects} · 发现对话 {chats} · 失败 {failed}", {
+              projects: progress.projectsTotal ?? progress.projects,
+              chats: progress.total,
+              failed: progress.failed,
+            })}
           </small>
+          <small>
+            {t("新增 {added} · 更新 {updated} · 已存在 {existing}", {
+              added: progress.imported,
+              updated: progress.updated || 0,
+              existing: progress.skipped,
+            })}
+          </small>
+          {active && progress.stage === "snapshot" && (
+            <small>
+              {t("正在复制分页历史：{percent}%", {
+                percent: progress.snapshotPercent || 0,
+              })}
+            </small>
+          )}
           {active && (
             <small title={progress.current}>
               {progress.phase === "scanning"

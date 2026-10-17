@@ -164,6 +164,7 @@ export class Scheduler extends EventEmitter {
       approvals: this.approvals,
       login: this.accounts.loginDisplay,
       loginError: this.accounts.loginError,
+      loginResult: this.accounts.loginResult,
       platform: process.platform,
     });
   }

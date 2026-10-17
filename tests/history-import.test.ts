@@ -9,6 +9,7 @@ import { Desktop } from "../src/core/desktop";
 import { BackgroundHistoryImport } from "../src/core/history-import";
 import { importRunning } from "../src/shared/history-import";
 import { Chats, jsonLines } from "../src/core/chat";
+import { exportNativeThread, nativeSource } from "../src/core/native-history";
 let suite: string,
   root: string,
   home: string,
@@ -43,6 +44,198 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   await importer.shutdown();
+});
+it("distinguishes background approval and spawned agents from main conversations", () => {
+  expect(nativeSource('{"subagent":{"other":"guardian"}}')).toEqual({
+    source: "review",
+  });
+  expect(
+    nativeSource('{"subagent":{"thread_spawn":{"parent_thread_id":"parent"}}}'),
+  ).toMatchObject({ source: "subagent", parentThreadId: "parent" });
+  expect(nativeSource("vscode")).toEqual({ source: "vscode" });
+});
+it("preserves every native page and exports complete source when a very large output uses a UI preview", async () => {
+  const id = await sqliteFixture();
+  const { DatabaseSync } = await import("node:sqlite"),
+    db = new DatabaseSync(path.join(home, "thread_history_1.sqlite"));
+  const insert = db.prepare("INSERT INTO thread_items VALUES(?,?,?,?,?,?)");
+  db.exec("BEGIN");
+  for (let n = 3; n < 143; n++)
+    insert.run(
+      id,
+      "turn-native",
+      `part-${n}`,
+      1000 + n,
+      JSON.stringify({
+        type: "agentMessage",
+        id: `part-${n}`,
+        text: `分页中文😀 ${n}`,
+      }),
+      n,
+    );
+  const fullOutput = "x".repeat(300000) + "完整输出尾部中文🎉";
+  insert.run(
+    id,
+    "turn-native",
+    "large-native",
+    2000,
+    JSON.stringify({
+      type: "commandExecution",
+      id: "large-native",
+      command: "echo",
+      aggregatedOutput: fullOutput,
+    }),
+    143,
+  );
+  db.exec("COMMIT");
+  db.close();
+  importer.start([home]);
+  await finished();
+  const job = store.data.jobs[0],
+    chats = new Chats(store.root),
+    last = await chats.read(job.id),
+    first = await chats.read(job.id, last.before);
+  expect(last.total).toBe(144);
+  expect(first.items.length + last.items.length).toBe(144);
+  expect(first.items[0].text).toBe("早期消息 完整中文😀𠮷");
+  expect(last.items.at(-1)).toMatchObject({ sourceTruncated: true });
+  const file = await exportNativeThread(store.jobHome(job.id), job.threadId!);
+  const content = await fs.readFile(file, "utf8");
+  expect(content).toContain("完整输出尾部中文🎉");
+  expect(content.trim().split("\n")).toHaveLength(144);
+});
+async function sqliteFixture(id = randomUUID()) {
+  const { DatabaseSync } = await import("node:sqlite");
+  const db = new DatabaseSync(path.join(home, "state_5.sqlite"));
+  db.exec(
+    "CREATE TABLE threads(id TEXT,source TEXT,cwd TEXT,title TEXT,model TEXT,reasoning_effort TEXT,history_mode TEXT,project_id TEXT,created_at_ms INTEGER,updated_at_ms INTEGER,archived INTEGER);CREATE TABLE projects(id TEXT,name TEXT);CREATE TABLE project_roots(project_id TEXT,path TEXT,position INTEGER);CREATE TABLE thread_dynamic_tools(thread_id TEXT);",
+  );
+  db.prepare("INSERT INTO threads VALUES(?,?,?,?,?,?,?,?,?,?,?)").run(
+    id,
+    "vscode",
+    project,
+    "完整分页聊天 中文😀",
+    "gpt-6-luna",
+    "low",
+    "paginated",
+    "project",
+    1000,
+    2000,
+    0,
+  );
+  db.prepare("INSERT INTO projects VALUES(?,?)").run("project", "数据库项目");
+  db.prepare("INSERT INTO project_roots VALUES(?,?,?)").run(
+    "project",
+    project,
+    0,
+  );
+  db.close();
+  const history = new DatabaseSync(path.join(home, "thread_history_1.sqlite"));
+  history.exec(
+    "CREATE TABLE thread_turns(thread_id TEXT,turn_id TEXT,started_at REAL);CREATE TABLE thread_items(thread_id TEXT,turn_id TEXT,item_id TEXT,created_at_ms INTEGER,item_json TEXT,rollout_ordinal INTEGER);",
+  );
+  history
+    .prepare("INSERT INTO thread_turns VALUES(?,?,?)")
+    .run(id, "turn-native", 1);
+  for (const [index, item] of [
+    {
+      type: "userMessage",
+      id: "user-native",
+      content: [{ type: "text", text: "早期消息 完整中文😀𠮷" }],
+    },
+    {
+      type: "commandExecution",
+      id: "command-native",
+      command: "echo 测试",
+      aggregatedOutput: "输出中文✅",
+      status: "completed",
+    },
+    { type: "agentMessage", id: "answer-native", text: "结尾完整内容 中文🎉" },
+  ].entries())
+    history
+      .prepare("INSERT INTO thread_items VALUES(?,?,?,?,?,?)")
+      .run(
+        id,
+        "turn-native",
+        item.id,
+        1000 + index,
+        JSON.stringify(item),
+        index,
+      );
+  history.close();
+  return id;
+}
+it("imports native paginated history with no rollout files, complete Unicode, context databases and project metadata", async () => {
+  const sourceId = await sqliteFixture();
+  const sourceState = await fs.readFile(path.join(home, "state_5.sqlite"));
+  const sourceHistory = await fs.readFile(
+    path.join(home, "thread_history_1.sqlite"),
+  );
+  importer.start([home]);
+  await finished();
+  expect(importer.progress).toMatchObject({
+    total: 1,
+    imported: 1,
+    failed: 0,
+    projectsTotal: 1,
+  });
+  const job = store.data.jobs[0];
+  expect(job.historySource).toMatchObject({
+    storage: "sqlite",
+    threadId: sourceId,
+  });
+  expect(job.threadId).toBe(sourceId);
+  expect(job.runtimeHomeId).toBeTruthy();
+  expect(job.model).toBe("gpt-6-luna");
+  const page = await new Chats(store.root).read(job.id);
+  expect(page.items.map((x) => x.text)).toEqual([
+    "早期消息 完整中文😀𠮷",
+    "echo 测试",
+    "结尾完整内容 中文🎉",
+  ]);
+  expect(page.items[1].detail).toBe("输出中文✅");
+  expect(page.items.every((x) => x.turnId === "turn-native")).toBe(true);
+  expect(await fs.readFile(path.join(home, "state_5.sqlite"))).toEqual(
+    sourceState,
+  );
+  expect(await fs.readFile(path.join(home, "thread_history_1.sqlite"))).toEqual(
+    sourceHistory,
+  );
+  importer.start([home]);
+  await finished();
+  expect(importer.progress).toMatchObject({
+    imported: 0,
+    skipped: 1,
+    updated: 0,
+    failed: 0,
+  });
+  expect(store.data.jobs).toHaveLength(1);
+});
+it("upgrades a previously imported partial rollout in place when full native paginated history becomes available", async () => {
+  const legacy = await fixture(1);
+  importer.start([home]);
+  await finished();
+  const original = store.data.jobs[0];
+  original.pinned = true;
+  await sqliteFixture(legacy.id);
+  importer.start([home]);
+  await finished();
+  expect(importer.progress).toMatchObject({
+    total: 1,
+    imported: 0,
+    updated: 1,
+    failed: 0,
+  });
+  expect(store.data.jobs).toHaveLength(1);
+  expect(store.data.jobs[0]).toMatchObject({
+    id: original.id,
+    pinned: true,
+    title: "完整分页聊天 中文😀",
+    historySource: { storage: "sqlite" },
+  });
+  expect(
+    (await new Chats(store.root).read(original.id)).items.at(-1)?.text,
+  ).toBe("结尾完整内容 中文🎉");
 });
 it("imports records above 16 MiB without losing compacted context or complete tool output, while bounding the UI preview", async () => {
   const source = await fixture(1);

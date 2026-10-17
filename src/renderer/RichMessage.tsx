@@ -12,6 +12,7 @@ import {
   nodeText,
   mathSource,
   decodeFileLink,
+  displayTerminalText,
 } from "./message-format";
 import { CopyButton } from "./CopyButton";
 import type { PluggableList } from "unified";
@@ -333,7 +334,7 @@ function RichMessageView({
               onOpen={onOpen}
             />
           ) : (
-            <pre>{item.detail || item.text}</pre>
+            <pre>{displayTerminalText(item.detail || item.text)}</pre>
           )}
         </details>
         {item.sourceTruncated && (

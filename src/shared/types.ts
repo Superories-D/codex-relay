@@ -73,6 +73,7 @@ export interface ResetWarmup {
   error?: string;
 }
 export interface Job {
+  projectCwd?: string;
   agentOrigin?: { jobId: string; parentThreadId: string };
   preserveNativePermissions?: boolean;
   goal?: ThreadGoal | null;
@@ -106,7 +107,13 @@ export interface Job {
     serviceTier?: string;
   }[];
   archived?: boolean;
-  historySource?: { threadId: string; source: string; issue?: string };
+  historySource?: {
+    threadId: string;
+    source: string;
+    issue?: string;
+    storage?: "sqlite";
+    parentThreadId?: string;
+  };
   review?: boolean;
   id: string;
   title: string;
@@ -263,6 +270,7 @@ export interface Snapshot extends AppState {
   approvals: Approval[];
   login?: { accountId: string; url: string; code?: string };
   loginError?: string;
+  loginResult?: { accountId: string; email: string; updated: boolean };
   platform: string;
 }
 export type NewJob = Pick<
@@ -338,6 +346,9 @@ export interface ChatPage {
   before?: number;
 }
 export interface HistoryEntry {
+  storage?: "sqlite";
+  projectCwd?: string;
+  parentThreadId?: string;
   id: string;
   threadId: string;
   title: string;

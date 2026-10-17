@@ -8,14 +8,23 @@ import { Chats, jsonLines, rolloutRecords } from "./chat";
 import { captureRollout, HistoryDependencyError } from "./rollout-snapshot";
 import { TextWriter } from "./text-writer";
 import { persistImages } from "./chat-media";
+import {
+  nativeCatalog,
+  NativeSnapshots,
+  type NativeThread,
+} from "./native-history";
 
 export class History {
   private entries = new Map<
     string,
-    { entry: HistoryEntry; file: string; home: string }
+    { entry: HistoryEntry; file: string; home: string; native?: NativeThread }
   >();
   private busy = false;
   private mediaCopies = new Map<string, string>();
+  private nativeSnapshots?: NativeSnapshots;
+  nativeProjects: { cwd: string; name: string; id: string }[] = [];
+  snapshotProgress?: (percent: number) => void;
+  cancelled?: () => boolean;
   constructor(
     private store: Store,
     private chats: Chats,
@@ -27,7 +36,9 @@ export class History {
     cancelled?: () => boolean,
   ) {
     if (this.busy) throw new Error("正在导入历史，请稍后扫描");
+    this.close();
     this.entries.clear();
+    this.nativeProjects = [];
     let scanned = 0;
     const warnings: string[] = [],
       roots: string[] = [];
@@ -126,6 +137,36 @@ export class History {
       };
       await walk(path.join(home, "sessions"));
       await walk(path.join(home, "archived_sessions"));
+      try {
+        const catalog = await nativeCatalog(home);
+        if (catalog) {
+          this.nativeProjects.push(...catalog.projects);
+          for (const native of catalog.threads) {
+            const existing = [...this.entries.entries()].find(
+              ([, v]) => v.entry.threadId === native.entry.threadId,
+            );
+            if (
+              existing?.[1].native &&
+              existing[1].entry.updatedAt >= native.entry.updatedAt
+            )
+              continue;
+            if (existing && native.row.history_mode !== "paginated") continue;
+            if (existing) this.entries.delete(existing[0]);
+            native.entry.imported = this.store.data.jobs.some(
+              (j) => j.historySource?.threadId === native.entry.threadId,
+            );
+            this.entries.set(native.entry.id, {
+              entry: native.entry,
+              home,
+              file: native.state,
+              native,
+            });
+            progress?.(++scanned);
+          }
+        }
+      } catch (error) {
+        warnings.push(`分页历史数据库未完整读取：${String(error)}`);
+      }
     }
     return {
       entries: [...this.entries.values()]
@@ -138,6 +179,15 @@ export class History {
   async copyEntry(id: string) {
     const found = this.entries.get(id);
     if (!found) throw Error("扫描记录已过期");
+    if (found.native) {
+      this.nativeSnapshots ??= new NativeSnapshots(
+        this.store,
+        this.chats,
+        (percent) => this.snapshotProgress?.(percent),
+        () => this.cancelled?.() || false,
+      );
+      return this.nativeSnapshots.copy(found.native);
+    }
     return this.copy(found.file, found.entry, found.home);
   }
   async import(ids?: string[]) {
@@ -163,7 +213,7 @@ export class History {
           continue;
         }
         try {
-          const job = await this.copy(file, entry, home);
+          const job = await this.copyEntry(id);
           this.store.data.jobs.push(job);
           await this.store.save();
           imported.push(job.id);
@@ -174,7 +224,12 @@ export class History {
       return { imported, skipped, errors };
     } finally {
       this.busy = false;
+      this.close();
     }
+  }
+  close() {
+    this.nativeSnapshots?.close();
+    this.nativeSnapshots = undefined;
   }
   async copy(
     file: string,

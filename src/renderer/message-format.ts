@@ -2,6 +2,16 @@ import { normalizeLocalPath } from "../shared/file-reference";
 
 /** Presentation only: the persisted answer and whole-answer copy stay original. */
 export function normalizeMessage(text: string, streaming = false): string {
+  text = displayTerminalText(text);
+  if (!streaming && text.length <= 262144 && /^\s*[\[{]/.test(text)) {
+    try {
+      const value = JSON.parse(text);
+      if (value && typeof value === "object")
+        return "```json\n" + JSON.stringify(value, null, 2) + "\n```";
+    } catch {
+      /* Prose and incomplete JSON keep their original presentation. */
+    }
+  }
   const lines = text.split(/\r?\n/);
   const output: string[] = [];
   let plain: string[] = [];
@@ -66,6 +76,13 @@ export function normalizeMessage(text: string, streaming = false): string {
   }
   flush();
   return output.join("\n");
+}
+
+export function displayTerminalText(text: string) {
+  return text
+    .replace(/\u001b\][\s\S]*?(?:\u0007|\u001b\\)/g, "")
+    .replace(/(?:\u001b\[|\u009b)[0-?]*[ -/]*[@-~]/g, "")
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "");
 }
 
 function normalizeMathDelimiters(text: string): string {

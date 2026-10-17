@@ -199,6 +199,34 @@ describe("single refresh-token authority", () => {
     expect(await fs.readFile(file, "utf8")).toContain("new-login");
     expect(accounts.loginError).toContain("vault unavailable");
   });
+  it("adds a distinct third login and clearly reports a browser login reusing an existing identity", async () => {
+    for (const identity of ["one", "two"]) {
+      const value = auth();
+      value.tokens.account_id = identity;
+      await accounts.import(JSON.stringify(value));
+    }
+    const display = await accounts.beginLogin("third", false);
+    const value = auth();
+    value.tokens.account_id = "three";
+    await fs.writeFile(
+      path.join(store.profileHome(display.accountId), "auth.json"),
+      JSON.stringify(value),
+    );
+    rpc.emit("account/login/completed", { loginId: "login", success: true });
+    await accounts.drain();
+    expect(store.data.accounts).toHaveLength(3);
+    expect(accounts.loginResult).toMatchObject({ updated: false });
+    const again = await accounts.beginLogin("third", false);
+    expect(accounts.loginResult).toBeUndefined();
+    await fs.writeFile(
+      path.join(store.profileHome(again.accountId), "auth.json"),
+      JSON.stringify(value),
+    );
+    rpc.emit("account/login/completed", { loginId: "login", success: true });
+    await accounts.drain();
+    expect(store.data.accounts).toHaveLength(3);
+    expect(accounts.loginResult).toMatchObject({ updated: true });
+  });
   it("a fresh positive server observation clears the previous quota cooldown", async () => {
     const a = await accounts.import(JSON.stringify(auth()));
     a.blockedUntil = Date.now() + 7 * 86400000;

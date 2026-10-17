@@ -99,6 +99,7 @@ export class Accounts {
   };
   loginDisplay?: { accountId: string; url: string; code?: string };
   loginError?: string;
+  loginResult?: { accountId: string; email: string; updated: boolean };
   busy = new Set<string>();
   constructor(
     private store: Store,
@@ -430,6 +431,7 @@ export class Accounts {
   private async beginLoginOnce(label: string, device: boolean) {
     await this.cancelLoginOnce();
     this.loginError = undefined;
+    this.loginResult = undefined;
     const id = randomUUID();
     const home = this.store.profileHome(id);
     await fs.mkdir(home, { recursive: true, mode: 0o700 });
@@ -495,14 +497,22 @@ export class Accounts {
     try {
       if (!event.success) throw new Error(event.error ?? "登录未完成");
       await login.rpc.close();
-      const account = await this.import(
-        await fs.readFile(
-          path.join(this.store.profileHome(login.id), "auth.json"),
-          "utf8",
-        ),
-        label,
+      const text = await fs.readFile(
+        path.join(this.store.profileHome(login.id), "auth.json"),
+        "utf8",
       );
+      const identity = parseAuth(text).identity;
+      const updated = this.store.data.accounts.some(
+        (a) => a.identity === identity,
+      );
+      const account = await this.import(text, label);
       imported = true;
+      this.loginResult = {
+        accountId: account.id,
+        email: account.email,
+        updated,
+      };
+      this.changed();
       await this.inspect(account.id).catch(() => {});
     } finally {
       await login.rpc.close();

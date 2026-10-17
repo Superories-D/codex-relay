@@ -15,6 +15,10 @@ export interface ImportProgress {
   total: number;
   processed: number;
   imported: number;
+  updated: number;
+  projectsTotal: number;
+  stage?: "snapshot" | "messages";
+  snapshotPercent?: number;
   skipped: number;
   failed: number;
   projects: number;
@@ -34,6 +38,8 @@ export const emptyImportProgress = (): ImportProgress => ({
   total: 0,
   processed: 0,
   imported: 0,
+  updated: 0,
+  projectsTotal: 0,
   skipped: 0,
   failed: 0,
   projects: 0,

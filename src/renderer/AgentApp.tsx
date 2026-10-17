@@ -659,7 +659,7 @@ export function AgentApp({
     return (snapshot?.jobs ?? []).filter(
       (j) =>
         !!j.archived === archived &&
-        (projectMatches.has(j.cwd) ||
+        (projectMatches.has(j.projectCwd || j.cwd) ||
           `${j.title} ${j.cwd}`.toLowerCase().includes(search.toLowerCase())),
     );
   }, [snapshot?.jobs, desktop.projects, archived, search]);
@@ -674,18 +674,20 @@ export function AgentApp({
       )
         groups.set(project.cwd, []);
     for (const j of [...jobs].sort((a, b) => b.updatedAt - a.updatedAt)) {
-      const group = groups.get(j.cwd);
+      const key = j.projectCwd || j.cwd;
+      const group = groups.get(key);
       if (group) group.push(j);
-      else groups.set(j.cwd, [j]);
+      else groups.set(key, [j]);
     }
     return groups;
   }, [desktop.projects, jobs, search]);
   const visibleGroups = useMemo(() => {
     const entries = [...groups].slice(0, visibleProjects);
-    if (job && groups.has(job.cwd) && !entries.some(([cwd]) => cwd === job.cwd))
-      entries.push([job.cwd, groups.get(job.cwd)!]);
+    const key = job?.projectCwd || job?.cwd;
+    if (key && groups.has(key) && !entries.some(([cwd]) => cwd === key))
+      entries.push([key, groups.get(key)!]);
     return entries;
-  }, [groups, visibleProjects, job?.cwd]);
+  }, [groups, visibleProjects, job?.cwd, job?.projectCwd]);
   if (manage.startsWith("advanced:"))
     return (
       <div className="legacy-window">
@@ -915,70 +917,128 @@ export function AgentApp({
                   ))}
               </section>
             )}
-            {visibleGroups.map(([dir, group]) => (
-              <details key={dir} open className="agent-project">
-                <summary title={dir}>
-                  <Folder size={17} />{" "}
-                  {desktop.projects?.find((p) => p.cwd === dir)?.name ||
-                    basename(dir) ||
-                    t("未关联项目")}
-                  <button
-                    className="project-new-chat"
-                    title={t("在此项目新建聊天")}
-                    onClick={(e) => {
-                      e.preventDefault();
-                      setCwd(dir);
-                      select();
-                    }}
-                  >
-                    <Plus size={14} />
-                  </button>
-                </summary>
-                {group
-                  .slice(0, visibleThreads[dir] || 20)
-                  .concat(
-                    group.find((j) => j.id === selected) &&
-                      !group
-                        .slice(0, visibleThreads[dir] || 20)
-                        .some((j) => j.id === selected)
-                      ? [group.find((j) => j.id === selected)!]
-                      : [],
-                  )
-                  .map((j) => (
+            {visibleGroups.map(([dir, all]) => {
+              const background = all.filter((j) =>
+                ["subagent", "review"].includes(j.historySource?.source || ""),
+              );
+              const group = all.filter((j) => !background.includes(j));
+              return (
+                <details key={dir} open className="agent-project">
+                  <summary title={dir}>
+                    <Folder size={17} />{" "}
+                    {desktop.projects?.find((p) => p.cwd === dir)?.name ||
+                      basename(dir) ||
+                      t("未关联项目")}
                     <button
-                      key={j.id}
-                      className={`agent-thread ${j.id === selected ? "selected" : ""}`}
-                      onClick={() => select(j)}
-                      title={j.title}
+                      className="project-new-chat"
+                      title={t("在此项目新建聊天")}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        setCwd(dir);
+                        select();
+                      }}
                     >
-                      <span className={running(j) ? "agent-pulse" : ""}>
-                        {running(j) ? (
-                          <span className="thread-running-dot" />
-                        ) : j.pinned ? (
-                          <Pin size={12} />
-                        ) : null}
-                      </span>
-                      <span>{j.title}</span>
-                      {j.state === "needs_attention" && <b>!</b>}
+                      <Plus size={14} />
                     </button>
-                  ))}
-                {group.length > (visibleThreads[dir] || 20) && (
-                  <button
-                    className="sidebar-show-more"
-                    onClick={() =>
-                      setVisibleThreads((previous) => ({
-                        ...previous,
-                        [dir]: (previous[dir] || 20) + 20,
-                      }))
-                    }
-                  >
-                    {t("显示更多对话（{count}）", {
-                      count: group.length - (visibleThreads[dir] || 20),
-                    })}
-                  </button>
-                )}
-              </details>
-            ))}
+                  </summary>
+                  {group
+                    .slice(0, visibleThreads[dir] || 20)
+                    .concat(
+                      group.find((j) => j.id === selected) &&
+                        !group
+                          .slice(0, visibleThreads[dir] || 20)
+                          .some((j) => j.id === selected)
+                        ? [group.find((j) => j.id === selected)!]
+                        : [],
+                    )
+                    .map((j) => (
+                      <button
+                        key={j.id}
+                        className={`agent-thread ${j.id === selected ? "selected" : ""}`}
+                        onClick={() => select(j)}
+                        title={j.title}
+                      >
+                        <span className={running(j) ? "agent-pulse" : ""}>
+                          {running(j) ? (
+                            <span className="thread-running-dot" />
+                          ) : j.pinned ? (
+                            <Pin size={12} />
+                          ) : null}
+                        </span>
+                        <span>{j.title}</span>
+                        {j.state === "needs_attention" && <b>!</b>}
+                      </button>
+                    ))}
+                  {group.length > (visibleThreads[dir] || 20) && (
+                    <button
+                      className="sidebar-show-more"
+                      onClick={() =>
+                        setVisibleThreads((previous) => ({
+                          ...previous,
+                          [dir]: (previous[dir] || 20) + 20,
+                        }))
+                      }
+                    >
+                      {t("显示更多对话（{count}）", {
+                        count: group.length - (visibleThreads[dir] || 20),
+                      })}
+                    </button>
+                  )}
+                  {!!background.length && (
+                    <details
+                      className="sidebar-background"
+                      open={
+                        background.some((j) => j.id === selected) ||
+                        !!search ||
+                        undefined
+                      }
+                    >
+                      <summary>
+                        {t("子代理与后台记录（{count}）", {
+                          count: background.length,
+                        })}
+                      </summary>
+                      {background
+                        .slice(0, visibleThreads[`${dir}:background`] || 20)
+                        .map((j) => (
+                          <button
+                            key={j.id}
+                            className={`agent-thread ${j.id === selected ? "selected" : ""}`}
+                            onClick={() => select(j)}
+                            title={j.title}
+                          >
+                            <span />
+                            <span>
+                              {j.historySource?.source === "review"
+                                ? t("后台审核")
+                                : j.title}
+                            </span>
+                          </button>
+                        ))}
+                      {background.length >
+                        (visibleThreads[`${dir}:background`] || 20) && (
+                        <button
+                          className="sidebar-show-more"
+                          onClick={() =>
+                            setVisibleThreads((v) => ({
+                              ...v,
+                              [`${dir}:background`]:
+                                (v[`${dir}:background`] || 20) + 20,
+                            }))
+                          }
+                        >
+                          {t("显示更多对话（{count}）", {
+                            count:
+                              background.length -
+                              (visibleThreads[`${dir}:background`] || 20),
+                          })}
+                        </button>
+                      )}
+                    </details>
+                  )}
+                </details>
+              );
+            })}
             {groups.size > visibleProjects && (
               <button
                 className="sidebar-show-more"

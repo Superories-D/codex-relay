@@ -473,7 +473,8 @@ export function protocolItem(p: any, id: string): ChatItem {
     status: p.status,
     ...(images.length ? { images } : {}),
     text: String(text ?? ""),
-    detail: detail ? redact(detail) : undefined,
+    detail: detail ? redact(detail, 262144) : undefined,
+    ...(detail?.length > 262144 ? { sourceTruncated: true } : {}),
     at: Date.now(),
     ...([
       "fileChange",

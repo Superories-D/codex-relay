@@ -4,8 +4,23 @@ import { expect, it } from "vitest";
 import { MarkdownText, RichMessage } from "../src/renderer/RichMessage";
 import {
   normalizeMessage,
+  displayTerminalText,
   decodeFileLink,
 } from "../src/renderer/message-format";
+it("presents complete JSON as copyable highlighted code with decoded Unicode values", () => {
+  const source = '{"rationale":"中文\\uD83D\\uDE00","allow":true}';
+  const formatted = normalizeMessage(source);
+  expect(formatted).toContain("```json\n");
+  expect(formatted).toContain("中文😀");
+  expect(
+    JSON.parse(formatted.replace(/^```json\n/, "").replace(/\n```$/, "")),
+  ).toEqual(JSON.parse(source));
+  expect(normalizeMessage('{"incomplete":', true)).toBe('{"incomplete":');
+});
+it("hides terminal control sequences while preserving Chinese, emoji and readable output", () => {
+  const value = "\u001b[31m中文😀\u001b[0m\n\u001b]0;title\u0007输出✅\u0000";
+  expect(displayTerminalText(value)).toBe("中文😀\n输出✅");
+});
 import { normalizeLocalPath } from "../src/shared/file-reference";
 it("keeps user shell variables, Windows paths and Markdown punctuation literal without changing assistant math", () => {
   const text =

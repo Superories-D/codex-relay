@@ -1,6 +1,19 @@
 import { legacyEnglish } from "./legacy-en";
 import { nativeEnglish } from "./native-en";
 export const english: Record<string, string> = {
+  使用设备验证码登录: "Sign in with a device code",
+  "已更新现有账户：{email}": "Updated existing account: {email}",
+  "已添加新账户：{email}": "Added new account: {email}",
+  "浏览器返回了已存在的账户，因此没有新增卡片。添加其他账户时，请在官方页面切换到目标邮箱后再授权。":
+    "The browser returned an existing account, so no new card was added. To add another account, switch to the intended email on the official page before authorizing.",
+  扫描及导入完成: "Scan and import complete",
+  "项目 {projects} · 发现对话 {chats} · 失败 {failed}":
+    "Projects {projects} · Chats found {chats} · Failed {failed}",
+  "新增 {added} · 更新 {updated} · 已存在 {existing}":
+    "Added {added} · Updated {updated} · Existing {existing}",
+  "正在复制分页历史：{percent}%": "Copying paginated history: {percent}%",
+  "子代理与后台记录（{count}）": "Agents and background records ({count})",
+  后台审核: "Background review",
   等待模型账户: "Waiting for a matching model account",
   等待支持所选模型的账户: "Waiting for an account with the selected model",
   等待可用账户: "Waiting for an available account",
