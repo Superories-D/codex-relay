@@ -31,6 +31,7 @@ import {
 } from "lucide-react";
 import type { DesktopData } from "../core/desktop";
 import type { Account, Snapshot } from "../shared/types";
+import { fiveHour, timerEvidence } from "../shared/reset-window";
 import type { ImportPreview } from "../core/account-import";
 import { AccountSelection, AccountValueControl } from "./AccountValue";
 import { ImportAllControl } from "./ImportAllControl";
@@ -766,7 +767,15 @@ function Accounts({ snapshot, call }: { snapshot: Snapshot; call: Call }) {
                   </div>
                   <small>
                     {window?.resetsAt
-                      ? t("{p0} 重置", { p0: formatDate(window.resetsAt) })
+                      ? i === 0 &&
+                        quota === account.quotas.codex &&
+                        window.usedPercent === 0 &&
+                        fiveHour(account, quota) &&
+                        !timerEvidence(account, quota!)
+                        ? t("预计 {p0} 重置 · 计时待确认", {
+                            p0: formatDate(window.resetsAt),
+                          })
+                        : t("{p0} 重置", { p0: formatDate(window.resetsAt) })
                       : t("服务器未提供此额度窗口")}
                   </small>
                 </div>

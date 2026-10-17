@@ -125,16 +125,23 @@ export function AccountValueControl({
   };
   const unavailable = !eligible(account, "codex", now);
   const warmup = account.warmups?.codex;
+  const clockKnown = !!(
+    warmup?.nextResetAt &&
+    warmup.nextResetAt > now &&
+    account.resetWindows?.codex?.resetAt === warmup.nextResetAt
+  );
   const warmupLabel =
     warmup &&
     {
       queued: t("等待空闲时开始计时"),
       running: t("正在后台开始计时…"),
-      confirmed: t("已确认下一次重置时间"),
+      confirmed: clockKnown
+        ? t("已确认下一次重置时间")
+        : t("等待重新核实计时状态"),
       sent: t("已发送 hi，等待计时确认"),
       failed: t("后台开窗未完成，不自动重试"),
       uncertain: t("后台开窗结果待核实，不重复发送"),
-      covered: t("当前任务已开始计时"),
+      covered: clockKnown ? t("已有活动启动计时") : t("由当前任务接手开窗"),
       yielded: t("已让路给任务，不重复发送"),
     }[warmup.status];
   return (

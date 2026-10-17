@@ -66,6 +66,21 @@ it("values unused capacity with a nearer reset, never treating a passed deadline
     pickAccount([sooner, later], 0, "codex", now, "smart")?.account.id,
   ).toBe("later");
 });
+it("does not rank a moving zero-percent placeholder as expiring capacity", () => {
+  const a = account("idle");
+  a.quotas.codex.secondary = null;
+  a.quotas.codex.primary!.usedPercent = 0;
+  a.quotas.codex.primary!.resetsAt = now + 30000;
+  expect(
+    accountValue(a, "codex", now).factors.some((f) => f.key === "reset"),
+  ).toBe(false);
+  a.resetWindows = {
+    codex: { resetAt: now + 30000, observedAt: now, evidence: "stable" },
+  };
+  expect(
+    accountValue(a, "codex", now).factors.some((f) => f.key === "reset"),
+  ).toBe(true);
+});
 it("uses known plans and failure history as bounded factors, retaining rotation order for equal value", () => {
   const plus = account("plus"),
     pro = account("pro");

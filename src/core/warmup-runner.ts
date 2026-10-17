@@ -7,6 +7,7 @@ import type { Store } from "./store";
 import { Rpc } from "./rpc";
 import { parseQuotas, isExhausted } from "./quota";
 import { ProcessSafetyError } from "./process-safety-error";
+import { timerEvidence } from "../shared/reset-window";
 
 export interface WarmupRun {
   readonly admitted?: boolean;
@@ -74,12 +75,16 @@ export class WarmupRunner implements WarmupRun {
     };
     try {
       assertIdle();
+      const previous = account.quotas.codex;
       const prepared = await accounts.inspect(account.id, true);
       assertIdle();
       if (isExhausted(prepared.quotas.codex))
         throw new Error("账户额度受限，未发送 hi");
-      const nextReset = prepared.quotas.codex?.primary?.resetsAt;
-      if (resetAt && nextReset && nextReset > Date.now() && nextReset > resetAt)
+      if (
+        resetAt &&
+        prepared.quotas.codex &&
+        timerEvidence(account, prepared.quotas.codex, previous)
+      )
         return prepared.quotas;
       accounts.busy.add(account.id);
       owns = true;

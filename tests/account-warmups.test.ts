@@ -50,9 +50,197 @@ beforeEach(async () => {
 afterEach(async () => {
   await manager?.shutdown();
   manager = undefined;
+  vi.restoreAllMocks();
   expect(path.dirname(root)).toBe(path.resolve(os.tmpdir()));
   expect(path.basename(root).startsWith("relay-warmup-")).toBe(true);
   await fs.rm(root, { recursive: true, force: true });
+});
+it("recognizes a fresh server counter reset before the old scheduled deadline", async () => {
+  const now = Date.now(),
+    reset = now + 60000,
+    before = quota(90, reset, now - 30000),
+    fresh = quota(0, now + 18000000);
+  account.quotas = fresh;
+  const runner = vi.fn();
+  manager = new AccountWarmups(
+    store,
+    () => {},
+    runner,
+    () => false,
+  );
+  manager.observe(account, before, fresh);
+  expect(account.warmups?.codex).toMatchObject({
+    resetAt: reset,
+    status: "queued",
+  });
+  expect(runner).not.toHaveBeenCalled();
+});
+it("does not mistake a zero-percent future placeholder for a started timer", async () => {
+  const reset = Date.now() - 10000,
+    fresh = quota(0, Date.now() + 18000000);
+  account.quotas = fresh;
+  manager = new AccountWarmups(
+    store,
+    () => {},
+    vi.fn(),
+    () => false,
+  );
+  manager.observe(account, quota(90, reset, reset - 1), fresh);
+  expect(account.warmups?.codex.status).toBe("queued");
+});
+it("retains a proven boundary across restart and moving zero-percent observations", async () => {
+  const start = Date.now(),
+    reset = start + 60000;
+  const clock = vi.spyOn(Date, "now").mockReturnValue(start);
+  manager = new AccountWarmups(
+    store,
+    () => {},
+    vi.fn(),
+    () => false,
+  );
+  const positive = quota(90, reset, start);
+  account.quotas = positive;
+  manager.observe(account, positive, positive);
+  await manager.shutdown();
+  const restored = new Store(root);
+  await restored.load();
+  store = restored;
+  account = restored.data.accounts[0];
+  clock.mockReturnValue(start + 120000);
+  manager = new AccountWarmups(
+    store,
+    () => {},
+    vi.fn(),
+    () => false,
+  );
+  const fresh = quota(0, start + 120000 + 18000000);
+  account.quotas = fresh;
+  manager.observe(
+    account,
+    quota(0, start + 30000 + 18000000, start + 30000),
+    fresh,
+  );
+  expect(account.warmups?.codex).toMatchObject({
+    resetAt: reset,
+    status: "queued",
+  });
+});
+it("learns a stable zero-percent countdown without spending a turn", async () => {
+  const now = Date.now(),
+    next = now + 17000000,
+    fresh = quota(0, next),
+    runner = vi.fn();
+  account.quotas = fresh;
+  manager = new AccountWarmups(store, () => {}, runner);
+  manager.observe(account, quota(0, next, now - 30000), fresh);
+  expect(account.resetWindows?.codex).toMatchObject({
+    resetAt: next,
+    evidence: "stable",
+  });
+  expect(account.warmups).toBeUndefined();
+  expect(runner).not.toHaveBeenCalled();
+});
+it("detects a proven zero-percent clock being replaced before its deadline", async () => {
+  const now = Date.now(),
+    oldNext = now + 12000000,
+    before = quota(0, oldNext, now - 30000),
+    middle = quota(0, oldNext, now - 1000),
+    runner = vi.fn();
+  manager = new AccountWarmups(
+    store,
+    () => {},
+    runner,
+    () => false,
+  );
+  account.quotas = middle;
+  manager.observe(account, before, middle);
+  const fresh = quota(0, now + 18000000);
+  account.quotas = fresh;
+  manager.observe(account, middle, fresh);
+  expect(account.warmups?.codex).toMatchObject({
+    resetAt: oldNext,
+    status: "queued",
+  });
+  expect(runner).not.toHaveBeenCalled();
+});
+it("keeps a completed hi unconfirmed until the zero-percent timer stays stable", async () => {
+  const now = Date.now(),
+    reset = now - 30000,
+    next = now + 17980000;
+  const fresh = quota(0, reset),
+    after = quota(0, next, now - 15000);
+  account.quotas = fresh;
+  const runner = vi.fn(() => ({
+    admitted: true,
+    done: Promise.resolve(after),
+    stop: async () => {},
+  }));
+  manager = new AccountWarmups(store, () => {}, runner);
+  manager.observe(account, quota(90, reset, reset - 1), fresh);
+  await vi.waitFor(() => expect(account.warmups?.codex.status).toBe("sent"));
+  const current = quota(0, next);
+  account.quotas = current;
+  manager.observe(account, after, current);
+  expect(account.warmups?.codex.status).toBe("confirmed");
+  manager.pump();
+  expect(runner).toHaveBeenCalledTimes(1);
+});
+it("requeues an unsent foreground hand-off when the task ends without starting a clock", async () => {
+  const now = Date.now(),
+    reset = now - 10000,
+    fresh = quota(0, now + 18000000),
+    runner = vi.fn();
+  account.quotas = fresh;
+  manager = new AccountWarmups(
+    store,
+    () => {},
+    runner,
+    () => false,
+  );
+  manager.observe(account, quota(90, reset, reset - 1000), fresh, true);
+  expect(account.warmups?.codex).toMatchObject({
+    status: "covered",
+  });
+  expect(account.warmups?.codex.nextResetAt).toBeUndefined();
+  const changed = quota(0, now + 18001000);
+  account.quotas = changed;
+  manager.observe(account, fresh, changed, false);
+  expect(account.warmups?.codex.status).toBe("queued");
+  expect(runner).not.toHaveBeenCalled();
+});
+it("does not treat a known weekly primary as five hours even when manually labelled", async () => {
+  account.limitMode = "fiveHour";
+  const reset = Date.now() - 10000,
+    before = quota(90, reset, reset - 1),
+    fresh = quota(0, reset);
+  before.codex.primary!.windowDurationMins = 10080;
+  fresh.codex.primary!.windowDurationMins = 10080;
+  account.quotas = fresh;
+  const runner = vi.fn();
+  manager = new AccountWarmups(
+    store,
+    () => {},
+    runner,
+    () => false,
+  );
+  manager.observe(account, before, fresh);
+  expect(account.warmups).toBeUndefined();
+  expect(account.resetWindows).toBeUndefined();
+});
+it("refuses a five-hour timestamp that actually points a week into the future", async () => {
+  const now = Date.now(),
+    fresh = quota(0, now + 604800000),
+    runner = vi.fn();
+  account.quotas = fresh;
+  manager = new AccountWarmups(
+    store,
+    () => {},
+    runner,
+    () => false,
+  );
+  manager.observe(account, quota(90, now - 1000, now - 2000), fresh);
+  expect(account.warmups).toBeUndefined();
+  expect(runner).not.toHaveBeenCalled();
 });
 it("requires a fresh server observation and sends only once for a reset, including after restart", async () => {
   const reset = Date.now() - 10000,
@@ -60,7 +248,7 @@ it("requires a fresh server observation and sends only once for a reset, includi
     fresh = quota(0, reset);
   account.quotas = fresh;
   const runner = vi.fn(() => ({
-    done: Promise.resolve(quota(0, Date.now() + 18000000)),
+    done: Promise.resolve(quota(1, Date.now() + 18000000)),
     stop: async () => {},
   }));
   manager = new AccountWarmups(store, () => {}, runner);

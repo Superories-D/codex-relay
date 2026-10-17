@@ -122,6 +122,10 @@ export const english: Record<string, string> = {
   等待空闲时开始计时: "Waiting for idle time to start the timer",
   "正在后台开始计时…": "Starting the timer in the background…",
   已确认下一次重置时间: "Next reset time confirmed",
+  "预计 {p0} 重置 · 计时待确认": "Estimated reset {p0} · Timer not confirmed",
+  等待重新核实计时状态: "Waiting to verify the timer",
+  已有活动启动计时: "Existing activity started the timer",
+  由当前任务接手开窗: "The current task will start the timer",
   "已发送 hi，等待计时确认": "Hi sent, waiting for timer confirmation",
   "后台开窗未完成，不自动重试":
     "Timer warmup did not finish; no automatic retry",

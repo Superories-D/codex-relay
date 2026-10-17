@@ -165,6 +165,8 @@ it("does not spend a turn if another activity already started the timer before e
   accounts.inspect = vi.fn(async () => {
     const result = await original();
     result.quotas.codex.primary.resetsAt = next;
+    result.quotas.codex.primary.usedPercent = 1;
+    result.quotas.codex.primary.windowDurationMins = 300;
     return result;
   });
   const runner = new WarmupRunner(
@@ -190,6 +192,78 @@ it("never treats an interrupted turn as success and retains ownership after an u
   complete("interrupted");
   await rejected;
   expect(accounts.busy.has(account.id)).toBe(true);
+});
+it("sends one hi when the fresh zero-percent future date is still moving", async () => {
+  const original = accounts.inspect;
+  accounts.inspect = vi.fn(async () => {
+    const result = await original();
+    result.quotas.codex.primary = {
+      usedPercent: 0,
+      windowDurationMins: 300,
+      resetsAt: Date.now() + 18000000,
+    };
+    return result;
+  });
+  account.quotas = {
+    codex: {
+      limitId: "codex",
+      observedAt: Date.now() - 30000,
+      reached: false,
+      primary: {
+        usedPercent: 0,
+        windowDurationMins: 300,
+        resetsAt: Date.now() + 18000000 - 30000,
+      },
+      secondary: null,
+    },
+  };
+  const runner = new WarmupRunner(
+    store,
+    accounts,
+    account,
+    async () => {},
+    Date.now() - 10000,
+  );
+  await started();
+  complete();
+  await runner.done;
+  expect(runner.admitted).toBe(true);
+  expect(
+    rpc.call.mock.calls.filter(([m]: [string]) => m === "turn/start"),
+  ).toHaveLength(1);
+});
+it("does not send hi when two fresh zero-percent observations prove a stable countdown", async () => {
+  const now = Date.now(),
+    next = now + 17000000,
+    original = accounts.inspect;
+  account.quotas = {
+    codex: {
+      limitId: "codex",
+      observedAt: now - 30000,
+      reached: false,
+      primary: { usedPercent: 0, windowDurationMins: 300, resetsAt: next },
+      secondary: null,
+    },
+  };
+  accounts.inspect = vi.fn(async () => {
+    const result = await original();
+    result.quotas.codex.primary = {
+      usedPercent: 0,
+      windowDurationMins: 300,
+      resetsAt: next,
+    };
+    return result;
+  });
+  const runner = new WarmupRunner(
+    store,
+    accounts,
+    account,
+    async () => {},
+    next + 10000,
+  );
+  await runner.done;
+  expect(runner.admitted).toBe(false);
+  expect(Rpc.open).not.toHaveBeenCalled();
 });
 it("bounds the wait and does not retry an admitted turn with an unknown result", async () => {
   vi.useFakeTimers();

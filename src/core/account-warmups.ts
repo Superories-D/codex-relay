@@ -6,6 +6,12 @@ import type { WarmupRun } from "./warmup-runner";
 import { Rpc } from "./rpc";
 import path from "node:path";
 import { ProcessSafetyError } from "./process-safety-error";
+import {
+  fiveHour,
+  freshWindow,
+  rememberWindow,
+  timerEvidence,
+} from "../shared/reset-window";
 export class AccountWarmups {
   private active?: {
     account: Account;
@@ -62,102 +68,130 @@ export class AccountWarmups {
     fresh: Record<string, Quota>,
     covered = false,
   ) {
+    if (this.closed) return;
+    const current = fresh.codex,
+      prior = previous.codex,
+      now = Date.now();
     if (
-      this.closed ||
-      this.store.data.settings.resetWarmupEnabled === false ||
-      process.env.CODEX_RELAY_DISABLE_RESET_WARMUP === "1"
+      !current ||
+      !freshWindow(account, current, now) ||
+      (prior && current.observedAt < prior.observedAt)
     )
       return;
-    const old = previous.codex?.primary,
-      current = fresh.codex;
-    const now = Date.now();
+    if ((account.resetWindows?.codex?.observedAt || 0) > current.observedAt)
+      return;
+    let dirty = false;
+    // Preserve the last proven boundary even if the server temporarily replaces
+    // it with a moving, zero-percent `now + five hours` placeholder.
+    if (
+      prior &&
+      fiveHour(account, prior) &&
+      prior.primary!.usedPercent > 0 &&
+      prior.primary!.resetsAt &&
+      prior.observedAt <= current.observedAt &&
+      (!account.resetWindows?.codex ||
+        prior.observedAt > account.resetWindows.codex.observedAt)
+    )
+      dirty = rememberWindow(account, prior, "usage") || dirty;
+    const known = account.resetWindows?.codex;
+    const evidence = timerEvidence(account, current, prior, now);
+    if (evidence) dirty = rememberWindow(account, current, evidence) || dirty;
+    const old = prior?.primary;
+    // A fresh counter drop plus a changed window is real server evidence even
+    // when it arrives before the previously scheduled deadline.
+    const counterReset = !!(
+      prior &&
+      fiveHour(account, prior) &&
+      old?.resetsAt &&
+      old.resetsAt <= prior.observedAt + 18120000 &&
+      old.usedPercent > 0 &&
+      current.primary!.usedPercent === 0 &&
+      current.primary!.resetsAt !== old.resetsAt &&
+      current.observedAt > prior.observedAt
+    );
+    const movedClock = !!(
+      known &&
+      current.primary!.usedPercent === 0 &&
+      current.primary!.resetsAt &&
+      current.primary!.resetsAt > known.resetAt + 60000 &&
+      current.observedAt > known.observedAt
+    );
+    const boundary = counterReset
+      ? old!.resetsAt!
+      : movedClock
+        ? known!.resetAt
+        : known && known.resetAt <= now && current.observedAt >= known.resetAt
+          ? known.resetAt
+          : undefined;
+    const persist = () => {
+      if (dirty)
+        void this.store
+          .save()
+          .then(() => {
+            this.changed();
+            this.pump();
+          })
+          .catch(() => {});
+    };
     const pending = account.warmups?.codex;
-    // A completed reply can precede the rate-limit update. Reconcile a later
-    // observation even when the previous probe already contains the new window.
+    // A foreground task may be cancelled before it starts the clock. Only this
+    // provisional hand-off (no sent hi, no confirmed date) may return to queue.
+    if (
+      pending?.status === "covered" &&
+      !pending.nextResetAt &&
+      !covered &&
+      !evidence &&
+      current.primary!.usedPercent === 0 &&
+      eligible(account, "codex", now)
+    ) {
+      pending.status = "queued";
+      pending.finishedAt = undefined;
+      dirty = true;
+    }
     if (
       pending &&
       pending.status !== "running" &&
       pending.processSafe !== false &&
-      ["queued", "sent", "yielded", "failed", "uncertain"].includes(
+      ["queued", "sent", "yielded", "failed", "uncertain", "covered"].includes(
         pending.status,
       ) &&
-      current?.primary?.resetsAt &&
-      current.primary.resetsAt > now &&
-      current.primary.resetsAt > pending.resetAt &&
-      current.observedAt >= pending.resetAt &&
-      current.observedAt <= now &&
-      now - current.observedAt <= 120000
+      evidence &&
+      current.observedAt >= pending.queuedAt
     ) {
-      pending.status = pending.status === "sent" ? "confirmed" : "covered";
-      pending.finishedAt = now;
-      pending.nextResetAt = current.primary.resetsAt;
-      void this.store
-        .save()
-        .then(() => this.changed())
-        .catch(() => {});
-      return;
-    }
-    // Require a fresh server observation of a known rolling window, not just a
-    // local alarm. Missing windows remain unknown rather than meaning zero.
-    if (
-      !old?.resetsAt ||
-      old.resetsAt > now ||
-      !current?.primary ||
-      (old.windowDurationMins !== 300 && account.limitMode !== "fiveHour") ||
-      current.observedAt < old.resetsAt ||
-      current.observedAt > now ||
-      now - current.observedAt > 120000 ||
-      (current.primary.usedPercent !== 0 &&
-        !(
-          current.primary.resetsAt && current.primary.resetsAt > old.resetsAt
-        )) ||
-      (!covered && !eligible(account, "codex", now))
-    )
-      return;
-    if (account.warmups?.codex?.resetAt === old.resetsAt) {
-      const record = account.warmups.codex;
+      const next = pending.status === "sent" ? "confirmed" : "covered";
       if (
-        covered &&
-        record.status !== "running" &&
-        current.primary.resetsAt &&
-        current.primary.resetsAt > now
+        pending.status !== next ||
+        pending.nextResetAt !== current.primary!.resetsAt
       ) {
-        record.status = "covered";
-        record.finishedAt = now;
-        record.nextResetAt = current.primary.resetsAt;
-        void this.store
-          .save()
-          .then(() => this.changed())
-          .catch(() => {});
+        pending.status = next;
+        pending.finishedAt = now;
+        pending.nextResetAt = current.primary!.resetsAt!;
+        pending.error = undefined;
+        dirty = true;
       }
+    }
+    if (
+      this.store.data.settings.resetWarmupEnabled === false ||
+      process.env.CODEX_RELAY_DISABLE_RESET_WARMUP === "1" ||
+      !boundary ||
+      pending?.resetAt === boundary ||
+      (current.primary!.usedPercent !== 0 &&
+        !(current.primary!.resetsAt && current.primary!.resetsAt > boundary)) ||
+      (!covered && !evidence && !eligible(account, "codex", now))
+    ) {
+      persist();
       return;
     }
-    const timerStarted =
-      covered ||
-      !!(
-        current.primary.resetsAt &&
-        current.primary.resetsAt > now &&
-        current.primary.resetsAt > old.resetsAt
-      );
     const record: ResetWarmup = {
-      resetAt: old.resetsAt,
+      resetAt: boundary,
       queuedAt: now,
-      status: timerStarted ? "covered" : "queued",
-      ...(timerStarted
-        ? {
-            finishedAt: now,
-            nextResetAt: current.primary.resetsAt || undefined,
-          }
-        : {}),
+      status: evidence || covered ? "covered" : "queued",
+      ...(evidence || covered ? { finishedAt: now } : {}),
+      ...(evidence ? { nextResetAt: current.primary!.resetsAt! } : {}),
     };
     (account.warmups ||= {}).codex = record;
-    void this.store
-      .save()
-      .then(() => {
-        this.changed();
-        this.pump();
-      })
-      .catch(() => {});
+    dirty = true;
+    persist();
   }
   pump() {
     if (this.store.data.settings.resetWarmupEnabled === false && this.active)
@@ -191,14 +225,19 @@ export class AccountWarmups {
       const execution = this.create(account, record);
       this.active = { account, record, execution };
       try {
+        const before = account.quotas.codex;
         const quotas = await execution.done;
+        const current = quotas.codex;
+        const proof = current && timerEvidence(account, current, before);
         account.quotas = { ...account.quotas, ...quotas };
-        const next = quotas.codex?.primary?.resetsAt;
-        record.nextResetAt = next || undefined;
+        record.nextResetAt = proof ? current!.primary!.resetsAt! : undefined;
         record.status =
-          next && next > Date.now() && next > record.resetAt
-            ? "confirmed"
-            : "sent";
+          execution.admitted === false
+            ? "covered"
+            : proof
+              ? "confirmed"
+              : "sent";
+        if (proof) rememberWindow(account, current!, proof);
         record.processSafe = true;
       } catch (e) {
         record.status =

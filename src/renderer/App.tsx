@@ -22,6 +22,7 @@ import { Dialog } from "./Dialog";
 import { operationKey, operationLabel } from "./operations";
 import { AgentApp } from "./AgentApp";
 import { QuestionRequest } from "./QuestionPanel";
+import { fiveHour, timerEvidence } from "../shared/reset-window";
 declare global {
   interface Window {
     relay: Bridge;
@@ -79,9 +80,11 @@ function Icon({ name }: { name: string }) {
 function QuotaBar({
   window: w,
   label,
+  unconfirmed = false,
 }: {
   window: WindowQuota | null | undefined;
   label: string;
+  unconfirmed?: boolean;
 }) {
   useI18n();
 
@@ -100,7 +103,9 @@ function QuotaBar({
       </div>
       <small>
         {w?.resetsAt
-          ? t("{p0} 重置", { p0: time(w.resetsAt) })
+          ? unconfirmed
+            ? t("预计 {p0} 重置 · 计时待确认", { p0: time(w.resetsAt) })
+            : t("{p0} 重置", { p0: time(w.resetsAt) })
           : w
             ? t("重置时间未提供")
             : t("该窗口未返回，按服务器信息判断")}
@@ -1311,6 +1316,12 @@ function AccountCard({
       <QuotaBar
         label={label(q?.primary, t("主窗口剩余"))}
         window={q?.primary}
+        unconfirmed={
+          !!q &&
+          q.primary?.usedPercent === 0 &&
+          fiveHour(a, q) &&
+          !timerEvidence(a, q)
+        }
       />
       <QuotaBar
         label={label(q?.secondary, t("次窗口剩余"))}

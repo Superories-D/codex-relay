@@ -1,4 +1,5 @@
 import type { Account } from "./types";
+import { fiveHour, timerEvidence } from "./reset-window";
 export type ValueFactor = {
   key: "capacity" | "expiry" | "reset" | "plan" | "weeklyOnly" | "reliability";
   points: number;
@@ -22,6 +23,14 @@ export function accountValue(account: Account, bucket: string, now: number) {
     0,
     ...windows.map((w) => {
       if (!w!.resetsAt || w!.resetsAt <= now) return 0;
+      if (
+        bucket === "codex" &&
+        w === quota?.primary &&
+        w.usedPercent === 0 &&
+        fiveHour(account, quota) &&
+        !timerEvidence(account, quota!, undefined, now)
+      )
+        return 0;
       const duration = (w!.windowDurationMins || 300) * 60000;
       // Unused quota that will be replaced sooner is worth using first. A
       // passed deadline is not proof that the server replenished any quota.

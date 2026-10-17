@@ -24,6 +24,14 @@ export interface Quota {
   unlimited?: boolean;
 }
 export interface Account {
+  resetWindows?: Record<
+    string,
+    {
+      resetAt: number;
+      observedAt: number;
+      evidence: "usage" | "stable" | "activity";
+    }
+  >;
   warmups?: Record<string, ResetWarmup>;
   expiresAt?: number | null;
   limitMode?: "auto" | "fiveHour" | "weeklyOnly";
