@@ -3118,6 +3118,121 @@
   color: #bbb;
   -webkit-app-region: no-drag;
 }
+.goal-heading,
+.goal-actions,
+.goal-state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.goal-history-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 18px 0;
+  color: var(--subtle);
+  font-size: 12px;
+}
+.goal-card .goal-objective {
+  color: var(--text);
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 16px 0;
+  max-height: 240px;
+  overflow-y: auto;
+}
+.goal-card .goal-state {
+  color: var(--subtle);
+  font-size: 12px;
+}
+.goal-state > span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--subtle);
+}
+.goal-state[data-status="active"] > span,
+.goal-state[data-status="complete"] > span {
+  background: #8cbca0;
+}
+.goal-state[data-status="blocked"] > span,
+.goal-state[data-status="budgetLimited"] > span,
+.goal-state[data-status="usageLimited"] > span {
+  background: #d5ab70;
+}
+.goal-meter {
+  height: 3px;
+  overflow: hidden;
+  border-radius: 10px;
+  background: var(--line);
+  margin-top: 16px;
+}
+.goal-meter > span {
+  display: block;
+  height: 100%;
+  background: #8cbca0;
+  border-radius: inherit;
+  transition: width var(--motion-normal) var(--motion-ease);
+}
+.goal-accounting {
+  display: flex;
+  gap: 22px;
+  flex-wrap: wrap;
+  margin: 16px 0 0;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.goal-accounting dt,
+.goal-accounting small {
+  color: var(--subtle);
+}
+.goal-accounting dd {
+  margin: 5px 0 0;
+}
+.goal-card .goal-note {
+  margin-top: 14px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.goal-menu {
+  position: relative;
+}
+.goal-menu > summary {
+  list-style: none;
+  display: grid;
+  place-items: center;
+  height: 28px;
+  width: 28px;
+  cursor: pointer;
+  border-radius: 7px;
+}
+.goal-menu > summary:hover,
+.goal-menu[open] > summary {
+  background: #8881;
+}
+.goal-menu > div {
+  position: absolute;
+  top: 32px;
+  right: 0;
+  width: max-content;
+  min-width: 160px;
+  padding: 5px;
+  z-index: 8;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 10px 30px #0003;
+}
+.goal-menu > div > button {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  padding: 8px 10px;
+  font-size: 12px;
+  border-radius: 7px;
+}
 .desktop-shell.reduce-motion *,
 .desktop-shell.reduce-motion *::before,
 .desktop-shell.reduce-motion *::after {

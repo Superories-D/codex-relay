@@ -16,6 +16,7 @@ import {
   SquareTerminal,
   Sparkles,
   Image as ImageIcon,
+  Target,
 } from "lucide-react";
 import type { ChatItem } from "../shared/types";
 import { ImageGallery, ImageThumbnail } from "./ChatImages";
@@ -135,6 +136,13 @@ function RichMessageView({
   useI18n();
 
   const [copied, setCopied] = useState(false);
+  if (item.kind === "goal" && item.role === "system")
+    return (
+      <div className="goal-history-note">
+        <Target size={14} />
+        <span>{t("会话目标已更新")}</span>
+      </div>
+    );
   if (item.role === "tool") {
     if (
       item.images?.length ||

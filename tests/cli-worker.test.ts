@@ -95,6 +95,35 @@ beforeEach(() => {
     sandbox: "workspaceWrite",
   };
 });
+it("keeps root Goal accounting updates from prior turns and isolates child Goal state", async () => {
+  const w = worker();
+  const onGoal = vi.fn();
+  w.on("goal", onGoal);
+  await w.start(auth);
+  const goal = {
+    threadId: job.threadId,
+    objective: "Keep evidence",
+    status: "active",
+    tokensUsed: 42,
+  };
+  rpc.notify("thread/goal/updated", {
+    threadId: job.threadId,
+    turnId: "older-turn",
+    goal,
+  });
+  expect(onGoal).toHaveBeenLastCalledWith(goal);
+  rpc.notify("thread/goal/updated", {
+    threadId: "other-thread",
+    goal: { ...goal, threadId: "other-thread" },
+  });
+  expect(onGoal).toHaveBeenCalledTimes(1);
+  rpc.notify("thread/goal/cleared", {
+    threadId: job.threadId,
+    turnId: "older-turn",
+  });
+  expect(onGoal).toHaveBeenLastCalledWith(null);
+  await w.close();
+});
 it("restores owned nested children after reconnect and resumes them using the current sandbox before sending", async () => {
   job.threadId = "thread-1";
   job.planMode = true;

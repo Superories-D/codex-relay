@@ -1,6 +1,32 @@
 import { legacyEnglish } from "./legacy-en";
 import { nativeEnglish } from "./native-en";
 export const english: Record<string, string> = {
+  会话目标: "Chat goal",
+  会话目标已更新: "Chat goal updated",
+  刷新目标状态: "Refresh goal status",
+  目标操作: "Goal actions",
+  目标有效: "Goal active",
+  目标已暂停: "Goal paused",
+  目标受阻: "Goal blocked",
+  目标: "Goal",
+  执行时间: "Execution time",
+  不限制: "No limit",
+  已达目标预算: "Goal budget reached",
+  目标已完成: "Goal complete",
+  暂停目标: "Pause goal",
+  调整目标预算: "Adjust goal budget",
+  "请输入正整数预算，留空表示不限制":
+    "Enter a positive whole number, or leave blank for no limit",
+  "目标 Token 预算": "Goal token budget",
+  "已用 Token": "Tokens used",
+  "{minutes} 分 {seconds} 秒": "{minutes} min {seconds} sec",
+  "目标仍保留；当前没有运行中的任务。":
+    "Your goal is saved. No task is currently running.",
+  "仅移除会话目标，聊天记录和文件会保留。当前轮次不会被打断。":
+    "Remove only this chat's goal. Chat history and files are kept. The current turn will continue.",
+  "调整预算会保留已用 Token 和目标状态，不会重置进度。":
+    "Changing the budget preserves tokens used and goal status without resetting progress.",
+  等待子代理确认停止: "Waiting for agents to stop",
   ...legacyEnglish,
   ...nativeEnglish,
   "超长内容显示预览，完整内容已保留在原始记录中。":

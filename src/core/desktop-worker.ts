@@ -79,7 +79,12 @@ export class DesktopWorker extends EventEmitter implements Worker {
         path.join(this.windowsScripts, script),
         ...args,
       ],
-      { windowsHide: true, timeout: 20_000, maxBuffer: 1024 * 1024, env: windowsPowerShellEnv() },
+      {
+        windowsHide: true,
+        timeout: 20_000,
+        maxBuffer: 1024 * 1024,
+        env: windowsPowerShellEnv(),
+      },
     );
   }
   private stage(text: string) {
@@ -161,6 +166,9 @@ export class DesktopWorker extends EventEmitter implements Worker {
             dangerFullAccess: "danger-full-access",
           }[job.sandbox],
           ...(job.model ? { model: job.model } : {}),
+          // This connection only prepares metadata before the desktop owns
+          // execution. An active Goal must not dispatch in the bootstrap CLI.
+          config: { "features.goals": false },
         },
         job.importedRollout,
       );

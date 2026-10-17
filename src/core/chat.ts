@@ -270,26 +270,30 @@ export class Chats {
 export function protocolItem(p: any, id: string): ChatItem {
   const images = protocolImages(p);
   if (images.length) p = imageSafePayload(p);
-  if (p.type === "userMessage")
+  if (p.type === "userMessage") {
+    const text = (p.content ?? [])
+      .map(
+        (part: any) =>
+          part.text ??
+          (part.type === "localImage" ? "[图片附件]" : (part.name ?? "")),
+      )
+      .join("\n");
+    const goal = goalContextItem(id, text);
+    if (goal) return goal;
     return {
       id,
       role: "user",
       kind: "message",
       ...(images.length ? { images } : {}),
       at: Date.now(),
-      text: (p.content ?? [])
-        .map(
-          (part: any) =>
-            part.text ??
-            (part.type === "localImage" ? "[图片附件]" : (part.name ?? "")),
-        )
-        .join("\n"),
+      text,
       detail:
         (p.content ?? [])
           .map((part: any) => part.path)
           .filter(Boolean)
           .join("\n") || undefined,
     };
+  }
   const text =
     p.text ??
     (p.type === "commandExecution"
@@ -340,6 +344,22 @@ export function protocolItem(p: any, id: string): ChatItem {
       ? { data: p }
       : {}),
   };
+}
+function goalContextItem(id: string, text: string): ChatItem | undefined {
+  // Native Goal controls enqueue internal user-context records, not chat input.
+  // Keep the complete original in its rollout, and show a concise lifecycle row.
+  if (
+    /^<codex_internal_context source="(?:user_goal|goal)">[\s\S]*<\/codex_internal_context>\s*$/.test(
+      text.trim(),
+    )
+  )
+    return {
+      id,
+      role: "system",
+      kind: "goal",
+      text: "会话目标已更新",
+      at: Date.now(),
+    };
 }
 export async function* jsonLines(
   file: string,
@@ -410,6 +430,10 @@ export async function* rolloutRecords(
         text,
         at: Date.parse(r.timestamp) || 0,
       };
+      if (p.role === "user") {
+        const goal = goalContextItem(item.id, text);
+        if (goal) item = { ...goal, at: item.at };
+      }
     } else if (
       ["image_generation_call", "imageGeneration", "imageView"].includes(p.type)
     ) {

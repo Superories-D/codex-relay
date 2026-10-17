@@ -358,6 +358,16 @@ export class CliWorker extends EventEmitter implements Worker {
       return;
     }
     if (p.threadId && this.threadId && p.threadId !== this.threadId) return;
+    // Goal state is scoped to the thread, not the current turn. A final
+    // accounting update may reference an earlier turn and must still be saved.
+    if (msg.method === "thread/goal/updated" && p.goal) {
+      this.emit("goal", p.goal);
+      return;
+    }
+    if (msg.method === "thread/goal/cleared") {
+      this.emit("goal", null);
+      return;
+    }
     if (p.turnId && this.turnId && p.turnId !== this.turnId) return;
     if (this.parentOutcome && !this.agentsRunning())
       this.finish(this.parentOutcome);

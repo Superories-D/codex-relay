@@ -36,6 +36,7 @@ import type {
 import { MarkdownText } from "./RichMessage";
 import { ActivityTimeline } from "./ActivityTimeline";
 import { ImageThumbnail } from "./ChatImages";
+import { GoalCard } from "./GoalCard";
 import { mergePage, agentRows } from "./chat-view";
 type Call = (name: string, args?: unknown) => Promise<any>;
 function readAgentDrafts(): Record<string, string> {
@@ -355,6 +356,7 @@ function Summary({
   ];
   return (
     <div className="summary-scroll">
+      <GoalCard key={job?.id} job={job} call={call} />
       <section className="summary-card">
         <div className="summary-card-title">
           <span>{t("输出内容")}</span>

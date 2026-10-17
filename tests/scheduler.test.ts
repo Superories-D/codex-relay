@@ -9,6 +9,7 @@ import { ProcessSafetyError } from "../src/core/process-safety-error";
 import type { Worker, WorkerContext, Outcome } from "../src/core/worker";
 import type { Account, NewJob } from "../src/shared/types";
 import { taskPrompt } from "../src/core/completion";
+import { Rpc } from "../src/core/rpc";
 class FakeWorker extends EventEmitter implements Worker {
   submitted = "";
   steer = vi.fn(async () => {});
@@ -17,6 +18,12 @@ class FakeWorker extends EventEmitter implements Worker {
       _threadId: string,
       _action: "send" | "interrupt",
       _text?: string,
+    ): Promise<unknown> => ({}),
+  );
+  operation = vi.fn(
+    async (
+      _method: string,
+      _params: Record<string, unknown>,
     ): Promise<unknown> => ({}),
   );
   settle!: (o: Outcome) => void;
@@ -74,6 +81,94 @@ it("sends follow-up text on the same thread instead of replaying the recovery pr
     ["first user request", "second user request"],
   );
 });
+it("reads and edits a stored Goal without loading a thread or logging in", async () => {
+  store.data.accounts = [];
+  const job = await scheduler.add({ ...input, cwd: root, interactive: true });
+  job.threadId = "stable-thread";
+  job.state = "completed";
+  const goal = {
+    threadId: job.threadId,
+    objective: "Evidence stays",
+    status: "active",
+    tokenBudget: 2000,
+    tokensUsed: 42,
+    timeUsedSeconds: 10,
+    createdAt: 1,
+    updatedAt: 2,
+  };
+  const rpc = new EventEmitter() as any;
+  rpc.call = vi.fn(async (method: string, params: any) => {
+    if (method === "thread/goal/clear") return { cleared: true };
+    if (method === "thread/goal/set")
+      Object.assign(goal, { tokenBudget: params.tokenBudget });
+    return { goal: { ...goal } };
+  });
+  rpc.close = vi.fn(async () => {});
+  rpc.reject = vi.fn();
+  const open = vi.spyOn(Rpc, "open").mockResolvedValue(rpc);
+  try {
+    expect((await scheduler.goal(job.id, "thread/goal/get")).goal).toEqual(
+      goal,
+    );
+    await scheduler.operation(job.id, "thread/goal/set", {
+      tokenBudget: 4000,
+      threadId: "wrong-thread",
+      origin: "automatic",
+    });
+    expect(rpc.call).toHaveBeenLastCalledWith("thread/goal/set", {
+      tokenBudget: 4000,
+      threadId: job.threadId,
+      origin: "user",
+    });
+    expect(job.goal?.tokensUsed).toBe(42);
+    expect(job.goal?.objective).toBe("Evidence stays");
+    const reloaded = new Store(root);
+    await reloaded.load();
+    expect(reloaded.data.jobs.find((j) => j.id === job.id)?.goal).toEqual(
+      job.goal,
+    );
+    await scheduler.goal(job.id, "thread/goal/clear");
+    expect(job.goal).toBeNull();
+    expect(rpc.call.mock.calls.map((call: any) => call[0])).toEqual([
+      "thread/goal/get",
+      "thread/goal/set",
+      "thread/goal/clear",
+    ]);
+    expect(rpc.close).toHaveBeenCalledTimes(3);
+  } finally {
+    open.mockRestore();
+  }
+});
+it("suppresses native Goal dispatch while paging local history", async () => {
+  store.data.accounts = [];
+  const job = await scheduler.add({ ...input, cwd: root, interactive: true });
+  job.threadId = "history-thread";
+  job.state = "completed";
+  const rpc = new EventEmitter() as any;
+  rpc.call = vi.fn(async (method: string) =>
+    method === "thread/resume"
+      ? { thread: { id: job.threadId } }
+      : { data: [] },
+  );
+  rpc.close = vi.fn(async () => {});
+  const open = vi.spyOn(Rpc, "open").mockResolvedValue(rpc);
+  try {
+    await scheduler.turns(job.id);
+    expect(rpc.call).toHaveBeenCalledWith(
+      "thread/resume",
+      expect.objectContaining({
+        threadId: job.threadId,
+        config: { "features.goals": false },
+      }),
+    );
+    expect(rpc.call.mock.calls.map((call: any) => call[0])).toEqual([
+      "thread/resume",
+      "thread/turns/list",
+    ]);
+  } finally {
+    open.mockRestore();
+  }
+});
 it("serializes child messages with parent pause and rejects further child work after pausing", async () => {
   const job = await scheduler.add({ ...input, cwd: root, interactive: true });
   await until(() => workers[0]?.started);
@@ -115,6 +210,50 @@ it("serializes child messages with parent pause and rejects further child work a
     scheduler.agentControl(job.id, "child", "send", "too late"),
   ).rejects.toThrow("未运行");
   expect(workers[0].agentControl).toHaveBeenCalledTimes(1);
+});
+it("keeps running Goal mutations on the owned worker and serializes them before pause", async () => {
+  const job = await scheduler.add({ ...input, cwd: root, interactive: true });
+  await until(() => job.state === "running");
+  const goal = {
+    threadId: job.threadId!,
+    objective: "Stay on target",
+    status: "active" as const,
+    tokenBudget: 1000,
+    tokensUsed: 42,
+    timeUsedSeconds: 20,
+    createdAt: 1,
+    updatedAt: 2,
+  };
+  workers[0].emit("goal", goal);
+  expect(job.goal).toEqual(goal);
+  workers[0].emit("goal", { ...goal, threadId: "foreign-thread" });
+  expect(job.goal).toEqual(goal);
+  let release!: (value: unknown) => void;
+  workers[0].operation.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+  );
+  const stop = vi.spyOn(workers[0], "stop");
+  const updating = scheduler.goal(job.id, "thread/goal/set", {
+    status: "paused",
+  });
+  await until(() => workers[0].operation.mock.calls.length === 1);
+  const pausing = scheduler.control(job.id, "pause");
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(stop).not.toHaveBeenCalled();
+  release({ goal: { ...goal, status: "paused" } });
+  await updating;
+  await pausing;
+  expect(job.goal?.status).toBe("paused");
+  expect(job.goal?.tokensUsed).toBe(42);
+  expect(workers[0].operation).toHaveBeenCalledWith("thread/goal/set", {
+    threadId: job.threadId,
+    status: "paused",
+    origin: "user",
+  });
+  expect(job.state).toBe("paused");
 });
 it("refuses a child from a different parent even if the worker exposes a generic child operation", async () => {
   const job = await scheduler.add({ ...input, cwd: root });

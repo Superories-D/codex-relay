@@ -4,9 +4,51 @@ import path from "node:path";
 import os from "node:os";
 import { randomUUID } from "node:crypto";
 import { Store } from "../src/core/store";
-import { Chats, jsonLines } from "../src/core/chat";
+import {
+  Chats,
+  jsonLines,
+  protocolItem,
+  rolloutRecords,
+} from "../src/core/chat";
 import { History } from "../src/core/history";
 let root: string, store: Store, chats: Chats, history: History, source: string;
+it("renders native Goal context as lifecycle history without rewriting quoted user or assistant text", async () => {
+  const text =
+    '<codex_internal_context source="user_goal"> User set the goal: "Ship with evidence." </codex_internal_context>';
+  expect(
+    protocolItem({ type: "userMessage", content: [{ text }] }, "goal"),
+  ).toMatchObject({ role: "system", kind: "goal", text: "会话目标已更新" });
+  expect(
+    protocolItem(
+      {
+        type: "userMessage",
+        content: [{ text: `Please explain this: ${text}` }],
+      },
+      "quoted",
+    ).role,
+  ).toBe("user");
+  const file = path.join(root, "goal.jsonl");
+  await fs.writeFile(
+    file,
+    ["user", "assistant"]
+      .map((role) =>
+        JSON.stringify({
+          type: "response_item",
+          payload: { type: "message", role, content: [{ text }] },
+        }),
+      )
+      .join("\n") + "\n",
+  );
+  const rows = [];
+  for await (const row of rolloutRecords(file)) rows.push(row);
+  expect(rows[0]).toMatchObject({ role: "system", kind: "goal" });
+  expect(rows[1]).toMatchObject({ role: "assistant", text });
+  await chats.user("literal", text);
+  expect((await chats.read("literal")).items[0]).toMatchObject({
+    role: "user",
+    text,
+  });
+});
 beforeEach(async () => {
   root = await fs.mkdtemp(path.join(os.tmpdir(), "relay-chat-"));
   source = path.join(root, "source");

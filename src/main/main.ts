@@ -587,6 +587,39 @@ async function boot() {
         if (!task) throw new Error("定时任务不存在");
         return runScheduled(task);
       }
+      case "chat.goal.read": {
+        const a = z.object({ id: idSchema }).strict().parse(args);
+        return scheduler.goal(a.id, "thread/goal/get");
+      }
+      case "chat.goal.update": {
+        const a = z
+          .discriminatedUnion("action", [
+            z.object({ id: idSchema, action: z.literal("pause") }).strict(),
+            z.object({ id: idSchema, action: z.literal("clear") }).strict(),
+            z
+              .object({
+                id: idSchema,
+                action: z.literal("budget"),
+                tokenBudget: z
+                  .number()
+                  .int()
+                  .positive()
+                  .max(Number.MAX_SAFE_INTEGER)
+                  .nullable(),
+              })
+              .strict(),
+          ])
+          .parse(args);
+        return scheduler.goal(
+          a.id,
+          a.action === "clear" ? "thread/goal/clear" : "thread/goal/set",
+          a.action === "pause"
+            ? { status: "paused" }
+            : a.action === "budget"
+              ? { tokenBudget: a.tokenBudget }
+              : {},
+        );
+      }
       case "chat.agent.read": {
         const a = z
           .object({

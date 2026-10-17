@@ -173,6 +173,10 @@ it("prepares a durable thread, pins model before desktop launch and waits for th
     "thread/resume",
     "thread/name/set",
   ]);
+  expect(bootstrap.call).toHaveBeenCalledWith(
+    "thread/resume",
+    expect.objectContaining({ config: { "features.goals": false } }),
+  );
   await worker.close();
   expect(accounts.put).toHaveBeenCalledOnce();
   expect(accounts.busy.size).toBe(0);

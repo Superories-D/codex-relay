@@ -37,6 +37,7 @@ export interface Account {
   lastError?: string;
 }
 export interface Job {
+  goal?: ThreadGoal | null;
   runtimeHomeId?: string;
   pinned?: boolean;
   planMode?: boolean;
@@ -95,6 +96,22 @@ export interface Job {
   lastError?: string;
   approvalPolicy: "on-request" | "never";
   sandbox: "workspaceWrite" | "readOnly" | "dangerFullAccess";
+}
+export interface ThreadGoal {
+  threadId: string;
+  objective: string;
+  status:
+    | "active"
+    | "paused"
+    | "blocked"
+    | "usageLimited"
+    | "budgetLimited"
+    | "complete";
+  tokenBudget: number | null;
+  tokensUsed: number;
+  timeUsedSeconds: number;
+  createdAt: number;
+  updatedAt: number;
 }
 export interface ProcessIdentity {
   pid: number;

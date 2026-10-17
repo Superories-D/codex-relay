@@ -10,6 +10,7 @@ import type {
   ExistingLink,
   Quota,
   Snapshot,
+  ThreadGoal,
 } from "../shared/types";
 import { Accounts } from "./accounts";
 import { Store } from "./store";
@@ -428,6 +429,14 @@ export class Scheduler extends EventEmitter {
           job.tokenUsage = usage;
           this.changed();
         });
+        worker.on("goal", (goal: ThreadGoal | null) => {
+          if (goal && goal.threadId !== job.threadId) return;
+          job.goal = goal;
+          void this.store
+            .save()
+            .catch((error) => this.log(error, "error", job.id));
+          this.changed();
+        });
         worker.on("stage", (stage: string) => {
           job.stage = stage;
           this.changed();
@@ -693,6 +702,16 @@ export class Scheduler extends EventEmitter {
   operation(id: string, method: string, params: Record<string, unknown>) {
     if (!capabilities.some((c) => c.method === method))
       return Promise.reject(new Error("此操作须通过会话或账户界面执行"));
+    if (
+      ["thread/goal/get", "thread/goal/set", "thread/goal/clear"].includes(
+        method,
+      )
+    )
+      return this.goal(
+        id,
+        method as "thread/goal/get" | "thread/goal/set" | "thread/goal/clear",
+        params,
+      );
     const task = this.controls
       .catch(() => {})
       .then(async () => {
@@ -745,6 +764,9 @@ export class Scheduler extends EventEmitter {
                 readOnly: "read-only",
                 dangerFullAccess: "danger-full-access",
               }[job.sandbox],
+              // Loading a thread for inspection must never dispatch its active
+              // Goal. The override is local to this maintenance process.
+              config: { "features.goals": false },
             },
             job.importedRollout,
           );
@@ -811,7 +833,11 @@ export class Scheduler extends EventEmitter {
     this.controls = task;
     return task;
   }
-  private localHistory<T>(id: string, run: (rpc: Rpc, job: Job) => Promise<T>) {
+  private localHistory<T>(
+    id: string,
+    run: (rpc: Rpc, job: Job) => Promise<T>,
+    resume = true,
+  ) {
     const task = this.controls
       .catch(() => {})
       .then(async () => {
@@ -841,12 +867,17 @@ export class Scheduler extends EventEmitter {
           rpc.on("request", (request) =>
             rpc?.reject(request.id, "历史操作不执行交互式工具"),
           );
-          await prepareThread(
-            rpc,
-            job.threadId,
-            { cwd: job.cwd, excludeTurns: true },
-            job.importedRollout,
-          );
+          if (resume)
+            await prepareThread(
+              rpc,
+              job.threadId,
+              {
+                cwd: job.cwd,
+                excludeTurns: true,
+                config: { "features.goals": false },
+              },
+              job.importedRollout,
+            );
           return await run(rpc, job);
         } finally {
           try {
@@ -859,6 +890,57 @@ export class Scheduler extends EventEmitter {
       });
     this.controls = task;
     return task;
+  }
+  goal(
+    id: string,
+    method: "thread/goal/get" | "thread/goal/set" | "thread/goal/clear",
+    params: Record<string, unknown> = {},
+  ) {
+    const run = async (
+      rpc: {
+        call(method: string, params: Record<string, unknown>): Promise<any>;
+      },
+      job: Job,
+    ) => {
+      // Native goal methods work on stored, unloaded threads. Do not resume
+      // here: loading an active Goal can start a turn without a turn/start call.
+      const result = await rpc.call(method, {
+        ...params,
+        ...(method === "thread/goal/set" ? { origin: "user" } : {}),
+        threadId: job.threadId,
+      });
+      const goal = method === "thread/goal/clear" ? null : result.goal;
+      if (goal && goal.threadId !== job.threadId)
+        throw new Error("目标会话 ID 不匹配");
+      job.goal = goal ?? null;
+      await this.store.save();
+      this.changed();
+      return { goal: job.goal };
+    };
+    // The same control chain also owns user pause/send. Never open a second
+    // process for the active runtime or race a thread's stopping state.
+    if (this.active?.job.id === id) {
+      const task = this.controls
+        .catch(() => {})
+        .then(async () => {
+          const active = this.active;
+          if (
+            this.closing ||
+            active?.job.id !== id ||
+            active.reason ||
+            active.failedStop ||
+            !active.worker?.operation
+          )
+            throw new Error("会话正在停止，请稍后再操作目标");
+          return run(
+            { call: (name, args) => active.worker!.operation!(name, args) },
+            active.job,
+          );
+        });
+      this.controls = task;
+      return task;
+    }
+    return this.localHistory(id, run, false);
   }
   turns(id: string, cursor?: string) {
     return this.localHistory(id, (rpc, job) =>
