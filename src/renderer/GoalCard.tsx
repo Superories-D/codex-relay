@@ -3,12 +3,15 @@ import {
   Ellipsis,
   LoaderCircle,
   Pause,
+  Play,
+  Plus,
+  Pencil,
   RefreshCw,
   Target,
   Trash2,
 } from "lucide-react";
 import type { Job } from "../shared/types";
-import { t, useI18n } from "./i18n";
+import { t, useI18n, errorText } from "./i18n";
 import { Dialog } from "./Dialog";
 import { ModalPresence } from "./MotionRegion";
 
@@ -17,8 +20,11 @@ export function GoalCard({ job, call }: { job?: Job; call: Call }) {
   const { language } = useI18n();
   const [busy, setBusy] = useState(false),
     [error, setError] = useState("");
-  const [editor, setEditor] = useState<"budget" | "clear" | null>(null);
+  const [editor, setEditor] = useState<
+    "budget" | "clear" | "create" | "edit" | null
+  >(null);
   const [budget, setBudget] = useState("");
+  const [objective, setObjective] = useState("");
   const lock = useRef(false),
     owner = useRef(job?.id);
   const menu = useRef<HTMLDetailsElement>(null);
@@ -43,7 +49,7 @@ export function GoalCard({ job, call }: { job?: Job; call: Call }) {
         : window.relay.command("chat.goal.read", { id }));
       if (owner.current === id) setError("");
     } catch (e) {
-      if (manual && owner.current === id) setError(String(e));
+      if (manual && owner.current === id) setError(errorText(e));
     } finally {
       lock.current = false;
       if (owner.current === id) setBusy(false);
@@ -65,15 +71,22 @@ export function GoalCard({ job, call }: { job?: Job; call: Call }) {
     )
       void read();
   }, [job?.id, job?.state]);
-  const update = async (action: "pause" | "budget" | "clear") => {
+  const update = async (
+    action: "pause" | "budget" | "clear" | "create" | "edit" | "start",
+    start = false,
+  ) => {
     if (!job || lock.current) return;
     const tokenBudget = budget.trim() ? Number(budget) : null;
     if (
-      action === "budget" &&
+      ["budget", "create"].includes(action) &&
       tokenBudget !== null &&
       (!Number.isSafeInteger(tokenBudget) || tokenBudget <= 0)
     ) {
       setError(t("请输入正整数预算，留空表示不限制"));
+      return;
+    }
+    if (["create", "edit"].includes(action) && !objective.trim()) {
+      setError(t("请填写目标"));
       return;
     }
     const id = job.id;
@@ -85,19 +98,42 @@ export function GoalCard({ job, call }: { job?: Job; call: Call }) {
         id,
         action,
         ...(action === "budget" ? { tokenBudget } : {}),
+        ...(action === "create"
+          ? { objective: objective.trim(), tokenBudget, start }
+          : {}),
+        ...(action === "edit" ? { objective: objective.trim() } : {}),
       });
       if (owner.current === id) {
         cleared.current = action === "clear";
         setEditor(null);
       }
     } catch (e) {
-      if (owner.current === id) setError(String(e));
+      if (owner.current === id) setError(errorText(e));
     } finally {
       lock.current = false;
       if (owner.current === id) setBusy(false);
     }
   };
   const goal = job?.goal;
+  const compatible =
+    job?.mode === "cli" &&
+    job.threadId &&
+    !job.historySource?.issue &&
+    !job.recoveryRequired &&
+    (!job.existing || job.existing.phase === "managed");
+  const idle =
+    !!job &&
+    ["completed", "paused", "cancelled", "needs_attention"].includes(job.state);
+  const budgetSpent =
+    !!goal && goal.tokenBudget != null && goal.tokensUsed >= goal.tokenBudget;
+  const editorTitle =
+    editor === "clear"
+      ? t("清除目标")
+      : editor === "create"
+        ? t("设置持续目标")
+        : editor === "edit"
+          ? t("编辑目标")
+          : t("调整目标预算");
   const labels = {
     active: t("目标有效"),
     paused: t("目标已暂停"),
@@ -112,6 +148,29 @@ export function GoalCard({ job, call }: { job?: Job; call: Call }) {
     : null;
   return (
     <>
+      {!goal && compatible && (idle || job?.state === "running") && (
+        <section className="summary-card goal-empty">
+          <button
+            className="goal-create"
+            disabled={busy}
+            onClick={() => {
+              setObjective("");
+              setBudget("");
+              setError("");
+              setEditor("create");
+            }}
+          >
+            <Target size={17} />
+            <span>{t("设置持续目标")}</span>
+            <Plus size={16} />
+          </button>
+          {error && !editor && (
+            <p className="panel-error" role="alert">
+              {error}
+            </p>
+          )}
+        </section>
+      )}
       {goal && (
         <section className="summary-card goal-card" aria-label={t("会话目标")}>
           <div className="summary-card-title">
@@ -156,6 +215,20 @@ export function GoalCard({ job, call }: { job?: Job; call: Call }) {
                   <Ellipsis size={17} />
                 </summary>
                 <div>
+                  <button
+                    disabled={busy}
+                    onClick={(e) => {
+                      e.currentTarget
+                        .closest("details")
+                        ?.removeAttribute("open");
+                      setObjective(goal.objective);
+                      setError("");
+                      setEditor("edit");
+                    }}
+                  >
+                    <Pencil size={14} />
+                    {t("编辑目标")}
+                  </button>
                   <button
                     disabled={busy || goal.status !== "active"}
                     onClick={(e) => {
@@ -241,6 +314,39 @@ export function GoalCard({ job, call }: { job?: Job; call: Call }) {
               {t("目标仍保留；当前没有运行中的任务。")}
             </p>
           )}
+          {goal.status !== "complete" &&
+            (goal.status !== "active" || job?.state !== "running") && (
+              <div className="goal-lifecycle">
+                <button
+                  className="goal-start"
+                  disabled={
+                    busy ||
+                    !compatible ||
+                    !(idle || job?.state === "running") ||
+                    budgetSpent ||
+                    !!job?.goalStartRequested
+                  }
+                  title={
+                    budgetSpent
+                      ? t("目标预算已用尽，请先增加或取消预算限制")
+                      : undefined
+                  }
+                  onClick={() => void update("start")}
+                >
+                  {job?.goalStartRequested ? (
+                    <LoaderCircle className="spin" size={14} />
+                  ) : (
+                    <Play size={14} />
+                  )}
+                  {job?.goalStartRequested ? t("等待开始目标…") : t("继续目标")}
+                </button>
+                {budgetSpent && (
+                  <p className="goal-note">
+                    {t("目标预算已用尽，请先增加或取消预算限制")}
+                  </p>
+                )}
+              </div>
+            )}
           {error && !editor && (
             <p className="panel-error" role="alert">
               {error}
@@ -263,11 +369,11 @@ export function GoalCard({ job, call }: { job?: Job; call: Call }) {
       >
         {!!editor && (
           <Dialog
-            title={editor === "clear" ? t("清除目标") : t("调整目标预算")}
+            title={editorTitle}
             busy={busy}
             onClose={() => setEditor(null)}
           >
-            <h2>{editor === "clear" ? t("清除目标") : t("调整目标预算")}</h2>
+            <h2>{editorTitle}</h2>
             {editor === "clear" ? (
               <p>
                 {t(
@@ -276,19 +382,46 @@ export function GoalCard({ job, call }: { job?: Job; call: Call }) {
               </p>
             ) : (
               <>
-                <p>
-                  {t("调整预算会保留已用 Token 和目标状态，不会重置进度。")}
-                </p>
-                <label>
-                  {t("目标 Token 预算")}
-                  <input
-                    aria-label={t("目标 Token 预算")}
-                    inputMode="numeric"
-                    value={budget}
-                    onChange={(e) => setBudget(e.target.value)}
-                    placeholder={t("不限制")}
-                  />
-                </label>
+                {editor === "create" || editor === "edit" ? (
+                  <>
+                    <p>
+                      {editor === "create"
+                        ? t(
+                            "设定清晰的验收结果，让 Codex 持续推进。可以先保存，也可以立即开始。",
+                          )
+                        : t(
+                            "修改目标会保留当前聊天和文件；执行状态由原生目标管理。",
+                          )}
+                    </p>
+                    <label>
+                      {t("目标内容")}
+                      <textarea
+                        aria-label={t("目标内容")}
+                        rows={5}
+                        maxLength={20000}
+                        value={objective}
+                        onChange={(e) => setObjective(e.target.value)}
+                        placeholder={t("描述期望的最终结果和验收标准…")}
+                      />
+                    </label>
+                  </>
+                ) : (
+                  <p>
+                    {t("调整预算会保留已用 Token 和目标状态，不会重置进度。")}
+                  </p>
+                )}
+                {editor !== "edit" && (
+                  <label>
+                    {t("目标 Token 预算")}
+                    <input
+                      aria-label={t("目标 Token 预算")}
+                      inputMode="numeric"
+                      value={budget}
+                      onChange={(e) => setBudget(e.target.value)}
+                      placeholder={t("不限制")}
+                    />
+                  </label>
+                )}
               </>
             )}
             {error && (
@@ -300,18 +433,29 @@ export function GoalCard({ job, call }: { job?: Job; call: Call }) {
               <button disabled={busy} onClick={() => setEditor(null)}>
                 {t("取消")}
               </button>
+              {editor === "create" && (
+                <button
+                  disabled={busy || !objective.trim()}
+                  onClick={() => void update("create", false)}
+                >
+                  {t("仅保存目标")}
+                </button>
+              )}
               <button
                 className="primary"
-                disabled={busy}
-                onClick={() =>
-                  void update(editor === "clear" ? "clear" : "budget")
+                disabled={
+                  busy ||
+                  (["create", "edit"].includes(editor) && !objective.trim())
                 }
+                onClick={() => void update(editor, editor === "create")}
               >
                 {busy
                   ? t("正在保存…")
                   : editor === "clear"
                     ? t("清除目标")
-                    : t("保存")}
+                    : editor === "create"
+                      ? t("保存并开始")
+                      : t("保存")}
               </button>
             </div>
           </Dialog>

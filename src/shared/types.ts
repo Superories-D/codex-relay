@@ -60,6 +60,7 @@ export interface ResetWarmup {
 export interface Job {
   goal?: ThreadGoal | null;
   goalResumeAfterQuota?: boolean;
+  goalStartRequested?: boolean;
   runtimeHomeId?: string;
   pinned?: boolean;
   planMode?: boolean;

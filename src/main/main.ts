@@ -604,6 +604,28 @@ async function boot() {
           .discriminatedUnion("action", [
             z.object({ id: idSchema, action: z.literal("pause") }).strict(),
             z.object({ id: idSchema, action: z.literal("clear") }).strict(),
+            z.object({ id: idSchema, action: z.literal("start") }).strict(),
+            z
+              .object({
+                id: idSchema,
+                action: z.literal("edit"),
+                objective: z.string().trim().min(1).max(20000),
+              })
+              .strict(),
+            z
+              .object({
+                id: idSchema,
+                action: z.literal("create"),
+                objective: z.string().trim().min(1).max(20000),
+                tokenBudget: z
+                  .number()
+                  .int()
+                  .positive()
+                  .max(Number.MAX_SAFE_INTEGER)
+                  .nullable(),
+                start: z.boolean(),
+              })
+              .strict(),
             z
               .object({
                 id: idSchema,
@@ -618,6 +640,31 @@ async function boot() {
               .strict(),
           ])
           .parse(args);
+        if (a.action === "create")
+          return scheduler.goal(
+            a.id,
+            "thread/goal/set",
+            {
+              objective: a.objective,
+              tokenBudget: a.tokenBudget,
+              status: a.start ? "active" : "paused",
+            },
+            a.start ? "createAndStart" : "create",
+          );
+        if (a.action === "start")
+          return scheduler.goal(
+            a.id,
+            "thread/goal/set",
+            { status: "active" },
+            "start",
+          );
+        if (a.action === "edit")
+          return scheduler.goal(
+            a.id,
+            "thread/goal/set",
+            { objective: a.objective },
+            "edit",
+          );
         return scheduler.goal(
           a.id,
           a.action === "clear" ? "thread/goal/clear" : "thread/goal/set",

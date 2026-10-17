@@ -1,6 +1,42 @@
 import { legacyEnglish } from "./legacy-en";
 import { nativeEnglish } from "./native-en";
 export const english: Record<string, string> = {
+  "会话正在恢复或停止，请稍后再操作目标":
+    "The chat is recovering or stopping. Try the goal action again afterward",
+  请等待当前会话结束或暂停后再开始目标:
+    "Finish or pause the current chat before starting the goal",
+  "会话中有待发送的消息，请先继续或处理它，再开始目标":
+    "This chat has a pending message. Resume or handle it before starting the goal",
+  "会话已有目标，请先编辑或清除原目标":
+    "This chat already has a goal. Edit or clear it first",
+  会话尚未设置目标: "This chat does not have a goal yet",
+  "目标已完成，请设置新的目标":
+    "The goal is complete. Set a new objective to start again",
+  "目标尚未确认激活，未排队执行":
+    "Goal activation was not confirmed, so no work was queued",
+  "会话目标已不存在，未开始新的轮次":
+    "The goal no longer exists. No new turn was started",
+  目标启动前会话已终止: "The chat ended before the goal started",
+  "未收到目标自动启动事件，请检查会话后继续；不会补发任务":
+    "Goal startup was not confirmed. Check the chat before continuing; no second request will be sent",
+  设置持续目标: "Set an ongoing goal",
+  编辑目标: "Edit goal",
+  目标内容: "Objective",
+  请填写目标: "Enter an objective",
+  "设定清晰的验收结果，让 Codex 持续推进。可以先保存，也可以立即开始。":
+    "Describe a clear outcome for Codex to work toward. Save it for later or start now.",
+  "修改目标会保留当前聊天和文件；执行状态由原生目标管理。":
+    "Editing the objective keeps the chat and files. The native goal manages execution status.",
+  "描述期望的最终结果和验收标准…":
+    "Describe the outcome and acceptance criteria…",
+  仅保存目标: "Save for later",
+  保存并开始: "Save and start",
+  继续目标: "Continue goal",
+  "等待开始目标…": "Waiting to start goal…",
+  "目标预算已用尽，请先增加或取消预算限制":
+    "The goal budget is exhausted. Increase or remove it before continuing",
+  "目标仍在执行，等待下一轮": "Goal is active, waiting for the next turn",
+  "Codex 正在执行目标": "Codex is working toward the goal",
   注释: "Footnotes",
   返回正文: "Back to content",
   复制公式: "Copy equation",

@@ -493,6 +493,7 @@ export class Scheduler extends EventEmitter {
               job.attachments = undefined;
               job.review = undefined;
               job.desktopSubmissionPending = false;
+              job.goalStartRequested = false;
             }
             await this.store.save();
             this.changed();
@@ -961,14 +962,26 @@ export class Scheduler extends EventEmitter {
       .catch(() => {})
       .then(async () => {
         await this.tickInFlight;
-        if (this.closing || this.active || this.maintaining)
+        if (
+          this.closing ||
+          (this.active &&
+            (resume ||
+              this.store.jobHome(this.active.job.id) ===
+                this.store.jobHome(id))) ||
+          this.maintaining
+        )
           throw new Error("请等待当前任务结束或暂停后再查看会话历史");
         const job = this.store.data.jobs.find((job) => job.id === id);
         if (
           !job?.threadId ||
           job.mode !== "cli" ||
-          !["completed", "paused", "cancelled", "needs_attention"].includes(
-            job.state,
+          !(
+            ["completed", "paused", "cancelled", "needs_attention"].includes(
+              job.state,
+            ) ||
+            (!resume &&
+              job.goalStartRequested &&
+              ["queued", "waiting"].includes(job.state))
           ) ||
           job.recoveryRequired ||
           job.historySource?.issue ||
@@ -1014,6 +1027,7 @@ export class Scheduler extends EventEmitter {
     id: string,
     method: "thread/goal/get" | "thread/goal/set" | "thread/goal/clear",
     params: Record<string, unknown> = {},
+    intent?: "create" | "start" | "createAndStart" | "edit",
   ) {
     const run = async (
       rpc: {
@@ -1021,10 +1035,50 @@ export class Scheduler extends EventEmitter {
       },
       job: Job,
     ) => {
+      const activate = intent === "start" || intent === "createAndStart";
+      const live = this.active?.job.id === job.id;
+      let mutation = params;
+      if (intent) {
+        if (job.recoveryRequired || (live && job.state !== "running"))
+          throw new Error("会话正在恢复或停止，请稍后再操作目标");
+        if (
+          !live &&
+          !["completed", "paused", "cancelled", "needs_attention"].includes(
+            job.state,
+          )
+        )
+          throw new Error("请等待当前会话结束或暂停后再开始目标");
+        if (
+          activate &&
+          !live &&
+          (job.pendingMessage || job.attachments?.length)
+        )
+          throw new Error("会话中有待发送的消息，请先继续或处理它，再开始目标");
+        const current = (
+          await rpc.call("thread/goal/get", { threadId: job.threadId })
+        ).goal as ThreadGoal | null;
+        if (["create", "createAndStart"].includes(intent) && current)
+          throw new Error("会话已有目标，请先编辑或清除原目标");
+        if (["start", "edit"].includes(intent) && !current)
+          throw new Error("会话尚未设置目标");
+        if (intent === "edit")
+          mutation = {
+            ...params,
+            status: current!.status === "complete" ? "paused" : current!.status,
+          };
+        if (intent === "start" && current?.status === "complete")
+          throw new Error("目标已完成，请设置新的目标");
+        if (
+          activate &&
+          current?.tokenBudget != null &&
+          current.tokensUsed >= current.tokenBudget
+        )
+          throw new Error("目标预算已用尽，请先增加或取消预算限制");
+      }
       // Native goal methods work on stored, unloaded threads. Do not resume
       // here: loading an active Goal can start a turn without a turn/start call.
       const result = await rpc.call(method, {
-        ...params,
+        ...mutation,
         ...(method === "thread/goal/set" ? { origin: "user" } : {}),
         threadId: job.threadId,
       });
@@ -1032,6 +1086,37 @@ export class Scheduler extends EventEmitter {
       if (goal && goal.threadId !== job.threadId)
         throw new Error("目标会话 ID 不匹配");
       job.goal = goal ?? null;
+      if (
+        method === "thread/goal/clear" ||
+        (method === "thread/goal/set" && goal?.status === "paused")
+      ) {
+        if (
+          job.goalStartRequested &&
+          ["queued", "waiting"].includes(job.state)
+        ) {
+          job.state = "paused";
+          job.nextWakeAt = undefined;
+        }
+        job.goalStartRequested = false;
+        job.goalResumeAfterQuota = false;
+      }
+      if (activate) {
+        if (goal?.status !== "active") {
+          await this.store.save();
+          this.changed();
+          throw new Error("目标尚未确认激活，未排队执行");
+        }
+        job.goalResumeAfterQuota = false;
+        if (!live) {
+          job.goalStartRequested = true;
+          job.review = undefined;
+          job.state = "queued";
+          job.nextWakeAt = undefined;
+          job.lastError = undefined;
+          job.completionRetries = 0;
+          job.updatedAt = Date.now();
+        }
+      }
       await this.store.save();
       this.changed();
       return { goal: job.goal };

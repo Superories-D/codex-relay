@@ -23,6 +23,17 @@ export function getLanguage() {
 export function t(source: string, values?: Record<string, unknown>): string {
   return translate(source, current, values);
 }
+export function errorText(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  return t(
+    raw
+      .replace(
+        /^Error invoking remote method 'relay:command':\s*(?:Error:\s*)?/,
+        "",
+      )
+      .replace(/^Error:\s*/, ""),
+  );
+}
 function subscribe(listener: () => void) {
   listeners.add(listener);
   return () => listeners.delete(listener);

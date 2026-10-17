@@ -38,6 +38,7 @@ export class CliWorker extends EventEmitter implements Worker {
   private completedRootTurns = new Set<string>();
   private goal?: ThreadGoal | null;
   private goalRevision = 0;
+  private waitingForGoal = false;
   private goalStopOutcome?: Outcome;
   private quotaSeen = false;
   private lastError: unknown;
@@ -91,13 +92,19 @@ export class CliWorker extends EventEmitter implements Worker {
     const quota = await this.quota();
     if (isExhausted(quota[this.ctx.job.bucket]))
       throw new Error("Usage limit exceeded before turn start");
+    const goalOnly =
+      !!(
+        this.ctx.job.goalStartRequested || this.ctx.job.goalResumeAfterQuota
+      ) &&
+      !this.ctx.job.pendingMessage &&
+      !this.ctx.job.review;
     this.threadId = this.ctx.job.threadId;
     if (this.threadId) {
       await this.readGoal();
       if (
         this.ctx.job.goalResumeAfterQuota &&
         this.goal &&
-        ["active", "usageLimited", "paused"].includes(this.goal.status)
+        ["active", "usageLimited"].includes(this.goal.status)
       ) {
         // Recover an already-authorized Goal, retaining its original accounting.
         const response = await this.rpc.call("thread/goal/set", {
@@ -108,6 +115,18 @@ export class CliWorker extends EventEmitter implements Worker {
         this.setGoal(response.goal);
       }
       this.ctx.job.goalResumeAfterQuota = false;
+    }
+    if (goalOnly && this.goal?.status !== "active") {
+      this.ctx.job.goalStartRequested = false;
+      if (!this.goal) throw new Error("会话目标已不存在，未开始新的轮次");
+      this.finish({
+        kind: this.goal.status === "complete" ? "completed" : "goalStopped",
+      });
+      return;
+    }
+    if (!this.ctx.shouldStart()) {
+      this.finish({ kind: "interrupted" });
+      return;
     }
     const config = this.threadConfig();
     this.emit("stage", "创建或恢复本地会话");
@@ -141,6 +160,13 @@ export class CliWorker extends EventEmitter implements Worker {
     await this.ctx.checkpoint(this.threadId!);
     if (!this.ctx.shouldStart()) {
       this.finish({ kind: "interrupted" });
+      return;
+    }
+    if (goalOnly) {
+      // Loading an active native Goal owns its first turn. Sending a second
+      // turn/start here would inject a synthetic user prompt or steer it twice.
+      await this.waitForRootTurn();
+      if (!this.terminal) this.emit("stage", "Codex 正在执行目标");
       return;
     }
     this.emit("stage", "发送任务，等待执行确认");
@@ -199,6 +225,25 @@ export class CliWorker extends EventEmitter implements Worker {
     this.goal = goal;
     this.goalRevision++;
     this.emit("goal", goal);
+    this.settleWaitingGoal();
+  }
+  private settleWaitingGoal() {
+    if (!this.waitingForGoal || this.terminal) return;
+    if (this.goal?.status === "active") return;
+    this.waitingForGoal = false;
+    if (
+      this.goal &&
+      ["paused", "blocked", "usageLimited", "budgetLimited"].includes(
+        this.goal.status,
+      )
+    ) {
+      this.goalStopOutcome = { kind: "goalStopped" };
+      this.completeAfterChildren(this.goalStopOutcome);
+    } else {
+      this.completeAfterChildren(
+        completionOutcome(this.ctx.job, this.finalText),
+      );
+    }
   }
   private async readGoal() {
     if (!this.rpc || !this.threadId) return;
@@ -223,15 +268,47 @@ export class CliWorker extends EventEmitter implements Worker {
     this.completing = false;
     this.parentEnded = false;
     this.parentOutcome = undefined;
+    this.waitingForGoal = false;
     if (!this.stopRequested) this.goalStopOutcome = undefined;
     if (this.threadId) await this.ctx.checkpoint(this.threadId, id);
+    this.emit("rootTurnStarted");
     if (this.stopRequested && this.rpc)
       await this.rpc.call("turn/interrupt", {
         threadId: this.threadId,
         turnId: id,
       });
   }
-  private threadConfig(model = this.ctx.job.model) {
+  private waitForRootTurn() {
+    if (this.turnId) return Promise.resolve();
+    if (this.terminal) return Promise.reject(new Error("目标启动前会话已终止"));
+    return new Promise<void>((resolve, reject) => {
+      const clean = () => {
+        clearTimeout(timer);
+        this.off("rootTurnStarted", started);
+        this.off("settled", ended);
+      };
+      const started = () => {
+        clean();
+        resolve();
+      };
+      const ended = () => {
+        clean();
+        reject(new Error("目标启动前会话已终止"));
+      };
+      const timer = setTimeout(() => {
+        clean();
+        reject(
+          new Error("未收到目标自动启动事件，请检查会话后继续；不会补发任务"),
+        );
+      }, 10000);
+      this.on("rootTurnStarted", started);
+      this.on("settled", ended);
+    });
+  }
+  private threadConfig(
+    model = this.ctx.job.model,
+    effort = this.ctx.job.effort,
+  ) {
     const sandbox = this.ctx.job.planMode ? "readOnly" : this.ctx.job.sandbox;
     return {
       cwd: this.ctx.job.cwd,
@@ -242,7 +319,14 @@ export class CliWorker extends EventEmitter implements Worker {
         dangerFullAccess: "danger-full-access",
       }[sandbox],
       ...(model ? { model } : {}),
-      config: { "features.multi_agent": this.ctx.job.multiAgent !== false },
+      ...(this.ctx.job.serviceTier
+        ? { serviceTier: this.ctx.job.serviceTier }
+        : {}),
+      config: {
+        "features.multi_agent": this.ctx.job.multiAgent !== false,
+        ...(effort ? { model_reasoning_effort: effort } : {}),
+        ...(this.goal?.status === "active" ? { "features.goals": true } : {}),
+      },
     };
   }
   private finish(result: Outcome) {
@@ -518,9 +602,9 @@ export class CliWorker extends EventEmitter implements Worker {
       const error = p.turn.error ?? this.lastError;
       if (this.quotaSeen || errorKind(error) === "quota")
         this.completeAfterChildren({ kind: "quota", error });
-      else if (p.turn.status === "interrupted" || this.stopRequested)
+      else if (this.stopRequested)
         this.completeAfterChildren({ kind: "interrupted" });
-      else if (error || p.turn.status !== "completed")
+      else if (error || !["completed", "interrupted"].includes(p.turn.status))
         this.finish({
           kind: "error",
           error: error ?? new Error(`Unexpected turn status: ${p.turn.status}`),
@@ -533,7 +617,15 @@ export class CliWorker extends EventEmitter implements Worker {
       ) {
         this.goalStopOutcome = { kind: "goalStopped" };
         this.completeAfterChildren(this.goalStopOutcome);
-      } else if (!quotaKnown || !this.finalText.trim())
+      } else if (p.turn.status === "interrupted")
+        this.completeAfterChildren({ kind: "interrupted" });
+      else if (quotaKnown && this.goal?.status === "active") {
+        this.waitingForGoal = true;
+        this.emit("stage", "目标仍在执行，等待下一轮");
+      } else if (
+        !quotaKnown ||
+        (!this.finalText.trim() && this.goal?.status !== "complete")
+      )
         this.finish({
           kind: "error",
           error: new Error("终止原因不明确，需核查额度后继续"),
@@ -643,7 +735,10 @@ export class CliWorker extends EventEmitter implements Worker {
       });
     const resumed = await this.rpc.call("thread/resume", {
       threadId,
-      ...this.threadConfig(agent.model || this.ctx.job.model),
+      ...this.threadConfig(
+        agent.model || this.ctx.job.model,
+        agent.effort || this.ctx.job.effort,
+      ),
       excludeTurns: true,
     });
     if (resumed.thread?.id !== threadId)
@@ -724,15 +819,25 @@ export class CliWorker extends EventEmitter implements Worker {
     this.emit("quota", quotas);
     if (isExhausted(quotas[this.ctx.job.bucket])) {
       this.quotaSeen = true;
-      if (this.turnId && !this.terminal && !this.completing)
+      if (
+        this.turnId &&
+        !this.terminal &&
+        (!this.completing || this.waitingForGoal)
+      )
         void this.stop().catch(() => {});
     }
+    if (this.waitingForGoal && !this.terminal && !this.quotaSeen)
+      await this.readGoal();
     return quotas;
   }
   async stop() {
     if (this.terminal || !this.rpc || !this.turnId || !this.threadId) return;
     if (this.stopping) return this.stopping;
     this.stopRequested = true;
+    if (this.waitingForGoal) {
+      this.waitingForGoal = false;
+      this.parentOutcome = { kind: this.quotaSeen ? "quota" : "interrupted" };
+    }
     if (
       this.quotaSeen &&
       this.goal &&

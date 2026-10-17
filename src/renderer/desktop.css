@@ -3311,6 +3311,39 @@
   max-height: 240px;
   overflow-y: auto;
 }
+.desktop-shell .goal-create {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 0;
+  color: var(--subtle);
+  text-align: left;
+  font-size: 13px;
+}
+.goal-create > span {
+  flex: 1;
+}
+.desktop-shell .goal-create:hover {
+  background: transparent;
+  color: var(--text);
+}
+.goal-lifecycle {
+  margin-top: 16px;
+}
+.desktop-shell .goal-start {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line);
+  padding: 7px 12px;
+  font-size: 12px;
+  border-radius: 9px;
+  color: var(--text);
+}
+.desktop-shell .goal-start:hover:not(:disabled) {
+  background: #8881;
+}
 .goal-card .goal-state {
   color: var(--subtle);
   font-size: 12px;

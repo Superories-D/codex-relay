@@ -6,6 +6,7 @@ import type { Job } from "../src/shared/types";
 vi.mock("../src/core/rpc", () => ({ Rpc: { open: vi.fn() } }));
 class FakeRpc extends EventEmitter {
   used = 10;
+  autoGoalTurn = true;
   interruptEmits = true;
   calls: string[] = [];
   call = vi.fn(async (method: string, params: any): Promise<any> => {
@@ -27,11 +28,21 @@ class FakeRpc extends EventEmitter {
           },
         },
       };
-    if (method === "thread/start" || method === "thread/resume")
+    if (method === "thread/start" || method === "thread/resume") {
+      if (
+        method === "thread/resume" &&
+        params.config?.["features.goals"] &&
+        this.autoGoalTurn
+      )
+        this.notify("turn/started", {
+          threadId: params.threadId,
+          turn: { id: "native-goal-turn" },
+        });
       return {
         thread: { id: params.threadId || "thread-1" },
         model: "model-1",
       };
+    }
     if (method === "turn/start") {
       this.notify("turn/started", {
         threadId: params.threadId,
@@ -117,6 +128,71 @@ it("holds a new native Goal turn open when the previous turn's final verificatio
   expect((await w.done).kind).toBe("error");
   await w.close();
 });
+it("keeps an active native Goal alive across a delayed continuation instead of completing its first round", async () => {
+  const w = worker(),
+    settled = vi.fn();
+  w.done.then(settled);
+  await w.start(auth);
+  rpc.notify("thread/goal/updated", {
+    threadId: job.threadId,
+    goal: { threadId: job.threadId, status: "active" },
+  });
+  endParent();
+  await vi.advanceTimersByTimeAsync(3000);
+  expect(settled).not.toHaveBeenCalled();
+  rpc.notify("turn/started", {
+    threadId: job.threadId,
+    turn: { id: "delayed-goal" },
+  });
+  rpc.notify("thread/goal/updated", {
+    threadId: job.threadId,
+    goal: { threadId: job.threadId, status: "complete" },
+  });
+  rpc.notify("turn/completed", {
+    threadId: job.threadId,
+    turn: { id: "delayed-goal", status: "completed" },
+  });
+  await vi.advanceTimersByTimeAsync(1000);
+  expect((await w.done).kind).toBe("completed");
+  await w.close();
+});
+it("can stop between native Goal rounds and prioritizes quota exhaustion over a later completion update", async () => {
+  const w = worker();
+  await w.start(auth);
+  rpc.notify("thread/goal/updated", {
+    threadId: job.threadId,
+    goal: { threadId: job.threadId, status: "active" },
+  });
+  endParent();
+  await vi.advanceTimersByTimeAsync(1000);
+  rpc.used = 100;
+  await w.quota();
+  rpc.notify("thread/goal/updated", {
+    threadId: job.threadId,
+    goal: { threadId: job.threadId, status: "complete" },
+  });
+  expect((await w.done).kind).toBe("quota");
+  await w.close();
+});
+it("settles a paused Goal while waiting for its next round without another inference turn", async () => {
+  const w = worker();
+  await w.start(auth);
+  rpc.notify("thread/goal/updated", {
+    threadId: job.threadId,
+    goal: { threadId: job.threadId, status: "active" },
+  });
+  endParent();
+  await vi.advanceTimersByTimeAsync(1000);
+  rpc.notify("thread/goal/updated", {
+    threadId: job.threadId,
+    goal: { threadId: job.threadId, status: "paused" },
+  });
+  expect((await w.done).kind).toBe("goalStopped");
+  expect(rpc.call.mock.calls.filter(([m]) => m === "turn/start")).toHaveLength(
+    1,
+  );
+  await w.close();
+});
 it("interrupts a late native Goal turn after a user stop was already requested", async () => {
   const w = worker();
   await w.start(auth);
@@ -183,6 +259,73 @@ it("restores only status after quota rotation with automatic provenance and no o
     origin: "automatic",
   });
   expect(job.goalResumeAfterQuota).toBe(false);
+  expect(rpc.call.mock.calls.some(([m]) => m === "turn/start")).toBe(false);
+  await w.close();
+});
+it("uses the saved model, effort and service tier for native Goal admission without a synthetic user turn", async () => {
+  job.threadId = "thread-1";
+  job.goalStartRequested = true;
+  job.model = "model-1";
+  job.effort = "low";
+  job.serviceTier = "default";
+  const original = rpc.call.getMockImplementation()!;
+  rpc.call.mockImplementation(async (method, params) =>
+    method === "thread/goal/get"
+      ? { goal: { threadId: job.threadId, status: "active" } }
+      : original(method, params),
+  );
+  const w = worker();
+  await w.start(auth);
+  expect(job.turnId).toBe("native-goal-turn");
+  expect(rpc.call.mock.calls.some(([m]) => m === "turn/start")).toBe(false);
+  expect(rpc.call).toHaveBeenCalledWith(
+    "thread/resume",
+    expect.objectContaining({
+      model: "model-1",
+      serviceTier: "default",
+      config: expect.objectContaining({
+        model_reasoning_effort: "low",
+        "features.goals": true,
+      }),
+    }),
+  );
+  await w.close();
+});
+it("does not automatically reactivate a paused Goal after quota recovery", async () => {
+  job.threadId = "thread-1";
+  job.goalResumeAfterQuota = true;
+  const original = rpc.call.getMockImplementation()!;
+  rpc.call.mockImplementation(async (method, params) =>
+    method === "thread/goal/get"
+      ? { goal: { threadId: job.threadId, status: "paused" } }
+      : original(method, params),
+  );
+  const w = worker();
+  await w.start(auth);
+  expect((await w.done).kind).toBe("goalStopped");
+  expect(
+    rpc.call.mock.calls.some(([m]) =>
+      ["thread/resume", "thread/goal/set", "turn/start"].includes(m),
+    ),
+  ).toBe(false);
+  await w.close();
+});
+it("bounds uncertain native Goal admission and never falls back to a second turn/start", async () => {
+  job.threadId = "thread-1";
+  job.goalStartRequested = true;
+  rpc.autoGoalTurn = false;
+  const original = rpc.call.getMockImplementation()!;
+  rpc.call.mockImplementation(async (method, params) =>
+    method === "thread/goal/get"
+      ? { goal: { threadId: job.threadId, status: "active" } }
+      : original(method, params),
+  );
+  const w = worker();
+  const start = w.start(auth);
+  const rejected = expect(start).rejects.toThrow("不会补发任务");
+  await vi.advanceTimersByTimeAsync(11000);
+  await rejected;
+  expect(rpc.call.mock.calls.some(([m]) => m === "turn/start")).toBe(false);
   await w.close();
 });
 it("keeps root Goal accounting updates from prior turns and isolates child Goal state", async () => {

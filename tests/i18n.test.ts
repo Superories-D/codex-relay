@@ -7,9 +7,27 @@ import {
   resolveLanguage,
   setLanguage,
   t,
+  errorText,
 } from "../src/renderer/i18n";
 
 afterEach(() => setLanguage("zh-CN"));
+it("shows a readable localized IPC error without rewriting file paths or model output", () => {
+  setLanguage("en");
+  expect(
+    errorText(
+      new Error(
+        "Error invoking remote method 'relay:command': Error: 会话尚未设置目标",
+      ),
+    ),
+  ).toBe("This chat does not have a goal yet");
+  expect(errorText("Error: C:/My Project/Error:notes.txt")).toBe(
+    "C:/My Project/Error:notes.txt",
+  );
+  setLanguage("zh-TW");
+  expect(errorText(Error("目标已完成，请设置新的目标"))).toBe(
+    "目標已完成，請設定新的目標",
+  );
+});
 it("follows system languages and keeps explicit selections", () => {
   for (const system of ["zh-TW", "zh-HK", "zh-Hant-HK", "zh_MO"])
     expect(resolveLanguage("auto", system)).toBe("zh-TW");

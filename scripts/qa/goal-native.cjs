@@ -216,6 +216,57 @@ async function until(fn, timeout = 20000) {
       true,
     );
     assert.equal((await call("chat.goal.read", { id })).goal, null);
+    await page
+      .getByRole("button", { name: "设置持续目标", exact: true })
+      .click();
+    dialog = page.getByRole("dialog", { name: "设置持续目标", exact: true });
+    await dialog
+      .getByLabel("目标内容", { exact: true })
+      .fill("仅保存这个验收目标，不开始执行。");
+    await dialog.getByLabel("目标 Token 预算", { exact: true }).fill("10000");
+    await dialog
+      .getByRole("button", { name: "仅保存目标", exact: true })
+      .click();
+    await dialog.waitFor({ state: "hidden" });
+    await until(async () => (await current()).goal?.status === "paused");
+    assert.equal((await current()).goal.tokenBudget, 10000);
+    await menu("编辑目标");
+    dialog = page.getByRole("dialog", { name: "编辑目标", exact: true });
+    await dialog
+      .getByLabel("目标内容", { exact: true })
+      .fill("修改后的原生目标：保留聊天，不开始执行。");
+    await dialog.getByRole("button", { name: "保存", exact: true }).click();
+    await dialog.waitFor({ state: "hidden" });
+    assert.equal((await current()).goal.status, "paused");
+    assert.equal(
+      (await current()).goal.objective,
+      "修改后的原生目标：保留聊天，不开始执行。",
+    );
+    assert.equal((await current()).goal.tokenBudget, 10000);
+    await page.screenshot({
+      path: path.join(output, "desktop-goal-create.png"),
+    });
+    await app.close();
+    app = undefined;
+    await launch();
+    assert.equal((await current()).goal.status, "paused");
+    await page.getByRole("button", { name: "继续目标", exact: true }).click();
+    await until(async () =>
+      ["queued", "waiting"].includes((await current()).state),
+    );
+    assert.equal((await current()).goalStartRequested, true);
+    assert.equal((await current()).goal.status, "active");
+    // With no account, the explicitly requested Goal waits rather than dispatching.
+    await menu("暂停目标");
+    await until(async () => (await current()).state === "paused");
+    assert.equal((await current()).goal.status, "paused");
+    assert.equal((await current()).goalStartRequested, false);
+    await menu("清除目标");
+    dialog = page.getByRole("dialog", { name: "清除目标", exact: true });
+    await dialog.getByRole("button", { name: "清除目标", exact: true }).click();
+    await dialog.waitFor({ state: "hidden" });
+    assert.equal((await current()).goal, null);
+    report.createEditPersistAndPauseQueuedGoal = true;
     report.pauseClearAndThreeLanguages = true;
     await app.close();
     app = undefined;

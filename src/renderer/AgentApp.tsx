@@ -1,4 +1,4 @@
-import { t, useI18n, setLanguage } from "./i18n";
+import { t, useI18n, setLanguage, errorText } from "./i18n";
 import { CopyButton } from "./CopyButton";
 import React, { useEffect, useRef, useState, useMemo } from "react";
 import type {
@@ -206,7 +206,7 @@ export function AgentApp({
     try {
       return await window.relay.command(name, args);
     } catch (e) {
-      setError(String(e).replace(/^Error: /, ""));
+      setError(errorText(e));
       throw e;
     }
   };

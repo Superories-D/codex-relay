@@ -187,6 +187,144 @@ it("suppresses native Goal dispatch while paging local history", async () => {
     open.mockRestore();
   }
 });
+function nativeGoals(initial: any = null) {
+  let current = initial;
+  const rpc = new EventEmitter() as any;
+  rpc.call = vi.fn(async (method: string, params: any) => {
+    if (method === "thread/goal/clear") {
+      current = null;
+      return { cleared: true };
+    }
+    if (method === "thread/goal/set") {
+      current ||= {
+        threadId: params.threadId,
+        objective: "",
+        tokensUsed: 0,
+        tokenBudget: null,
+        timeUsedSeconds: 0,
+        createdAt: 1,
+        updatedAt: 1,
+      };
+      for (const key of ["objective", "status", "tokenBudget"])
+        if (Object.hasOwn(params, key)) current[key] = params[key];
+    }
+    return { goal: structuredClone(current) };
+  });
+  rpc.close = vi.fn(async () => {});
+  rpc.reject = vi.fn();
+  return rpc;
+}
+it("persists explicit Goal admission, permits pause before dispatch, and clears admission only on a real checkpoint", async () => {
+  store.data.accounts = [];
+  const job = await scheduler.add({ ...input, cwd: root, interactive: true });
+  await (scheduler as any).tickInFlight;
+  job.state = "completed";
+  job.threadId = "stable-thread";
+  job.pendingMessage = undefined;
+  const rpc = nativeGoals(),
+    open = vi.spyOn(Rpc, "open").mockResolvedValue(rpc);
+  try {
+    await scheduler.goal(
+      job.id,
+      "thread/goal/set",
+      {
+        objective: "Complete and verify the requested work",
+        status: "paused",
+        tokenBudget: 5000,
+      },
+      "create",
+    );
+    expect(job.state).toBe("completed");
+    expect(job.goal?.status).toBe("paused");
+    await scheduler.goal(
+      job.id,
+      "thread/goal/set",
+      { status: "active" },
+      "start",
+    );
+    expect(job.state).toBe("queued");
+    const saved = new Store(root);
+    await saved.load();
+    expect(saved.data.jobs[0].goalStartRequested).toBe(true);
+    expect(saved.data.jobs[0].goal?.objective).toBe(
+      "Complete and verify the requested work",
+    );
+    await scheduler.goal(job.id, "thread/goal/set", { status: "paused" });
+    expect(job.state).toBe("paused");
+    expect(job.goalStartRequested).toBe(false);
+    expect(
+      rpc.call.mock.calls.some(([m]: [string]) =>
+        ["thread/resume", "turn/start", "account/login/start"].includes(m),
+      ),
+    ).toBe(false);
+    await scheduler.goal(
+      job.id,
+      "thread/goal/set",
+      { status: "active" },
+      "start",
+    );
+    store.data.accounts = [account("a")];
+    await (scheduler as any).tick();
+    await until(() => workers[0]?.started);
+    expect(job.goalStartRequested).toBe(false);
+    expect(job.accountId).toBe("a");
+  } finally {
+    open.mockRestore();
+  }
+});
+it("rechecks native Goal existence and budget before mutation and preserves pending messages", async () => {
+  store.data.accounts = [];
+  const job = await scheduler.add({ ...input, cwd: root, interactive: true });
+  await (scheduler as any).tickInFlight;
+  job.state = "completed";
+  job.threadId = "stable-thread";
+  job.pendingMessage = undefined;
+  const rpc = nativeGoals({
+      threadId: job.threadId,
+      objective: "Keep this objective",
+      status: "budgetLimited",
+      tokenBudget: 1000,
+      tokensUsed: 1000,
+    }),
+    open = vi.spyOn(Rpc, "open").mockResolvedValue(rpc);
+  try {
+    await expect(
+      scheduler.goal(job.id, "thread/goal/set", { status: "active" }, "start"),
+    ).rejects.toThrow("预算已用尽");
+    await expect(
+      scheduler.goal(
+        job.id,
+        "thread/goal/set",
+        { objective: "Unexpected replacement", status: "paused" },
+        "create",
+      ),
+    ).rejects.toThrow("已有目标");
+    expect(
+      rpc.call.mock.calls.some(([m]: [string]) => m === "thread/goal/set"),
+    ).toBe(false);
+    job.pendingMessage = "This input must not be discarded";
+    await expect(
+      scheduler.goal(job.id, "thread/goal/set", { status: "active" }, "start"),
+    ).rejects.toThrow("待发送");
+    expect(job.pendingMessage).toBe("This input must not be discarded");
+    expect(job.state).toBe("completed");
+    job.pendingMessage = undefined;
+    await scheduler.goal(
+      job.id,
+      "thread/goal/set",
+      { objective: "Edited acceptance criteria" },
+      "edit",
+    );
+    expect(job.goal).toMatchObject({
+      objective: "Edited acceptance criteria",
+      status: "budgetLimited",
+      tokensUsed: 1000,
+      tokenBudget: 1000,
+    });
+  } finally {
+    open.mockRestore();
+  }
+});
 it("serializes child messages with parent pause and rejects further child work after pausing", async () => {
   const job = await scheduler.add({ ...input, cwd: root, interactive: true });
   await until(() => workers[0]?.started);
