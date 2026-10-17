@@ -1,4 +1,5 @@
 import type { Account, Quota, WindowQuota } from "../shared/types";
+import { accountValue } from "../shared/account-value";
 const finite = (x: unknown): x is number =>
   typeof x === "number" && Number.isFinite(x);
 function windowOf(raw: any): WindowQuota | null {
@@ -40,8 +41,8 @@ export function parseQuotas(
             observedAt: now,
             reached: Boolean(
               r.rateLimitReachedType ||
-              r.spendControlReached ||
-              (sparse && old?.reached),
+                r.spendControlReached ||
+                (sparse && old?.reached),
             ),
             unlimited:
               r.credits?.unlimited === true ||
@@ -89,6 +90,8 @@ export function eligible(
   if (
     !account.enabled ||
     account.status === "reauth" ||
+    account.status === "offline" ||
+    (typeof account.expiresAt === "number" && account.expiresAt <= now) ||
     (account.blockedUntil ?? 0) > now
   )
     return false;
@@ -106,13 +109,19 @@ export function pickAccount(
   cursor: number,
   bucket: string,
   now: number,
+  policy: "smart" | "roundRobin" = "roundRobin",
 ): { account: Account; cursor: number } | null {
+  let best: { account: Account; cursor: number; score: number } | null = null;
   for (let step = 0; step < accounts.length; step++) {
     const i = (cursor + step) % accounts.length;
-    if (eligible(accounts[i], bucket, now))
-      return { account: accounts[i], cursor: (i + 1) % accounts.length };
+    if (eligible(accounts[i], bucket, now)) {
+      const value = { account: accounts[i], cursor: (i + 1) % accounts.length };
+      if (policy === "roundRobin") return value;
+      const score = accountValue(accounts[i], bucket, now).score;
+      if (!best || score > best.score) best = { ...value, score };
+    }
   }
-  return null;
+  return best ? { account: best.account, cursor: best.cursor } : null;
 }
 export function nextWake(
   accounts: Account[],
@@ -121,7 +130,12 @@ export function nextWake(
   retryMs: number,
 ): number {
   const times = accounts
-    .filter((a) => a.enabled && a.status !== "reauth")
+    .filter(
+      (a) =>
+        a.enabled &&
+        a.status !== "reauth" &&
+        !(typeof a.expiresAt === "number" && a.expiresAt <= now),
+    )
     .map((a) =>
       Math.max(
         a.blockedUntil ?? 0,

@@ -1103,6 +1103,8 @@ async function boot() {
         if (!target) throw new Error("账户不存在");
         if (a.enabled !== undefined) target.enabled = a.enabled;
         if (a.label) target.label = a.label;
+        if (a.expiresAt !== undefined) target.expiresAt = a.expiresAt;
+        if (a.limitMode !== undefined) target.limitMode = a.limitMode;
         await store.save();
         scheduler.changed();
         return;
@@ -1121,6 +1123,16 @@ async function boot() {
         )
           throw new Error("请先暂停使用该账户的任务");
         return accounts.remove(id);
+      }
+      case "accounts.policy": {
+        const a = z
+          .object({ accountSelection: z.enum(["smart", "roundRobin"]) })
+          .strict()
+          .parse(args);
+        store.data.settings.accountSelection = a.accountSelection;
+        await store.save();
+        scheduler.changed();
+        return;
       }
       case "accounts.reorder": {
         const ids = z.array(idSchema).parse(args);

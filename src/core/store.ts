@@ -9,6 +9,8 @@ export const defaults: AppState = {
   logs: [],
   cursor: 0,
   settings: {
+    accountSelection: "smart",
+    resetWarmupEnabled: true,
     cliPath: "codex",
     desktopPath: "",
     pollSeconds: 30,

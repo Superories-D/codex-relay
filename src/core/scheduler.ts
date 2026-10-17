@@ -181,6 +181,7 @@ export class Scheduler extends EventEmitter {
     for (const a of this.store.data.accounts) {
       if (
         !a.enabled ||
+        (typeof a.expiresAt === "number" && a.expiresAt <= now) ||
         a.status === "reauth" ||
         this.accounts.busy.has(a.id) ||
         this.active?.job.accountId === a.id
@@ -234,6 +235,7 @@ export class Scheduler extends EventEmitter {
             this.store.data.cursor,
             j.bucket,
             now,
+            this.store.data.settings.accountSelection || "smart",
           ),
       );
       if (!this.active && !runnable) await this.refreshDue(now);
@@ -253,6 +255,7 @@ export class Scheduler extends EventEmitter {
                 this.store.data.cursor,
                 j.bucket,
                 Date.now(),
+                this.store.data.settings.accountSelection || "smart",
               ) !== null)),
       );
       if (!job) return;
@@ -261,6 +264,7 @@ export class Scheduler extends EventEmitter {
         this.store.data.cursor,
         job.bucket,
         Date.now(),
+        this.store.data.settings.accountSelection || "smart",
       );
       if (!selection) {
         job.state = "waiting";
@@ -749,6 +753,7 @@ export class Scheduler extends EventEmitter {
             this.store.data.cursor,
             job.bucket,
             Date.now(),
+            this.store.data.settings.accountSelection || "smart",
           )?.account;
           if (!account) throw new Error("暂无可用账户");
           const prepared = await this.accounts.inspect(account.id);

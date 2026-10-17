@@ -31,6 +31,7 @@ import {
 import type { DesktopData } from "../core/desktop";
 import type { Account, Snapshot } from "../shared/types";
 import type { ImportPreview } from "../core/account-import";
+import { AccountSelection, AccountValueControl } from "./AccountValue";
 import { ImportAllControl } from "./ImportAllControl";
 type Call = (name: string, args?: unknown) => Promise<any>;
 export function SettingsPage({
@@ -661,7 +662,7 @@ function Accounts({ snapshot, call }: { snapshot: Snapshot; call: Call }) {
       <div className="feature-title">
         <div>
           <h1>{t("账户与接力")}</h1>
-          <p>{t("按顺序选择可用账户，让任务保持上下文继续执行。")}</p>
+          <p>{t("自动选择可用账户，让任务保持上下文继续执行。")}</p>
         </div>
         <button
           className="solid-button"
@@ -686,6 +687,7 @@ function Accounts({ snapshot, call }: { snapshot: Snapshot; call: Call }) {
           {t("导入账户备份")}
         </button>
       </div>
+      <AccountSelection snapshot={snapshot} call={call} />
       {snapshot.login && (
         <div className="login-banner">
           <strong>{t("请在官方页面中完成登录")}</strong>
@@ -774,6 +776,7 @@ function Accounts({ snapshot, call }: { snapshot: Snapshot; call: Call }) {
               {account.lastError && (
                 <p className="panel-error">{account.lastError}</p>
               )}
+              <AccountValueControl account={account} call={call} />
               <div className="account-setting-actions">
                 <label>
                   <input

@@ -54,6 +54,24 @@ class FakeWorker extends EventEmitter implements Worker {
   }
   respond() {}
 }
+it("dispatches using account value, and permits an explicit switch back to ordered rotation", async () => {
+  store.data.accounts[1].expiresAt = Date.now() + 3600000;
+  store.data.settings.accountSelection = "smart";
+  const first = await scheduler.add({ ...input, cwd: root, interactive: true });
+  await until(() => workers[0]?.started);
+  expect(first.accountId).toBe("b");
+  workers[0].settle({ kind: "completed" });
+  await until(() => first.state === "completed");
+  store.data.cursor = 0;
+  store.data.settings.accountSelection = "roundRobin";
+  const second = await scheduler.add({
+    ...input,
+    cwd: root,
+    interactive: true,
+  });
+  await until(() => workers[1]?.started);
+  expect(second.accountId).toBe("a");
+});
 it("sends follow-up text on the same thread instead of replaying the recovery prompt", async () => {
   const job = await scheduler.add({
     ...input,

@@ -3133,6 +3133,74 @@
   color: var(--subtle);
   font-size: 12px;
 }
+.account-selection {
+  margin: 18px 0 24px;
+  border: 1px solid var(--line);
+  padding: 18px 20px;
+  border-radius: 16px;
+}
+.account-selection > label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.account-selection select {
+  min-width: 150px;
+}
+.account-selection > p {
+  color: var(--subtle);
+  font-size: 12px;
+  line-height: 1.6;
+  margin: 12px 0 0;
+}
+.account-value-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 0;
+  gap: 12px;
+  border-top: 1px solid var(--line);
+}
+.account-value-row span {
+  font-size: 12px;
+}
+.account-value-row strong {
+  margin-left: 8px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+.account-value-row small {
+  display: block;
+  font-size: 11px;
+  color: var(--subtle);
+  margin-top: 5px;
+}
+.account-value-row > button {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+}
+.account-value-row > button:hover {
+  background: #8881;
+}
+.account-value-factors {
+  margin: 20px 0;
+  font-size: 12px;
+}
+.account-value-factors > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 6px 0;
+  color: var(--subtle);
+}
+.account-value-factors strong {
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
 .goal-card .goal-objective {
   color: var(--text);
   line-height: 1.65;

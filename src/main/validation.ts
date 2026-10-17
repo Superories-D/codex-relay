@@ -64,6 +64,8 @@ export const newJobSchema = z
   .strict();
 export const settingsSchema = z
   .object({
+    accountSelection: z.enum(["smart", "roundRobin"]).optional(),
+    resetWarmupEnabled: z.boolean().optional(),
     cliPath: z.string().min(1).max(32700),
     desktopPath: z.string().max(32700),
     pollSeconds: z.number().int().min(10).max(300),
@@ -100,6 +102,8 @@ export const loginSchema = z
   .strict();
 export const accountSchema = z
   .object({
+    expiresAt: z.number().int().min(0).max(8640000000000).nullable().optional(),
+    limitMode: z.enum(["auto", "fiveHour", "weeklyOnly"]).optional(),
     id: idSchema,
     enabled: z.boolean().optional(),
     label: z.string().trim().min(1).max(100).optional(),

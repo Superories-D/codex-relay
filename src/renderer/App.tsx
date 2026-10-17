@@ -778,7 +778,11 @@ function App({ initialTab = "dashboard" }: { initialTab?: string }) {
               <div className="page-title">
                 <div>
                   <h1>{t("账户轮换")}</h1>
-                  <p>{t("按卡片顺序循环选择。每次接力前重新核实额度。")}</p>
+                  <p>
+                    {snapshot.settings.accountSelection === "roundRobin"
+                      ? t("按卡片顺序循环选择。每次接力前重新核实额度。")
+                      : t("自动选择可用账户，让任务保持上下文继续执行。")}
+                  </p>
                 </div>
                 <div className="row gap wrap">
                   <button

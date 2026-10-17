@@ -1,6 +1,33 @@
 import { legacyEnglish } from "./legacy-en";
 import { nativeEnglish } from "./native-en";
 export const english: Record<string, string> = {
+  "自动选择可用账户，让任务保持上下文继续执行。":
+    "Automatically choose an available account while preserving task context.",
+  账户选择方式: "Account selection",
+  智能选择: "Smart selection",
+  按顺序轮换: "Rotate in order",
+  "综合剩余额度、重置时间、套餐到期日与账户状态，优先使用更值得现在使用的账户。仅影响下一次调度。":
+    "Prioritize accounts using remaining quota, reset time, subscription expiry, and account health. Changes apply to future dispatches.",
+  调度优先分: "Scheduling priority",
+  剩余额度: "Remaining quota",
+  套餐: "Plan",
+  暂不可选: "Unavailable",
+  账户使用策略: "Account usage policy",
+  "套餐到期：{date}": "Subscription expires: {date}",
+  套餐到期时间未设置: "Subscription expiry is not set",
+  "套餐到期时间（手动）": "Subscription expiry (manual)",
+  "留空表示未知；登录 Token 的过期时间不会用于判断套餐到期。":
+    "Leave blank if unknown. Login token expiry is never used as subscription expiry.",
+  额度窗口类型: "Quota window type",
+  "自动识别，未提供的窗口保持未知": "Automatic; missing windows remain unknown",
+  "有 5 小时限额": "Has a 5-hour limit",
+  "无 5 小时限额": "No 5-hour limit",
+  "服务器实际返回的额度限制始终有效，手动设置不会绕过限额。":
+    "Actual server limits always apply. This setting does not bypass quota restrictions.",
+  即将到期: "Expiring soon",
+  重置临近: "Reset approaching",
+  近期失败: "Recent failures",
+  请输入有效的套餐到期时间: "Enter a valid subscription expiry time",
   会话目标: "Chat goal",
   会话目标已更新: "Chat goal updated",
   刷新目标状态: "Refresh goal status",

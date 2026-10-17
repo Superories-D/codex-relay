@@ -24,6 +24,8 @@ export interface Quota {
   unlimited?: boolean;
 }
 export interface Account {
+  expiresAt?: number | null;
+  limitMode?: "auto" | "fiveHour" | "weeklyOnly";
   id: string;
   identity: string;
   label: string;
@@ -173,6 +175,8 @@ export interface Log {
   jobId?: string;
 }
 export interface Settings {
+  accountSelection?: "smart" | "roundRobin";
+  resetWarmupEnabled?: boolean;
   cliPath: string;
   desktopPath: string;
   pollSeconds: number;
