@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { Accounts, parseAuth } from "./accounts";
+import { Accounts, parseAuth, accountMatches } from "./accounts";
 import type { Store } from "./store";
 import { redact } from "./redact";
 
@@ -16,6 +16,7 @@ interface Entry {
   email: string;
   plan: string;
   identity?: string;
+  userIdentity?: string;
   auth?: ReturnType<typeof parseAuth>["auth"];
   error?: string;
   duplicate?: boolean;
@@ -104,15 +105,17 @@ export function parseImport(text: string): Entry[] {
         }),
       );
       row.identity = parsed.identity;
+      row.userIdentity = parsed.userIdentity;
       row.email = parsed.email;
       row.plan = parsed.plan;
       if (!clean(v.label ?? v.name)) row.label = parsed.email;
-      if (seen.has(parsed.identity)) {
+      const key = JSON.stringify([parsed.identity, parsed.userIdentity]);
+      if (seen.has(key)) {
         row.duplicate = true;
         row.error = "同一文件内重复账户，已保留第一条";
         return row;
       }
-      seen.add(parsed.identity);
+      seen.add(key);
       row.auth = parsed.auth;
     } catch (error) {
       row.error = error instanceof Error ? error.message : "无法解析该条账户";
@@ -151,7 +154,7 @@ export class AccountImport {
         error: row.error,
         action: !row.auth
           ? "skip"
-          : this.store.data.accounts.some((a) => a.identity === row.identity)
+          : this.store.data.accounts.some((a) => accountMatches(a, row))
             ? "update"
             : "add",
       })),

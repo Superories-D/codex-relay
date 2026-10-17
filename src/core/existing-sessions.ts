@@ -21,7 +21,7 @@ import {
 } from "./existing-reader";
 import { findTranscript } from "./transcript";
 import { Rpc } from "./rpc";
-import { parseAuth } from "./accounts";
+import { parseAuth, accountMatches } from "./accounts";
 import { hasQuotaEvidence, isExhausted, parseQuotas } from "./quota";
 import { redact } from "./redact";
 import { ProcessSafetyError } from "./process-safety-error";
@@ -474,7 +474,7 @@ export class ExistingSessions {
       if ((await fs.stat(authFile)).size <= 2 * 1024 * 1024) {
         const text = await fs.readFile(authFile, "utf8"),
           auth = parseAuth(text);
-        if (this.store.data.accounts.some((a) => a.identity === auth.identity))
+        if (this.store.data.accounts.some((a) => accountMatches(a, auth)))
           await this.scheduler.accounts.import(text);
       }
     } catch (error: any) {

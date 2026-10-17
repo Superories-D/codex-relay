@@ -3,7 +3,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { Accounts } from "../src/core/accounts";
+import { Accounts, parseAuth } from "../src/core/accounts";
 import { Store } from "../src/core/store";
 import { Rpc } from "../src/core/rpc";
 import { ProcessSafetyError } from "../src/core/process-safety-error";
@@ -18,6 +18,59 @@ const auth = (access = "old") => ({
     account_id: "identity",
   },
   last_refresh: "2026-01-01T00:00:00Z",
+});
+const teamAuth = (user: string, workspace = "shared-team") => {
+  const value = auth(user);
+  value.tokens.account_id = workspace;
+  value.tokens.id_token =
+    "e30." +
+    Buffer.from(
+      JSON.stringify({
+        sub: user,
+        email: `${user}@example.test`,
+        "https://api.openai.com/auth": {
+          chatgpt_account_id: workspace,
+          chatgpt_plan_type: "team",
+        },
+      }),
+    ).toString("base64url") +
+    ".synthetic";
+  return value;
+};
+it("keeps distinct users in the same Team separate, migrates legacy vault metadata, and updates only the exact user/workspace", async () => {
+  const first = await accounts.import(JSON.stringify(teamAuth("one")));
+  delete first.userIdentity;
+  const second = await accounts.import(JSON.stringify(teamAuth("two")));
+  const third = await accounts.import(JSON.stringify(teamAuth("three")));
+  expect(new Set([first.id, second.id, third.id]).size).toBe(3);
+  expect(first.userIdentity).toBe("one");
+  expect(first.identity).toBe("shared-team");
+  expect(
+    parseAuth(JSON.stringify(await accounts.auth(first.id))).userIdentity,
+  ).toBe("one");
+  const updated = await accounts.import(JSON.stringify(teamAuth("two")));
+  expect(updated.id).toBe(second.id);
+  expect(store.data.accounts).toHaveLength(3);
+  const personal = await accounts.import(
+    JSON.stringify(teamAuth("two", "personal")),
+  );
+  expect(personal.id).not.toBe(second.id);
+});
+it("refuses a staged cache belonging to a different user in the same Team without overwriting the vault", async () => {
+  const first = await accounts.import(JSON.stringify(teamAuth("one")));
+  const home = store.profileHome(first.id);
+  await fs.mkdir(home, { recursive: true });
+  await fs.writeFile(
+    path.join(home, "auth.json"),
+    JSON.stringify(teamAuth("two")),
+  );
+  await expect(accounts.inspect(first.id)).rejects.toThrow("身份");
+  expect(
+    parseAuth(JSON.stringify(await accounts.auth(first.id))).userIdentity,
+  ).toBe("one");
+  expect(await fs.readFile(path.join(home, "auth.json"), "utf8")).toContain(
+    "two",
+  );
 });
 const quota = () => ({
   rateLimits: {

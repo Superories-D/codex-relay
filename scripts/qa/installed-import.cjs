@@ -8,6 +8,7 @@ const { _electron } = require(
   process.env.RELAY_PLAYWRIGHT_MODULE || "playwright",
 );
 const { build } = require("esbuild");
+const version = require("../../package.json").version;
 (async () => {
   const executable = process.env.RELAY_INSTALLED_EXECUTABLE;
   assert(executable && path.isAbsolute(executable));
@@ -101,6 +102,29 @@ const { build } = require("esbuild");
       before.accounts.map((a) => a.id),
       "Preserve the user's accounts",
     );
+    assert(
+      state.accounts.every((a) => a.userIdentity),
+      "Migrate each existing user identity from its encrypted vault",
+    );
+    assert.equal(
+      new Set(
+        state.accounts.map((a) => JSON.stringify([a.identity, a.userIdentity])),
+      ).size,
+      state.accounts.length,
+    );
+    report.accountIdentityMigration = {
+      accounts: state.accounts.length,
+      userIdentities: state.accounts.filter((a) => a.userIdentity).length,
+      idsPreserved: true,
+    };
+    report.accountQuotaChecks = [];
+    for (const account of state.accounts) {
+      await page.evaluate(
+        (id) => window.relay.command("account.refresh", id),
+        account.id,
+      );
+      report.accountQuotaChecks.push({ id: account.id, passed: true });
+    }
     const jobs = state.jobs.filter(
       (j) => j.historySource?.storage === "sqlite",
     );
@@ -275,7 +299,7 @@ const { build } = require("esbuild");
       .count();
     assert(report.backgroundGroups > 0);
     await page.screenshot({
-      path: path.resolve("qa-output/installed-import-0.6.13.png"),
+      path: path.resolve(`qa-output/installed-import-${version}.png`),
     });
   } finally {
     if (app) {
@@ -283,7 +307,7 @@ const { build } = require("esbuild");
       await app.close().catch(() => {});
     }
     await fs.writeFile(
-      path.resolve("qa-output/installed-import-0.6.13-report.json"),
+      path.resolve(`qa-output/installed-import-${version}-report.json`),
       JSON.stringify(report, null, 2),
     );
   }

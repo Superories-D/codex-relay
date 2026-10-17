@@ -4,7 +4,7 @@ import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
-import { Accounts, parseAuth } from "./accounts";
+import { Accounts, parseAuth, matchesAuth } from "./accounts";
 import { Store, atomicWrite } from "./store";
 import { taskPrompt, completionOutcome } from "./completion";
 import { prepareThread } from "./thread";
@@ -472,10 +472,12 @@ export class DesktopWorker extends EventEmitter implements Worker {
       await fs.readFile(path.join(this.ctx.home, "auth.json"), "utf8"),
     ).auth;
     if (
-      current.tokens.account_id !== this.ctx.job.accountId &&
-      current.tokens.account_id !==
-        this.store.data.accounts.find((a) => a.id === this.ctx.job.accountId)
-          ?.identity
+      !matchesAuth(
+        this.store.data.accounts.find(
+          (a) => a.id === this.ctx.job.accountId,
+        ) ?? { identity: this.ctx.job.accountId! },
+        current,
+      )
     )
       throw new Error("客户端凭据身份变化，停止自动操作");
     const probeHome = path.join(this.ctx.home, "quota-probe");
@@ -607,7 +609,7 @@ export class DesktopWorker extends EventEmitter implements Worker {
         await fs.readFile(path.join(this.ctx.home, "auth.json"), "utf8"),
       ).auth;
       const account = this.store.data.accounts.find((a) => a.id === id);
-      if (auth.tokens.account_id !== account?.identity)
+      if (!matchesAuth(account, auth))
         throw new Error("客户端凭据身份不匹配，保留文件等待检查");
       await this.accounts.put(id, auth);
       await fs.rm(path.join(this.ctx.home, "auth.json"), { force: true });

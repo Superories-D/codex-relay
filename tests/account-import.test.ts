@@ -27,6 +27,20 @@ afterEach(() => {
   vi.useRealTimers();
 });
 describe("account backup normalization", () => {
+  it("does not deduplicate different users of one Team workspace", () => {
+    const team = (user: string) => ({
+      tokens: {
+        ...auth("same-team").tokens,
+        id_token: token({ sub: user, email: `${user}@example.test` }),
+      },
+    });
+    const rows = parseImport(
+      JSON.stringify([team("one"), team("two"), team("one")]),
+    );
+    expect(rows.map((r) => !!r.auth)).toEqual([true, true, false]);
+    expect(rows[1].identity).toBe(rows[0].identity);
+    expect(rows[1].userIdentity).not.toBe(rows[0].userIdentity);
+  });
   it("accepts official, flat CodexPilot, credentials and BOM JSONL formats", () => {
     const a = auth();
     expect(parseImport(JSON.stringify(a))[0].auth?.auth_mode).toBe("chatgpt");
@@ -79,7 +93,9 @@ describe("account backup normalization", () => {
 describe("main-process import preview", () => {
   it("never exposes tokens and marks existing identities for update", () => {
     const { service, store } = setup();
-    store.data.accounts = [{ identity: "a" } as any];
+    store.data.accounts = [
+      { identity: "a", userIdentity: "a@example.test" } as any,
+    ];
     const preview = service.preview(JSON.stringify([auth("a"), auth("b")]));
     expect(preview.rows.map((r) => r.action)).toEqual(["update", "add"]);
     expect(JSON.stringify(preview)).not.toMatch(

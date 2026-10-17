@@ -3,7 +3,7 @@ import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { Job } from "../shared/types";
-import { Accounts, parseAuth } from "./accounts";
+import { Accounts, parseAuth, matchesAuth } from "./accounts";
 import { Store } from "./store";
 import { Rpc } from "./rpc";
 import { windowsPowerShellEnv } from "./powershell";
@@ -77,8 +77,10 @@ export async function recoverJob(
       await fs.readFile(path.join(home, "auth.json"), "utf8"),
     ).auth;
     if (
-      auth.tokens.account_id !==
-      store.data.accounts.find((a) => a.id === job.accountId)?.identity
+      !matchesAuth(
+        store.data.accounts.find((a) => a.id === job.accountId),
+        auth,
+      )
     )
       throw new Error("恢复凭据的账户身份不匹配");
     await accounts.put(job.accountId, auth);

@@ -39,6 +39,7 @@ export interface Account {
   limitMode?: "auto" | "fiveHour" | "weeklyOnly";
   id: string;
   identity: string;
+  userIdentity?: string;
   label: string;
   email: string;
   plan: string;

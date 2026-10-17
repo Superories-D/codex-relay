@@ -37,6 +37,7 @@ function claims(token: string): any {
 export function parseAuth(text: string): {
   auth: AuthCache;
   identity: string;
+  userIdentity?: string;
   email: string;
   plan: string;
 } {
@@ -76,6 +77,14 @@ export function parseAuth(text: string): {
   return {
     auth,
     identity,
+    userIdentity: [
+      id.sub,
+      access.sub,
+      info.chatgpt_user_id,
+      access["https://api.openai.com/auth"]?.chatgpt_user_id,
+      id.email,
+      access["https://api.openai.com/profile"]?.email,
+    ].find((value) => typeof value === "string" && value.length > 0),
     email: String(
       id.email ??
         access["https://api.openai.com/profile"]?.email ??
@@ -83,6 +92,22 @@ export function parseAuth(text: string): {
     ),
     plan: String(info.chatgpt_plan_type ?? "unknown"),
   };
+}
+export function accountMatches(
+  account: Pick<Account, "identity" | "userIdentity"> | undefined,
+  parsed: { identity?: string; userIdentity?: string },
+) {
+  return (
+    !!account &&
+    account.identity === parsed.identity &&
+    account.userIdentity === parsed.userIdentity
+  );
+}
+export function matchesAuth(
+  account: Pick<Account, "identity" | "userIdentity"> | undefined,
+  auth: AuthCache,
+) {
+  return accountMatches(account, parseAuth(JSON.stringify(auth)));
 }
 export class Accounts {
   quotaObserved?: (
@@ -110,6 +135,24 @@ export class Accounts {
     if (this.busy.has(id)) throw new Error("该账户由客户端独占，暂停后再操作");
     if (!this.store.data.accounts.some((a) => a.id === id))
       throw new Error("账户不存在");
+  }
+  async migrateIdentities() {
+    let changed = false;
+    for (const account of this.store.data.accounts) {
+      if (account.userIdentity) continue;
+      try {
+        const parsed = parseAuth(
+          this.cipher.decrypt(await fs.readFile(this.vault(account.id))),
+        );
+        if (parsed.identity === account.identity && parsed.userIdentity) {
+          account.userIdentity = parsed.userIdentity;
+          changed = true;
+        }
+      } catch {
+        /* An unreadable vault remains available for explicit reauthentication. */
+      }
+    }
+    if (changed) await this.store.save();
   }
   private assertExternalRefreshIdle() {
     if (
@@ -167,7 +210,12 @@ export class Accounts {
       const pending = parseAuth(
         await fs.readFile(path.join(home, "auth.json"), "utf8"),
       ).auth;
-      if (pending.tokens.account_id !== auth.tokens.account_id)
+      if (
+        !accountMatches(
+          parseAuth(JSON.stringify(auth)),
+          parseAuth(JSON.stringify(pending)),
+        )
+      )
         throw new Error("残留凭据与账户身份不匹配");
       if (
         !Number.isFinite(Date.parse(pending.last_refresh ?? "")) ||
@@ -206,8 +254,10 @@ export class Accounts {
           await fs.readFile(path.join(home, "auth.json"), "utf8"),
         ).auth;
         if (
-          fresh.tokens.account_id !==
-          this.store.data.accounts.find((a) => a.id === id)?.identity
+          !matchesAuth(
+            this.store.data.accounts.find((a) => a.id === id),
+            fresh,
+          )
         )
           throw new Error("刷新后账户身份不匹配");
         await this.put(id, fresh);
@@ -235,16 +285,18 @@ export class Accounts {
   }
   import(text: string, label?: string): Promise<Account> {
     const parsed = parseAuth(text);
-    return this.serial(`identity:${parsed.identity}`, () =>
-      this.importOnce(parsed, label),
+    return this.serial(
+      `identity:${JSON.stringify([parsed.identity, parsed.userIdentity])}`,
+      () => this.importOnce(parsed, label),
     );
   }
   private async importOnce(
     parsed: ReturnType<typeof parseAuth>,
     label?: string,
   ): Promise<Account> {
-    let account = this.store.data.accounts.find(
-      (a) => a.identity === parsed.identity,
+    await this.migrateIdentities();
+    let account = this.store.data.accounts.find((a) =>
+      accountMatches(a, parsed),
     );
     if (
       account &&
@@ -263,6 +315,7 @@ export class Accounts {
       account = {
         id: randomUUID(),
         identity: parsed.identity,
+        userIdentity: parsed.userIdentity,
         email: parsed.email,
         plan: parsed.plan,
         label: label || parsed.email,
@@ -390,7 +443,7 @@ export class Accounts {
         const auth = parseAuth(
           await fs.readFile(path.join(home, "auth.json"), "utf8"),
         ).auth;
-        if (auth.tokens.account_id !== account.identity)
+        if (!matchesAuth(account, auth))
           throw new Error("凭据身份不匹配，拒绝写回");
         if (forceRefresh)
           account.modelAccess = modelAccess(models, Date.now(), complete);
@@ -415,7 +468,7 @@ export class Accounts {
           const latest = parseAuth(
             await fs.readFile(path.join(home, "auth.json"), "utf8"),
           ).auth;
-          if (latest.tokens.account_id !== account.identity)
+          if (!matchesAuth(account, latest))
             throw new Error("凭据身份变化，保留原始文件等待检查");
           await this.put(id, latest);
           await fs.rm(path.join(home, "auth.json"), { force: true });
@@ -501,9 +554,10 @@ export class Accounts {
         path.join(this.store.profileHome(login.id), "auth.json"),
         "utf8",
       );
-      const identity = parseAuth(text).identity;
-      const updated = this.store.data.accounts.some(
-        (a) => a.identity === identity,
+      await this.migrateIdentities();
+      const parsed = parseAuth(text);
+      const updated = this.store.data.accounts.some((a) =>
+        accountMatches(a, parsed),
       );
       const account = await this.import(text, label);
       imported = true;

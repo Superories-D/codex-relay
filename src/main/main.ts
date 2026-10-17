@@ -154,6 +154,7 @@ async function boot() {
     },
     () => scheduler?.changed(),
   );
+  await accounts.migrateIdentities();
   const importer = new AccountImport(accounts, store);
   scheduler = new Scheduler(
     store,
