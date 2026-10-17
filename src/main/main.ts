@@ -35,6 +35,7 @@ import { DesktopWorker } from "../core/desktop-worker";
 import { recoverJob } from "../core/recovery";
 import { redact } from "../core/redact";
 import { startCommandServer } from "./ipc-server";
+import { loadRenderer } from "./load-renderer";
 import {
   newJobSchema,
   goalObjectiveSchema,
@@ -1467,7 +1468,7 @@ async function boot() {
       throw new Error(redact(error instanceof Error ? error.message : error));
     }
   });
-  await window.loadFile(rendererPath);
+  await loadRenderer(window, rendererPath);
   startupTrace("renderer ready");
   window.show();
   app.on("second-instance", () => {
