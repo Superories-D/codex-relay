@@ -1,3 +1,4 @@
+import { t, useI18n, languages, type Language, formatDate } from "./i18n";
 import React, { useEffect, useState } from "react";
 import {
   ArrowDown,
@@ -48,6 +49,8 @@ export function SettingsPage({
   close: () => void;
   advanced: (tab: string) => void;
 }) {
+  useI18n();
+
   const [tab, setTab] = useState(
       [
         "accounts",
@@ -107,22 +110,22 @@ export function SettingsPage({
   return (
     <div className="feature-page settings-page">
       <header className="feature-header">
-        <button aria-label="返回聊天" onClick={close}>
+        <button aria-label={t("返回聊天")} onClick={close}>
           <ArrowLeft size={19} />
         </button>
-        <span>设置</span>
+        <span>{t("设置")}</span>
       </header>
       <div className="feature-layout">
         <nav className="feature-nav">
           {(
             [
-              ["general", "常规", Settings2],
-              ["appearance", "外观", Palette],
-              ["accounts", "账户与接力", UserRound],
-              ["notifications", "通知", Bell],
-              ["personalization", "个人指令", FileText],
-              ["shortcuts", "快捷键", Keyboard],
-              ["developer", "运行环境", Code2],
+              ["general", t("常规"), Settings2],
+              ["appearance", t("外观"), Palette],
+              ["accounts", t("账户与接力"), UserRound],
+              ["notifications", t("通知"), Bell],
+              ["personalization", t("个人指令"), FileText],
+              ["shortcuts", t("快捷键"), Keyboard],
+              ["developer", t("运行环境"), Code2],
             ] as const
           ).map(([key, name, Icon]) => (
             <button
@@ -145,7 +148,7 @@ export function SettingsPage({
             }
           >
             <CircleHelp size={17} />
-            帮助文档
+            {t("帮助文档")}
             <ExternalLink size={12} />
           </button>
         </nav>
@@ -163,28 +166,50 @@ export function SettingsPage({
           )}
           {tab === "general" && (
             <>
-              <h1>常规</h1>
+              <h1>{t("常规")}</h1>
               <SettingRow
-                title="发送消息"
-                description="选择 Enter 的行为，Shift + Enter 始终换行。"
+                title={t("语言")}
+                description={t(
+                  "选择界面语言，聊天内容、代码和终端输出会保留原文。",
+                )}
               >
                 <select
-                  aria-label="发送消息快捷键"
+                  aria-label={t("语言")}
+                  value={prefs.language || "auto"}
+                  onChange={(e) =>
+                    void preference({ language: e.target.value as Language })
+                  }
+                >
+                  {languages.map((language) => (
+                    <option value={language.value} key={language.value}>
+                      {language.label}
+                    </option>
+                  ))}
+                </select>
+              </SettingRow>
+              <SettingRow
+                title={t("发送消息")}
+                description={t("选择 Enter 的行为，Shift + Enter 始终换行。")}
+              >
+                <select
+                  aria-label={t("发送消息快捷键")}
                   value={prefs.enterSends === false ? "mod" : "enter"}
                   onChange={(e) =>
                     void preference({ enterSends: e.target.value === "enter" })
                   }
                 >
-                  <option value="enter">Enter 发送</option>
-                  <option value="mod">Ctrl + Enter 发送</option>
+                  <option value="enter">{t("Enter 发送")}</option>
+                  <option value="mod">{t("Ctrl + Enter 发送")}</option>
                 </select>
               </SettingRow>
               <SettingRow
-                title="工作中的追问"
-                description="在 Codex 工作时发送新消息，选择补充当前轮次或等待下一轮。"
+                title={t("工作中的追问")}
+                description={t(
+                  "在 Codex 工作时发送新消息，选择补充当前轮次或等待下一轮。",
+                )}
               >
                 <select
-                  aria-label="追问行为"
+                  aria-label={t("追问行为")}
                   value={prefs.followUp || "queue"}
                   onChange={(e) =>
                     void preference({
@@ -192,16 +217,18 @@ export function SettingsPage({
                     })
                   }
                 >
-                  <option value="queue">排队等待下一轮</option>
-                  <option value="steer">补充到当前轮次</option>
+                  <option value="queue">{t("排队等待下一轮")}</option>
+                  <option value="steer">{t("补充到当前轮次")}</option>
                 </select>
               </SettingRow>
               <SettingRow
-                title="减少动态效果"
-                description="减少界面动画；系统的减少动态效果设置也会生效。"
+                title={t("减少动态效果")}
+                description={t(
+                  "减少界面动画；系统的减少动态效果设置也会生效。",
+                )}
               >
                 <Toggle
-                  label="减少动态效果"
+                  label={t("减少动态效果")}
                   value={!!prefs.reduceMotion}
                   onChange={(value) => void preference({ reduceMotion: value })}
                 />
@@ -209,10 +236,11 @@ export function SettingsPage({
               <div className="settings-info">
                 <ShieldCheck size={18} />
                 <div>
-                  <strong>本机执行与自动账户接力</strong>
+                  <strong>{t("本机执行与自动账户接力")}</strong>
                   <p>
-                    账户由 Windows
-                    加密存储管理。任务会沿用同一条会话继续，额度不足时在确认原进程停止后切换可用账户。
+                    {t(
+                      "账户由 Windows 加密存储管理。任务会沿用同一条会话继续，额度不足时在确认原进程停止后切换可用账户。",
+                    )}
                   </p>
                 </div>
               </div>
@@ -220,23 +248,23 @@ export function SettingsPage({
                 className="settings-deep-link"
                 onClick={() => advanced("tasks")}
               >
-                查看任务队列与恢复管理
+                {t("查看任务队列与恢复管理")}
                 <ChevronRight size={16} />
               </button>
             </>
           )}
           {tab === "appearance" && (
             <>
-              <h1>外观</h1>
+              <h1>{t("外观")}</h1>
               <p className="settings-intro">
-                调整到你习惯的工作空间，设置会即时应用。
+                {t("调整到你习惯的工作空间，设置会即时应用。")}
               </p>
               <div className="theme-choices">
                 {(
                   [
-                    ["light", "浅色", Sun],
-                    ["dark", "深色", Moon],
-                    ["system", "跟随系统", Monitor],
+                    ["light", t("浅色"), Sun],
+                    ["dark", t("深色"), Moon],
+                    ["system", t("跟随系统"), Monitor],
                   ] as const
                 ).map(([theme, name, Icon]) => (
                   <button
@@ -257,10 +285,10 @@ export function SettingsPage({
                   </button>
                 ))}
               </div>
-              <SettingRow title="聊天字号">
+              <SettingRow title={t("聊天字号")}>
                 <div className="size-control">
                   <input
-                    aria-label="聊天字号"
+                    aria-label={t("聊天字号")}
                     type="range"
                     min={12}
                     max={20}
@@ -273,10 +301,10 @@ export function SettingsPage({
                   <span>{prefs.textSize || 15} px</span>
                 </div>
               </SettingRow>
-              <SettingRow title="代码字号">
+              <SettingRow title={t("代码字号")}>
                 <div className="size-control">
                   <input
-                    aria-label="代码字号"
+                    aria-label={t("代码字号")}
                     type="range"
                     min={10}
                     max={20}
@@ -289,7 +317,7 @@ export function SettingsPage({
                   <span>{prefs.codeSize || 12} px</span>
                 </div>
               </SettingRow>
-              <SettingRow title="强调色">
+              <SettingRow title={t("强调色")}>
                 <div className="accent-choices">
                   {[
                     "#4386f5",
@@ -302,7 +330,7 @@ export function SettingsPage({
                     <button
                       key={accent}
                       title={accent}
-                      aria-label={`强调色 ${accent}`}
+                      aria-label={t("强调色 {p0}", { p0: accent })}
                       style={{ background: accent }}
                       onClick={() => void preference({ accent })}
                     >
@@ -313,7 +341,7 @@ export function SettingsPage({
                   ))}
                   <input
                     type="color"
-                    aria-label="自定义强调色"
+                    aria-label={t("自定义强调色")}
                     value={prefs.accent || "#4386f5"}
                     onChange={(e) =>
                       void preference({ accent: e.target.value })
@@ -321,9 +349,9 @@ export function SettingsPage({
                   />
                 </div>
               </SettingRow>
-              <SettingRow title="界面字体">
+              <SettingRow title={t("界面字体")}>
                 <input
-                  aria-label="界面字体"
+                  aria-label={t("界面字体")}
                   defaultValue={
                     prefs.uiFont ||
                     '"Segoe UI", "Microsoft YaHei UI", sans-serif'
@@ -331,9 +359,9 @@ export function SettingsPage({
                   onBlur={(e) => void preference({ uiFont: e.target.value })}
                 />
               </SettingRow>
-              <SettingRow title="代码字体">
+              <SettingRow title={t("代码字体")}>
                 <input
-                  aria-label="代码字体"
+                  aria-label={t("代码字体")}
                   defaultValue={
                     prefs.codeFont || '"Cascadia Code", Consolas, monospace'
                   }
@@ -348,11 +376,11 @@ export function SettingsPage({
                       navigator.clipboard.writeText(
                         JSON.stringify(prefs, null, 2),
                       ),
-                    "主题设置已复制",
+                    t("主题设置已复制"),
                   )
                 }
               >
-                复制主题设置
+                {t("复制主题设置")}
                 <Clipboard size={15} />
               </button>
             </>
@@ -360,13 +388,15 @@ export function SettingsPage({
           {tab === "accounts" && <Accounts snapshot={snapshot} call={call} />}
           {tab === "notifications" && (
             <>
-              <h1>通知</h1>
+              <h1>{t("通知")}</h1>
               <SettingRow
-                title="任务完成与需要处理"
-                description="当窗口不在前台时，显示任务完成或需要处理的 Windows 通知。"
+                title={t("任务完成与需要处理")}
+                description={t(
+                  "当窗口不在前台时，显示任务完成或需要处理的 Windows 通知。",
+                )}
               >
                 <Toggle
-                  label="任务通知"
+                  label={t("任务通知")}
                   value={prefs.notifications}
                   onChange={(notifications) =>
                     void preference({ notifications })
@@ -376,26 +406,30 @@ export function SettingsPage({
               <div className="settings-info">
                 <Bell size={18} />
                 <p>
-                  点击通知可返回客户端。你也可以在 Windows
-                  系统设置中管理通知权限。
+                  {t(
+                    "点击通知可返回客户端。你也可以在 Windows 系统设置中管理通知权限。",
+                  )}
                 </p>
               </div>
             </>
           )}
           {tab === "personalization" && (
             <>
-              <h1>个人指令</h1>
+              <h1>{t("个人指令")}</h1>
               <p className="settings-intro">
-                告诉 Codex 你希望它如何工作。指令写入客户端的
-                AGENTS.md，会在后续运行中加载；项目内的 AGENTS.md 也会生效。
+                {t(
+                  "告诉 Codex 你希望它如何工作。指令写入客户端的 AGENTS.md，会在后续运行中加载；项目内的 AGENTS.md 也会生效。",
+                )}
               </p>
               <textarea
                 className="personal-instructions"
-                aria-label="个人指令"
+                aria-label={t("个人指令")}
                 spellCheck={false}
                 value={instructions}
                 onChange={(e) => setInstructions(e.target.value)}
-                placeholder="例如：使用中文回复；修改代码后运行相关测试；提交前先展示差异。"
+                placeholder={t(
+                  "例如：使用中文回复；修改代码后运行相关测试；提交前先展示差异。",
+                )}
               />
               <button
                 className="solid-button"
@@ -403,30 +437,32 @@ export function SettingsPage({
                 onClick={() =>
                   void run(
                     () => call("client.instructions.write", instructions),
-                    "个人指令已保存",
+                    t("个人指令已保存"),
                   )
                 }
               >
-                保存指令
+                {t("保存指令")}
               </button>
             </>
           )}
           {tab === "shortcuts" && (
             <>
-              <h1>键盘快捷键</h1>
-              <p className="settings-intro">常用操作可以直接通过键盘完成。</p>
+              <h1>{t("键盘快捷键")}</h1>
+              <p className="settings-intro">
+                {t("常用操作可以直接通过键盘完成。")}
+              </p>
               {[
-                ["搜索聊天", "Ctrl + K"],
-                ["新聊天", "Ctrl + Shift + O"],
-                ["显示 / 隐藏侧栏", "Ctrl + B"],
-                ["显示 / 隐藏终端", "Ctrl + J"],
-                ["设置", "Ctrl + ,"],
+                [t("搜索聊天"), "Ctrl + K"],
+                [t("新聊天"), "Ctrl + Shift + O"],
+                [t("显示 / 隐藏侧栏"), "Ctrl + B"],
+                [t("显示 / 隐藏终端"), "Ctrl + J"],
+                [t("设置"), "Ctrl + ,"],
                 [
-                  "发送消息",
+                  t("发送消息"),
                   prefs.enterSends === false ? "Ctrl + Enter" : "Enter",
                 ],
-                ["换行", "Shift + Enter"],
-                ["关闭菜单或弹窗", "Esc"],
+                [t("换行"), "Shift + Enter"],
+                [t("关闭菜单或弹窗"), "Esc"],
               ].map(([name, key]) => (
                 <SettingRow title={name} key={name}>
                   <kbd>{key}</kbd>
@@ -436,16 +472,17 @@ export function SettingsPage({
           )}
           {tab === "developer" && (
             <>
-              <h1>运行环境</h1>
+              <h1>{t("运行环境")}</h1>
               <p className="settings-intro">
-                客户端使用你选择的官方 Codex
-                CLI，设置需要与当前机器的安装路径对应。
+                {t(
+                  "客户端使用你选择的官方 Codex CLI，设置需要与当前机器的安装路径对应。",
+                )}
               </p>
               <label className="settings-field">
-                Codex CLI 路径
+                {t("Codex CLI 路径")}
                 <div>
                   <input
-                    aria-label="Codex CLI 路径"
+                    aria-label={t("Codex CLI 路径")}
                     value={cli}
                     onChange={(e) => setCli(e.target.value)}
                   />
@@ -456,7 +493,7 @@ export function SettingsPage({
                       )
                     }
                   >
-                    选择
+                    {t("选择")}
                   </button>
                 </div>
               </label>
@@ -471,11 +508,11 @@ export function SettingsPage({
                           ...snapshot.settings,
                           cliPath: cli,
                         }),
-                      "CLI 路径已保存",
+                      t("CLI 路径已保存"),
                     )
                   }
                 >
-                  保存路径
+                  {t("保存路径")}
                 </button>
                 <button
                   disabled={busy}
@@ -490,7 +527,7 @@ export function SettingsPage({
                   ) : (
                     <RefreshCw size={15} />
                   )}
-                  检查运行环境
+                  {t("检查运行环境")}
                 </button>
               </div>
               {checks.map((check, i) => (
@@ -501,10 +538,10 @@ export function SettingsPage({
                 >
                   <span className={`environment-result ${check.status}`}>
                     {check.status === "ok"
-                      ? "正常"
+                      ? t("正常")
                       : check.status === "warning"
-                        ? "提示"
-                        : "异常"}
+                        ? t("提示")
+                        : t("异常")}
                   </span>
                 </SettingRow>
               ))}
@@ -512,14 +549,14 @@ export function SettingsPage({
                 className="settings-deep-link"
                 onClick={() => advanced("settings")}
               >
-                高级客户端适配与诊断设置
+                {t("高级客户端适配与诊断设置")}
                 <ChevronRight size={16} />
               </button>
               <button
                 className="settings-deep-link"
                 onClick={() => advanced("logs")}
               >
-                查看运行记录
+                {t("查看运行记录")}
                 <ChevronRight size={16} />
               </button>
             </>
@@ -538,6 +575,8 @@ function SettingRow({
   description?: string;
   children: React.ReactNode;
 }) {
+  useI18n();
+
   return (
     <div className="setting-row">
       <div>
@@ -557,6 +596,8 @@ function Toggle({
   onChange: (value: boolean) => void;
   label: string;
 }) {
+  useI18n();
+
   return (
     <button
       type="button"
@@ -571,6 +612,8 @@ function Toggle({
   );
 }
 function Accounts({ snapshot, call }: { snapshot: Snapshot; call: Call }) {
+  useI18n();
+
   const [error, setError] = useState(""),
     [busy, setBusy] = useState(""),
     [preview, setPreview] = useState<ImportPreview>(),
@@ -615,8 +658,8 @@ function Accounts({ snapshot, call }: { snapshot: Snapshot; call: Call }) {
     <>
       <div className="feature-title">
         <div>
-          <h1>账户与接力</h1>
-          <p>按顺序选择可用账户，让任务保持上下文继续执行。</p>
+          <h1>{t("账户与接力")}</h1>
+          <p>{t("按顺序选择可用账户，让任务保持上下文继续执行。")}</p>
         </div>
         <button
           className="solid-button"
@@ -628,30 +671,30 @@ function Accounts({ snapshot, call }: { snapshot: Snapshot; call: Call }) {
           }
         >
           <Plus size={15} />
-          添加账户
+          {t("添加账户")}
         </button>
       </div>
       <div className="settings-button-row">
         <button disabled={!!busy} onClick={() => void importAccounts(true)}>
           <Download size={14} />
-          导入本机登录
+          {t("导入本机登录")}
         </button>
         <button disabled={!!busy} onClick={() => void importAccounts(false)}>
           <Download size={14} />
-          导入账户备份
+          {t("导入账户备份")}
         </button>
       </div>
       {snapshot.login && (
         <div className="login-banner">
-          <strong>请在官方页面中完成登录</strong>
+          <strong>{t("请在官方页面中完成登录")}</strong>
           {snapshot.login.code && <code>{snapshot.login.code}</code>}
           <div>
             <button onClick={() => void call("account.openLogin")}>
-              打开登录页面
+              {t("打开登录页面")}
               <ExternalLink size={13} />
             </button>
             <button onClick={() => void call("account.cancelLogin")}>
-              取消
+              {t("取消")}
             </button>
           </div>
         </div>
@@ -687,19 +730,19 @@ function Accounts({ snapshot, call }: { snapshot: Snapshot; call: Call }) {
                 </div>
                 <span className={`account-state ${account.status}`}>
                   {inUse
-                    ? "使用中"
+                    ? t("使用中")
                     : account.status === "ready"
-                      ? "可用"
+                      ? t("可用")
                       : account.status === "limited"
-                        ? "额度受限"
+                        ? t("额度受限")
                         : account.status === "reauth"
-                          ? "需要登录"
-                          : "待核实"}
+                          ? t("需要登录")
+                          : t("待核实")}
                 </span>
               </div>
               {[
-                ["5 小时剩余", quota?.primary],
-                ["本周剩余", quota?.secondary],
+                [t("5 小时剩余"), quota?.primary],
+                [t("本周剩余"), quota?.secondary],
               ].map(([label, window]: any, i) => (
                 <div className="account-quota" key={i}>
                   <div>
@@ -707,7 +750,7 @@ function Accounts({ snapshot, call }: { snapshot: Snapshot; call: Call }) {
                     <strong>
                       {window
                         ? `${Math.max(0, 100 - window.usedPercent).toFixed(0)}%`
-                        : "未提供"}
+                        : t("未提供")}
                     </strong>
                   </div>
                   <div className="account-quota-track">
@@ -721,8 +764,8 @@ function Accounts({ snapshot, call }: { snapshot: Snapshot; call: Call }) {
                   </div>
                   <small>
                     {window?.resetsAt
-                      ? `${new Date(window.resetsAt).toLocaleString()} 重置`
-                      : "服务器未提供此额度窗口"}
+                      ? t("{p0} 重置", { p0: formatDate(window.resetsAt) })
+                      : t("服务器未提供此额度窗口")}
                   </small>
                 </div>
               ))}
@@ -744,24 +787,24 @@ function Accounts({ snapshot, call }: { snapshot: Snapshot; call: Call }) {
                       )
                     }
                   />
-                  参与接力
+                  {t("参与接力")}
                 </label>
                 <button
-                  title="上移账户"
+                  title={t("上移账户")}
                   disabled={!!busy || index === 0}
                   onClick={() => move(account.id, -1)}
                 >
                   <ArrowUp size={14} />
                 </button>
                 <button
-                  title="下移账户"
+                  title={t("下移账户")}
                   disabled={!!busy || index === snapshot.accounts.length - 1}
                   onClick={() => move(account.id, 1)}
                 >
                   <ArrowDown size={14} />
                 </button>
                 <button
-                  title="读取可用模型"
+                  title={t("读取可用模型")}
                   disabled={!!busy || inUse}
                   onClick={() =>
                     void run(account.id, async () => {
@@ -773,7 +816,7 @@ function Accounts({ snapshot, call }: { snapshot: Snapshot; call: Call }) {
                   <Code2 size={15} />
                 </button>
                 <button
-                  title="刷新账户额度"
+                  title={t("刷新账户额度")}
                   disabled={!!busy || inUse}
                   onClick={() =>
                     void run(account.id, () =>
@@ -788,7 +831,7 @@ function Accounts({ snapshot, call }: { snapshot: Snapshot; call: Call }) {
                   )}
                 </button>
                 <button
-                  title="移除账户"
+                  title={t("移除账户")}
                   disabled={!!busy || inUse}
                   onClick={() => setRemove(account)}
                 >
@@ -802,8 +845,8 @@ function Accounts({ snapshot, call }: { snapshot: Snapshot; call: Call }) {
       {!snapshot.accounts.length && (
         <div className="feature-empty">
           <UserRound size={30} strokeWidth={1} />
-          <h3>添加第一个账户</h3>
-          <p>通过官方页面登录，或导入这台电脑的 Codex 登录状态。</p>
+          <h3>{t("添加第一个账户")}</h3>
+          <p>{t("通过官方页面登录，或导入这台电脑的 Codex 登录状态。")}</p>
         </div>
       )}
       {preview && (
@@ -811,9 +854,9 @@ function Accounts({ snapshot, call }: { snapshot: Snapshot; call: Call }) {
           <section
             className="feature-detail"
             role="dialog"
-            aria-label="导入账户预览"
+            aria-label={t("导入账户预览")}
           >
-            <h2>确认要导入的账户</h2>
+            <h2>{t("确认要导入的账户")}</h2>
             <div className="account-import-preview">
               {preview.rows.map((row) => (
                 <label key={row.index}>
@@ -834,10 +877,10 @@ function Accounts({ snapshot, call }: { snapshot: Snapshot; call: Call }) {
                     <small>
                       {row.error ||
                         (row.action === "update"
-                          ? "更新已有账户"
+                          ? t("更新已有账户")
                           : row.action === "add"
-                            ? "添加账户"
-                            : "跳过")}
+                            ? t("添加账户")
+                            : t("跳过"))}
                     </small>
                   </span>
                 </label>
@@ -857,7 +900,8 @@ function Accounts({ snapshot, call }: { snapshot: Snapshot; call: Call }) {
                   })
                 }
               >
-                导入 {selected.length} 个账户
+                {t("导入")}
+                {selected.length} {t("个账户")}
               </button>
               <button
                 onClick={() => {
@@ -865,7 +909,7 @@ function Accounts({ snapshot, call }: { snapshot: Snapshot; call: Call }) {
                   setPreview(undefined);
                 }}
               >
-                取消
+                {t("取消")}
               </button>
             </div>
             {error && <p className="panel-error">{error}</p>}
@@ -877,10 +921,13 @@ function Accounts({ snapshot, call }: { snapshot: Snapshot; call: Call }) {
           <section
             className="feature-detail"
             role="dialog"
-            aria-label="移除账户"
+            aria-label={t("移除账户")}
           >
-            <h2>移除 {remove.label}？</h2>
-            <p>会删除此客户端保存的该账户登录凭据。</p>
+            <h2>
+              {t("移除")}
+              {remove.label}？
+            </h2>
+            <p>{t("会删除此客户端保存的该账户登录凭据。")}</p>
             <div className="settings-button-row">
               <button
                 className="solid-button"
@@ -892,9 +939,9 @@ function Accounts({ snapshot, call }: { snapshot: Snapshot; call: Call }) {
                   })
                 }
               >
-                确认移除
+                {t("确认移除")}
               </button>
-              <button onClick={() => setRemove(undefined)}>取消</button>
+              <button onClick={() => setRemove(undefined)}>{t("取消")}</button>
             </div>
           </section>
         </div>
@@ -904,17 +951,17 @@ function Accounts({ snapshot, call }: { snapshot: Snapshot; call: Call }) {
           <section
             className="feature-detail"
             role="dialog"
-            aria-label="账户可用模型"
+            aria-label={t("账户可用模型")}
           >
             <button
               className="detail-close"
-              aria-label="关闭模型列表"
+              aria-label={t("关闭模型列表")}
               onClick={() => setModels(undefined)}
             >
               <X size={18} />
             </button>
             <h2>{modelAccount}</h2>
-            <p>此账户实际可用的模型与思考强度。</p>
+            <p>{t("此账户实际可用的模型与思考强度。")}</p>
             {models.map((m) => (
               <SettingRow
                 key={m.id}

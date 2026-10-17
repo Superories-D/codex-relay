@@ -1,3 +1,4 @@
+import { t, useI18n } from "./i18n";
 import React, { useEffect, useRef } from "react";
 export function Dialog({
   title,
@@ -10,6 +11,8 @@ export function Dialog({
   onClose: () => void;
   children: React.ReactNode;
 }) {
+  useI18n();
+
   const ref = useRef<HTMLElement>(null);
   const close = useRef(onClose);
   close.current = onClose;
@@ -82,7 +85,7 @@ export function Dialog({
       >
         <button
           className="modal-close"
-          aria-label="关闭"
+          aria-label={t("关闭")}
           disabled={busy}
           onClick={onClose}
         >

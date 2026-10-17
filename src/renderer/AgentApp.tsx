@@ -1,3 +1,4 @@
+import { t, useI18n, setLanguage } from "./i18n";
 import React, { useEffect, useRef, useState } from "react";
 import type {
   Approval,
@@ -118,6 +119,8 @@ export function AgentApp({
   management: (tab: string) => React.ReactNode;
   approval: (a: Approval, respond: (v: unknown) => void) => React.ReactNode;
 }) {
+  useI18n();
+
   const [snapshot, setSnapshot] = useState<Snapshot>();
   const [selected, setSelected] = useState<string | undefined>(
     () => localStorage.getItem("relay.lastChat") || undefined,
@@ -233,6 +236,9 @@ export function AgentApp({
   useEffect(() => {
     refreshDesktop();
   }, []);
+  useEffect(() => {
+    setLanguage(desktop.preferences?.language || "zh-CN");
+  }, [desktop.preferences?.language]);
   useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
     const update = () => setSystemDark(media.matches);
@@ -470,13 +476,15 @@ export function AgentApp({
           setOperations(true);
         } else
           throw new Error(
-            "可用命令：/new /model 模型名 /status /permissions /review /resume /fork /archive /compact /skills /mcp /config /help。会话操作需先选择已有聊天。",
+            t(
+              "可用命令：/new /model 模型名 /status /permissions /review /resume /fork /archive /compact /skills /mcp /config /help。会话操作需先选择已有聊天。",
+            ),
           );
         setDrafts((d) => ({ ...d, [key]: "" }));
         return;
       }
     }
-    const text = review ? "审查当前项目中尚未提交的修改" : draft;
+    const text = review ? t("审查当前项目中尚未提交的修改") : draft;
     if (!job) {
       let dir = cwd;
       if (!dir) {
@@ -535,10 +543,10 @@ export function AgentApp({
     return (
       <div className="legacy-window">
         <div className="desktop-titlebar">
-          <span>Codex Relay · 高级管理</span>
+          <span>{t("Codex Relay · 高级管理")}</span>
         </div>
         <button className="agent-return" onClick={() => setManage("")}>
-          ← 返回对话
+          {t("← 返回对话")}
         </button>
         {management(manage.slice(9))}
       </div>
@@ -567,14 +575,14 @@ export function AgentApp({
     <div className="desktop-titlebar">
       <div className="desktop-history">
         <button
-          title="返回新聊天"
-          aria-label="返回新聊天"
+          title={t("返回新聊天")}
+          aria-label={t("返回新聊天")}
           onClick={() => select()}
         >
           <ArrowLeft size={17} />
         </button>
         <button
-          title="回到最近会话"
+          title={t("回到最近会话")}
           onClick={() => {
             const last = snapshot?.jobs[0];
             if (last) select(last);
@@ -583,8 +591,8 @@ export function AgentApp({
           <ArrowRight size={17} />
         </button>
         <button
-          title={sidebarHidden ? "展开侧栏" : "收起侧栏"}
-          aria-label="切换侧栏"
+          title={sidebarHidden ? t("展开侧栏") : t("收起侧栏")}
+          aria-label={t("切换侧栏")}
           onClick={() => setSidebarHidden(!sidebarHidden)}
         >
           {sidebarHidden ? (
@@ -595,15 +603,15 @@ export function AgentApp({
         </button>
       </div>
       <div className="desktop-menu">
-        <button onClick={() => void call("window.menu")}>文件</button>
-        <button onClick={() => void call("window.menu")}>编辑</button>
-        <button onClick={() => void call("window.menu")}>视图</button>
+        <button onClick={() => void call("window.menu")}>{t("文件")}</button>
+        <button onClick={() => void call("window.menu")}>{t("编辑")}</button>
+        <button onClick={() => void call("window.menu")}>{t("视图")}</button>
         <button
           onClick={() =>
             void call("link.open", "https://learn.chatgpt.com/docs/app")
           }
         >
-          帮助
+          {t("帮助")}
         </button>
       </div>
       <span className="desktop-window-title">Codex Relay</span>
@@ -633,38 +641,38 @@ export function AgentApp({
     >
       {chrome}
       <div className="agent-shell">
-        <nav className="agent-rail" aria-label="主导航">
+        <nav className="agent-rail" aria-label={t("主导航")}>
           <button
             className={`agent-logo ${screen === "chat" ? "active" : ""}`}
-            title="对话"
+            title={t("对话")}
             onClick={() => select()}
           >
             <Home size={23} strokeWidth={1.7} />
           </button>
           <button
-            title="导入历史对话"
-            aria-label="导入历史对话"
+            title={t("导入历史对话")}
+            aria-label={t("导入历史对话")}
             onClick={() => setHistory(true)}
           >
             <Download size={21} />
           </button>
           <button
-            title="账户轮换"
-            aria-label="账户轮换"
+            title={t("账户轮换")}
+            aria-label={t("账户轮换")}
             onClick={() => setManage("accounts")}
           >
             <Circle size={21} />
           </button>
           <button
-            title="任务队列"
-            aria-label="任务队列"
+            title={t("任务队列")}
+            aria-label={t("任务队列")}
             onClick={() => setManage("advanced:tasks")}
           >
             <ListTodo size={21} />
           </button>
           <button
-            aria-label="定时任务"
-            title="定时任务"
+            aria-label={t("定时任务")}
+            title={t("定时任务")}
             className={screen === "schedules" ? "active" : ""}
             onClick={() => {
               setManage("");
@@ -675,8 +683,8 @@ export function AgentApp({
             <CalendarClock size={21} />
           </button>
           <button
-            aria-label="插件与 Skills"
-            title="插件与 Skills"
+            aria-label={t("插件与 Skills")}
+            title={t("插件与 Skills")}
             className={screen === "plugins" ? "active" : ""}
             onClick={() => {
               setManage("");
@@ -687,15 +695,15 @@ export function AgentApp({
           </button>
           <div className="agent-rail-spacer" />
           <button
-            title="设置"
-            aria-label="设置"
+            title={t("设置")}
+            aria-label={t("设置")}
             onClick={() => setManage("settings")}
           >
             <Settings size={21} />
           </button>
           <span
             className={`agent-dot ${ready ? "online" : ""}`}
-            title={`${ready} 个可用账户`}
+            title={t("{p0} 个可用账户", { p0: ready })}
           />
         </nav>
         <aside className="agent-sidebar">
@@ -709,15 +717,15 @@ export function AgentApp({
             </button>
             <div>
               <button
-                title="运行与通知"
-                aria-label="运行与通知"
+                title={t("运行与通知")}
+                aria-label={t("运行与通知")}
                 onClick={() => setManage("notifications")}
               >
                 <Bell size={17} />
               </button>
               <button
-                title="搜索会话 · Ctrl+K"
-                aria-label="搜索全部会话"
+                title={t("搜索会话 · Ctrl+K")}
+                aria-label={t("搜索全部会话")}
                 onClick={() => setPalette(true)}
               >
                 <Search size={18} />
@@ -725,19 +733,19 @@ export function AgentApp({
             </div>
           </div>
           <button className="agent-new" onClick={() => select()}>
-            <SquarePen size={18} /> 新聊天
+            <SquarePen size={18} /> {t("新聊天")}
           </button>
           <input
             className="agent-search"
-            aria-label="搜索会话"
-            placeholder="搜索会话或项目…"
+            aria-label={t("搜索会话")}
+            placeholder={t("搜索会话或项目…")}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
           <div className="agent-section-label">
-            <span>{archived ? "归档" : "项目"}</span>
+            <span>{archived ? t("归档") : t("项目")}</span>
             <button
-              title="新建项目会话"
+              title={t("新建项目会话")}
               onClick={() => {
                 action(newProject);
               }}
@@ -748,7 +756,7 @@ export function AgentApp({
           <div className="agent-projects">
             {jobs.some((j) => j.pinned) && (
               <section className="pinned-chats">
-                <div className="agent-section-label">置顶</div>
+                <div className="agent-section-label">{t("置顶")}</div>
                 {jobs
                   .filter((j) => j.pinned)
                   .map((j) => (
@@ -769,10 +777,10 @@ export function AgentApp({
                   <Folder size={17} />{" "}
                   {desktop.projects?.find((p) => p.cwd === dir)?.name ||
                     basename(dir) ||
-                    "未关联项目"}
+                    t("未关联项目")}
                   <button
                     className="project-new-chat"
-                    title="在此项目新建聊天"
+                    title={t("在此项目新建聊天")}
                     onClick={(e) => {
                       e.preventDefault();
                       setCwd(dir);
@@ -805,8 +813,8 @@ export function AgentApp({
             {!groups.size && (
               <p className="agent-sidebar-empty">
                 {search
-                  ? "没有匹配的会话"
-                  : "创建一个聊天，或导入 CLI / Desktop 的历史。"}
+                  ? t("没有匹配的会话")
+                  : t("创建一个聊天，或导入 CLI / Desktop 的历史。")}
               </p>
             )}
           </div>
@@ -814,13 +822,14 @@ export function AgentApp({
             className="agent-sidebar-link"
             onClick={() => setHistory(true)}
           >
-            <Download size={15} /> 导入 CLI / Desktop 对话
+            <Download size={15} /> {t("导入 CLI / Desktop 对话")}
           </button>
           <button
             className="agent-sidebar-link"
             onClick={() => setArchived(!archived)}
           >
-            <Archive size={15} /> {archived ? "返回进行中的会话" : "已归档会话"}
+            <Archive size={15} />{" "}
+            {archived ? t("返回进行中的会话") : t("已归档会话")}
           </button>
           <div
             className="agent-account"
@@ -835,12 +844,12 @@ export function AgentApp({
               <Network size={17} />
             </span>
             <div>
-              自动账户接力
+              {t("自动账户接力")}
               <small>
                 <span
                   className={`account-status-dot ${ready ? "online" : ""}`}
                 />
-                {ready} 个账户可用
+                {ready} {t("个账户可用")}
               </small>
             </div>
           </div>
@@ -883,10 +892,10 @@ export function AgentApp({
             <header className="agent-header">
               <div>
                 <Folder size={17} />
-                <strong>{job?.title || "新聊天"}</strong>
+                <strong>{job?.title || t("新聊天")}</strong>
                 {job && (
                   <small className={running(job) ? "working" : ""}>
-                    {names[job.state]}
+                    {t(names[job.state])}
                   </small>
                 )}
               </div>
@@ -894,8 +903,8 @@ export function AgentApp({
                 {job && (
                   <>
                     <button
-                      title="重命名会话"
-                      aria-label="重命名会话"
+                      title={t("重命名会话")}
+                      aria-label={t("重命名会话")}
                       onClick={() => {
                         setTitle(job.title);
                         setRename(true);
@@ -904,14 +913,14 @@ export function AgentApp({
                       <Pencil size={16} />
                     </button>
                     <button
-                      title="CLI 能力"
+                      title={t("CLI 能力")}
                       onClick={() => setOperations(true)}
                     >
                       <Command size={16} />
                     </button>
                     <button
-                      aria-label="会话菜单"
-                      title="更多操作"
+                      aria-label={t("会话菜单")}
+                      title={t("更多操作")}
                       onClick={() => setThreadMenu(!threadMenu)}
                     >
                       <Ellipsis size={19} />
@@ -919,15 +928,15 @@ export function AgentApp({
                   </>
                 )}
                 <button
-                  title="会话信息"
-                  aria-label="会话信息"
+                  title={t("会话信息")}
+                  aria-label={t("会话信息")}
                   onClick={() => setInspector(!inspector)}
                 >
                   <PanelRight size={18} />
                 </button>
                 <button
-                  title="项目文件"
-                  aria-label="项目文件"
+                  title={t("项目文件")}
+                  aria-label={t("项目文件")}
                   onClick={() => {
                     setWorkspaceTab("files");
                     setPreviewFile("");
@@ -937,8 +946,8 @@ export function AgentApp({
                   <FolderOpen size={18} />
                 </button>
                 <button
-                  title="Git 更改"
-                  aria-label="Git 更改"
+                  title={t("Git 更改")}
+                  aria-label={t("Git 更改")}
                   onClick={() => {
                     setWorkspaceTab("changes");
                     setPreviewFile("");
@@ -948,8 +957,8 @@ export function AgentApp({
                   <GitCompareArrows size={18} />
                 </button>
                 <button
-                  title="集成终端 · Ctrl+J"
-                  aria-label="集成终端"
+                  title={t("集成终端 · Ctrl+J")}
+                  aria-label={t("集成终端")}
                   className={terminal ? "selected" : ""}
                   onClick={() => setTerminal(!terminal)}
                 >
@@ -960,7 +969,10 @@ export function AgentApp({
             {error && (
               <div className="agent-error" role="alert">
                 <span>{error}</span>
-                <button aria-label="关闭错误提示" onClick={() => setError("")}>
+                <button
+                  aria-label={t("关闭错误提示")}
+                  onClick={() => setError("")}
+                >
                   ×
                 </button>
               </div>
@@ -982,13 +994,15 @@ export function AgentApp({
                         <span className="agent-welcome-mark">
                           <Command size={38} strokeWidth={1.1} />
                         </span>
-                        <h1>今天想做些什么？</h1>
-                        <p>从一个问题、一个想法，或一行待完成的代码开始。</p>
+                        <h1>{t("今天想做些什么？")}</h1>
+                        <p>
+                          {t("从一个问题、一个想法，或一行待完成的代码开始。")}
+                        </p>
                         <div className="agent-suggestions">
                           {[
-                            "了解这个项目的结构",
-                            "查找并修复一个问题",
-                            "为项目补充测试",
+                            t("了解这个项目的结构"),
+                            t("查找并修复一个问题"),
+                            t("为项目补充测试"),
                           ].map((t) => (
                             <button
                               key={t}
@@ -1006,18 +1020,18 @@ export function AgentApp({
                           onClick={() => action(chooseProject)}
                         >
                           <Folder size={15} />{" "}
-                          {cwd ? basename(cwd) : "选择项目目录"}
+                          {cwd ? basename(cwd) : t("选择项目目录")}
                           <ChevronDown size={13} />
                         </button>
                       </div>
                     )}
                     {job?.historySource && (
                       <div className="agent-history-note">
-                        已从{" "}
+                        {t("已从")}{" "}
                         {job.historySource.source === "cli"
                           ? "CLI"
                           : job.historySource.source}{" "}
-                        导入独立副本
+                        {t("导入独立副本")}
                         {job.historySource.issue && (
                           <p>{job.historySource.issue}</p>
                         )}
@@ -1041,7 +1055,7 @@ export function AgentApp({
                           })
                         }
                       >
-                        加载更早的消息
+                        {t("加载更早的消息")}
                       </button>
                     )}
                     {allItems.map((item) => (
@@ -1064,8 +1078,8 @@ export function AgentApp({
                     {job && !allItems.length && (
                       <p className="agent-muted">
                         {running(job)
-                          ? "正在连接 CLI，准备会话…"
-                          : "暂无消息，发送一条消息开始。"}
+                          ? t("正在连接 CLI，准备会话…")
+                          : t("暂无消息，发送一条消息开始。")}
                       </p>
                     )}
                     {snapshot?.approvals
@@ -1085,13 +1099,14 @@ export function AgentApp({
                     {running(job) && (
                       <div className="agent-activity">
                         <span className="agent-pulse">●</span>{" "}
-                        {job?.stage || names[job!.state]}
+                        {t(job?.stage || names[job!.state])}
                       </div>
                     )}
                     {!!job?.queuedMessages?.length && (
                       <div className="agent-history-note">
-                        已排队 {job.queuedMessages.length}{" "}
-                        条消息，将在本轮结束后发送。
+                        {t("已排队")}
+                        {job.queuedMessages.length}{" "}
+                        {t("条消息，将在本轮结束后发送。")}
                       </div>
                     )}
                     <div ref={bottom} />
@@ -1103,20 +1118,20 @@ export function AgentApp({
                       <div
                         className="slash-commands"
                         role="listbox"
-                        aria-label="斜杠命令"
+                        aria-label={t("斜杠命令")}
                       >
                         {[
-                          ["/new", "新建聊天"],
-                          ["/model", "选择模型和思考强度"],
-                          ["/plan", "切换规划模式"],
-                          ["/agents", "查看子代理"],
-                          ["/review", "审查代码"],
-                          ["/skills", "浏览技能"],
-                          ["/plugins", "浏览插件"],
-                          ["/mcp", "MCP 服务器"],
-                          ["/terminal", "打开终端"],
-                          ["/compact", "压缩上下文"],
-                          ["/fork", "创建会话分支"],
+                          ["/new", t("新建聊天")],
+                          ["/model", t("选择模型和思考强度")],
+                          ["/plan", t("切换规划模式")],
+                          ["/agents", t("查看子代理")],
+                          ["/review", t("审查代码")],
+                          ["/skills", t("浏览技能")],
+                          ["/plugins", t("浏览插件")],
+                          ["/mcp", t("MCP 服务器")],
+                          ["/terminal", t("打开终端")],
+                          ["/compact", t("压缩上下文")],
+                          ["/fork", t("创建会话分支")],
                         ]
                           .filter(([command]) => command.startsWith(draft))
                           .map(([command, description]) => (
@@ -1155,13 +1170,13 @@ export function AgentApp({
                     )}
                     <textarea
                       ref={messageInput}
-                      aria-label="消息"
+                      aria-label={t("消息")}
                       placeholder={
                         job?.archived
-                          ? "取消归档后继续对话"
+                          ? t("取消归档后继续对话")
                           : job
-                            ? "继续提问，或补充任务要求…"
-                            : "描述你想完成的任务…"
+                            ? t("继续提问，或补充任务要求…")
+                            : t("描述你想完成的任务…")
                       }
                       value={draft}
                       disabled={!!job?.archived || !!job?.historySource?.issue}
@@ -1194,8 +1209,8 @@ export function AgentApp({
                     <div className="agent-composer-toolbar">
                       <div>
                         <button
-                          title="添加附件"
-                          aria-label="添加附件"
+                          title={t("添加附件")}
+                          aria-label={t("添加附件")}
                           onClick={() => setComposerMenu(!composerMenu)}
                         >
                           <Plus size={21} />
@@ -1204,13 +1219,13 @@ export function AgentApp({
                           <>
                             <button
                               className="popover-scrim"
-                              aria-label="关闭添加菜单"
+                              aria-label={t("关闭添加菜单")}
                               onClick={() => setComposerMenu(false)}
                             />
                             <div
                               className="composer-add-menu"
                               role="menu"
-                              aria-label="添加到聊天"
+                              aria-label={t("添加到聊天")}
                             >
                               <button
                                 role="menuitem"
@@ -1230,7 +1245,7 @@ export function AgentApp({
                                 }}
                               >
                                 <Paperclip size={17} />
-                                <span>文件和图片</span>
+                                <span>{t("文件和图片")}</span>
                               </button>
                               <button
                                 role="menuitem"
@@ -1240,7 +1255,7 @@ export function AgentApp({
                                 }}
                               >
                                 <ListTodo size={17} />
-                                <span>规划模式</span>
+                                <span>{t("规划模式")}</span>
                                 {planMode && <Check size={15} />}
                               </button>
                               <button
@@ -1251,7 +1266,7 @@ export function AgentApp({
                                 }}
                               >
                                 <Network size={17} />
-                                <span>启用子代理</span>
+                                <span>{t("启用子代理")}</span>
                                 {multiAgent && <Check size={15} />}
                               </button>
                               <hr />
@@ -1274,7 +1289,7 @@ export function AgentApp({
                                 }}
                               >
                                 <Blocks size={17} />
-                                <span>插件</span>
+                                <span>{t("插件")}</span>
                                 <ChevronRight size={14} />
                               </button>
                               <button
@@ -1285,7 +1300,7 @@ export function AgentApp({
                                 }}
                               >
                                 <Network size={17} />
-                                <span>MCP 服务器</span>
+                                <span>{t("MCP 服务器")}</span>
                                 <ChevronRight size={14} />
                               </button>
                               {job && (
@@ -1300,7 +1315,7 @@ export function AgentApp({
                                     }}
                                   >
                                     <GitCompareArrows size={17} />
-                                    <span>审查代码</span>
+                                    <span>{t("审查代码")}</span>
                                   </button>
                                 </>
                               )}
@@ -1309,26 +1324,30 @@ export function AgentApp({
                         )}
                         <ShieldCheck size={15} className="composer-shield" />
                         <select
-                          aria-label="执行权限"
-                          title="执行权限"
+                          aria-label={t("执行权限")}
+                          title={t("执行权限")}
                           value={sandbox}
                           disabled={running(job)}
                           onChange={(e) =>
                             setSandbox(e.target.value as Job["sandbox"])
                           }
                         >
-                          <option value="workspaceWrite">请求审批</option>
-                          <option value="readOnly">只读</option>
-                          <option value="dangerFullAccess">完全访问</option>
+                          <option value="workspaceWrite">
+                            {t("请求审批")}
+                          </option>
+                          <option value="readOnly">{t("只读")}</option>
+                          <option value="dangerFullAccess">
+                            {t("完全访问")}
+                          </option>
                         </select>
                         {planMode && (
                           <button
                             className="composer-mode-badge"
-                            title="退出规划模式"
+                            title={t("退出规划模式")}
                             onClick={() => setPlanMode(false)}
                           >
                             <ListTodo size={13} />
-                            规划
+                            {t("规划")}
                             <X size={11} />
                           </button>
                         )}
@@ -1353,8 +1372,8 @@ export function AgentApp({
                         {running(job) && (
                           <button
                             className="agent-stop"
-                            title="停止本轮"
-                            aria-label="停止本轮"
+                            title={t("停止本轮")}
+                            aria-label={t("停止本轮")}
                             disabled={pending}
                             onClick={() =>
                               action(() =>
@@ -1370,8 +1389,8 @@ export function AgentApp({
                         )}
                         <button
                           className="agent-send"
-                          title={running(job) ? "排队发送" : "发送"}
-                          aria-label={running(job) ? "排队发送" : "发送"}
+                          title={running(job) ? t("排队发送") : t("发送")}
+                          aria-label={running(job) ? t("排队发送") : t("发送")}
                           disabled={
                             pending ||
                             !draft.trim() ||
@@ -1404,7 +1423,7 @@ export function AgentApp({
                     <div className="composer-environment">
                       <Folder size={13} />
                       <select
-                        aria-label="工作环境"
+                        aria-label={t("工作环境")}
                         value={job ? "local" : environment}
                         disabled={!!job}
                         onChange={(e) => {
@@ -1415,18 +1434,18 @@ export function AgentApp({
                               .catch(() => {});
                         }}
                       >
-                        <option value="local">本地</option>
+                        <option value="local">{t("本地")}</option>
                         <option value="worktree">Worktree</option>
                       </select>
                       <span className="caption-divider" />
                       <GitBranch size={13} />
                       {!job && environment === "worktree" ? (
                         <select
-                          aria-label="Worktree 起始分支"
+                          aria-label={t("Worktree 起始分支")}
                           value={branch}
                           onChange={(e) => setBranch(e.target.value)}
                         >
-                          <option value="HEAD">当前分支</option>
+                          <option value="HEAD">{t("当前分支")}</option>
                           {branchList.map((value) => (
                             <option value={value} key={value}>
                               {value}
@@ -1438,7 +1457,7 @@ export function AgentApp({
                           title={currentCwd}
                           onClick={() => action(chooseProject)}
                         >
-                          {currentCwd ? basename(currentCwd) : "选择项目"}
+                          {currentCwd ? basename(currentCwd) : t("选择项目")}
                           <ChevronDown size={11} />
                         </button>
                       )}
@@ -1448,10 +1467,10 @@ export function AgentApp({
                         disabled={pending || job?.state !== "running"}
                         onClick={() => action(() => send("steer"))}
                       >
-                        立即补充到当前轮次 ↗
+                        {t("立即补充到当前轮次 ↗")}
                       </button>
                     ) : (
-                      <span>Enter 发送 · Shift + Enter 换行</span>
+                      <span>{t("Enter 发送 · Shift + Enter 换行")}</span>
                     )}
                   </div>
                 </div>
@@ -1486,16 +1505,17 @@ export function AgentApp({
           <>
             <button
               className="popover-scrim"
-              aria-label="关闭会话菜单"
+              aria-label={t("关闭会话菜单")}
               onClick={() => setThreadMenu(false)}
             />
-            <div className="thread-menu" role="menu" aria-label="会话操作">
+            <div className="thread-menu" role="menu" aria-label={t("会话操作")}>
               {job ? (
                 <>
                   <div className="thread-menu-info">
                     <strong>{job.title}</strong>
                     <small>
-                      {names[job.state]} · {account?.label || "自动账户接力"}
+                      {t(names[job.state])} ·{" "}
+                      {account?.label || t("自动账户接力")}
                     </small>
                   </div>
                   <button
@@ -1512,7 +1532,7 @@ export function AgentApp({
                     }}
                   >
                     <Pin size={15} />
-                    {job.pinned ? "取消置顶" : "置顶会话"}
+                    {job.pinned ? t("取消置顶") : t("置顶会话")}
                   </button>
                   <button
                     role="menuitem"
@@ -1525,7 +1545,7 @@ export function AgentApp({
                     }}
                   >
                     <GitBranch size={15} />
-                    创建会话分支
+                    {t("创建会话分支")}
                   </button>
                   <button
                     role="menuitem"
@@ -1535,7 +1555,7 @@ export function AgentApp({
                     }}
                   >
                     <Download size={15} />
-                    导出 Markdown
+                    {t("导出 Markdown")}
                   </button>
                   <button
                     role="menuitem"
@@ -1551,7 +1571,7 @@ export function AgentApp({
                     }}
                   >
                     <Archive size={15} />
-                    {job.archived ? "取消归档" : "归档会话"}
+                    {job.archived ? t("取消归档") : t("归档会话")}
                   </button>
                   {["paused", "needs_attention"].includes(job.state) && (
                     <button
@@ -1564,7 +1584,7 @@ export function AgentApp({
                       }}
                     >
                       <Undo2 size={15} />
-                      继续未完成任务
+                      {t("继续未完成任务")}
                     </button>
                   )}
                   <hr />
@@ -1576,7 +1596,7 @@ export function AgentApp({
                     }}
                   >
                     <FolderOpen size={15} />
-                    打开项目目录
+                    {t("打开项目目录")}
                   </button>
                   <button
                     role="menuitem"
@@ -1587,10 +1607,10 @@ export function AgentApp({
                     }}
                   >
                     <SlidersHorizontal size={15} />
-                    高级 CLI 操作
+                    {t("高级 CLI 操作")}
                   </button>
                   <small className="thread-menu-id">
-                    {job.threadId || "等待创建会话"}
+                    {job.threadId || t("等待创建会话")}
                   </small>
                 </>
               ) : (
@@ -1603,7 +1623,7 @@ export function AgentApp({
                     }}
                   >
                     <Blocks size={15} />
-                    插件与 Skills
+                    {t("插件与 Skills")}
                   </button>
                   <button
                     role="menuitem"
@@ -1613,7 +1633,7 @@ export function AgentApp({
                     }}
                   >
                     <CalendarClock size={15} />
-                    定时任务
+                    {t("定时任务")}
                   </button>
                   <button
                     role="menuitem"
@@ -1623,7 +1643,7 @@ export function AgentApp({
                     }}
                   >
                     <Settings size={15} />
-                    设置
+                    {t("设置")}
                   </button>
                 </>
               )}
@@ -1664,7 +1684,7 @@ export function AgentApp({
           />
         )}
         {rename && job && (
-          <Dialog title="重命名会话" onClose={() => setRename(false)}>
+          <Dialog title={t("重命名会话")} onClose={() => setRename(false)}>
             <form
               onSubmit={(e) => {
                 e.preventDefault();
@@ -1675,7 +1695,7 @@ export function AgentApp({
               }}
             >
               <label>
-                会话名称
+                {t("会话名称")}
                 <input
                   autoFocus
                   value={title}
@@ -1684,7 +1704,7 @@ export function AgentApp({
                 />
               </label>
               <button className="primary" disabled={pending || !title.trim()}>
-                保存
+                {t("保存")}
               </button>
             </form>
           </Dialog>
@@ -1705,6 +1725,8 @@ function SearchPalette({
   close: () => void;
   newChat: () => void;
 }) {
+  useI18n();
+
   const [query, setQuery] = useState(""),
     [index, setIndex] = useState(0);
   const results = jobs
@@ -1726,14 +1748,14 @@ function SearchPalette({
       <section
         className="search-palette"
         role="dialog"
-        aria-label="搜索全部聊天"
+        aria-label={t("搜索全部聊天")}
       >
         <div className="search-palette-input">
           <Search size={19} />
           <input
             autoFocus
-            aria-label="查找聊天或项目"
-            placeholder="搜索聊天和项目…"
+            aria-label={t("查找聊天或项目")}
+            placeholder={t("搜索聊天和项目…")}
             value={query}
             onChange={(e) => {
               setQuery(e.target.value);
@@ -1757,7 +1779,11 @@ function SearchPalette({
           <kbd>Esc</kbd>
         </div>
         <div className="search-palette-results">
-          <span>{query ? `${results.length} 个匹配的聊天` : "最近的聊天"}</span>
+          <span>
+            {query
+              ? t("{p0} 个匹配的聊天", { p0: results.length })
+              : t("最近的聊天")}
+          </span>
           {results.map((j, i) => (
             <button
               className={i === index ? "selected" : ""}
@@ -1769,28 +1795,30 @@ function SearchPalette({
               <span>
                 <strong>{j.title}</strong>
                 <small>
-                  {basename(j.cwd)} · {names[j.state]}
-                  {j.archived ? " · 已归档" : ""}
+                  {basename(j.cwd)} · {t(names[j.state])}
+                  {j.archived ? t(" · 已归档") : ""}
                 </small>
               </span>
               {j.pinned && <Pin size={13} />}
               <ChevronRight size={15} />
             </button>
           ))}
-          {!results.length && <p>没有匹配的聊天</p>}
+          {!results.length && <p>{t("没有匹配的聊天")}</p>}
         </div>
         <footer>
           <button onClick={newChat}>
             <SquarePen size={15} />
-            新聊天
+            {t("新聊天")}
           </button>
-          <span>↑↓ 选择 · Enter 打开</span>
+          <span>{t("↑↓ 选择 · Enter 打开")}</span>
         </footer>
       </section>
     </div>
   );
 }
 function Message({ item }: { item: ChatItem }) {
+  useI18n();
+
   if (item.role === "tool")
     return (
       <details className="agent-tool">
@@ -1799,7 +1827,7 @@ function Message({ item }: { item: ChatItem }) {
             {item.kind === "diff" || item.kind === "fileChange" ? "✎" : "⌘"}
           </span>
           <span>{item.text.slice(0, 150)}</span>
-          <small>{item.status === "running" ? "执行中" : ""}</small>
+          <small>{item.status === "running" ? t("执行中") : ""}</small>
         </summary>
         <pre>{item.detail || item.text}</pre>
       </details>
@@ -1808,10 +1836,10 @@ function Message({ item }: { item: ChatItem }) {
     <article className={`agent-message ${item.role}`}>
       <small>
         {item.role === "user"
-          ? "你"
+          ? t("你")
           : item.role === "assistant"
             ? "Codex"
-            : "系统"}
+            : t("系统")}
       </small>
       <MessageText text={item.text} />
       {item.detail && (
@@ -1821,9 +1849,9 @@ function Message({ item }: { item: ChatItem }) {
         <button
           className="agent-copy"
           onClick={() => void navigator.clipboard.writeText(item.text)}
-          title="复制回答"
+          title={t("复制回答")}
         >
-          ⧉ 复制
+          {t("⧉ 复制")}
         </button>
       )}
     </article>
@@ -1831,6 +1859,8 @@ function Message({ item }: { item: ChatItem }) {
 }
 // Text-only Markdown: never execute raw HTML or renderer-supplied URLs.
 function MessageText({ text }: { text: string }) {
+  useI18n();
+
   return (
     <div className="agent-markdown">
       {text.split(/(```[\s\S]*?(?:```|$))/g).map((block, i) =>
@@ -1883,6 +1913,8 @@ function HistoryDialog({
   close: () => void;
   imported: (id: string) => void;
 }) {
+  useI18n();
+
   const [entries, setEntries] = useState<HistoryEntry[]>([]),
     [warnings, setWarnings] = useState<string[]>([]),
     [roots, setRoots] = useState<string[]>([]);
@@ -1915,7 +1947,11 @@ function HistoryDialog({
     try {
       const r = await call("history.import", all ? {} : { ids: [...checked] });
       setReport(
-        `已导入 ${r.imported.length} 个，已存在 ${r.skipped.length} 个，失败 ${r.errors.length} 个。`,
+        t("已导入 {p0} 个，已存在 {p1} 个，失败 {p2} 个。", {
+          p0: r.imported.length,
+          p1: r.skipped.length,
+          p2: r.errors.length,
+        }),
       );
       setWarnings(r.errors);
       if (r.imported[0]) imported(r.imported[0]);
@@ -1940,18 +1976,22 @@ function HistoryDialog({
       .includes(filter.toLowerCase()),
   );
   return (
-    <Dialog title="导入 CLI / Desktop 对话" onClose={busy ? () => {} : close}>
+    <Dialog
+      title={t("导入 CLI / Desktop 对话")}
+      onClose={busy ? () => {} : close}
+    >
       <div className="agent-import">
         <p>
-          扫描本机 Codex
-          目录中的全部会话与归档。历史保存为独立副本；原客户端会话保持原样。
+          {t(
+            "扫描本机 Codex 目录中的全部会话与归档。历史保存为独立副本；原客户端会话保持原样。",
+          )}
         </p>
         <small className="agent-path">
-          {roots.join(" · ") || "默认：CODEX_HOME 和用户 .codex 目录"}
+          {roots.join(" · ") || t("默认：CODEX_HOME 和用户 .codex 目录")}
         </small>
         <div className="agent-import-toolbar">
           <button disabled={busy} onClick={() => void scan()}>
-            扫描默认目录
+            {t("扫描默认目录")}
           </button>
           <button
             disabled={busy}
@@ -1961,11 +2001,11 @@ function HistoryDialog({
               )
             }
           >
-            添加 Codex 目录
+            {t("添加 Codex 目录")}
           </button>
           <input
-            aria-label="搜索导入历史"
-            placeholder="搜索标题、项目、来源…"
+            aria-label={t("搜索导入历史")}
+            placeholder={t("搜索标题、项目、来源…")}
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
           />
@@ -1988,8 +2028,8 @@ function HistoryDialog({
               <span>
                 <strong>{e.title}</strong>
                 <small>
-                  {basename(e.cwd)} · {e.source} {e.archived ? "· 归档" : ""}{" "}
-                  {e.imported ? "· 已导入" : ""}
+                  {basename(e.cwd)} · {e.source} {e.archived ? t("· 归档") : ""}{" "}
+                  {e.imported ? t("· 已导入") : ""}
                 </small>
                 {e.issue && (
                   <small className="agent-import-warning">{e.issue}</small>
@@ -2000,8 +2040,10 @@ function HistoryDialog({
           {!entries.length && (
             <p>
               {busy
-                ? "正在扫描本地历史…"
-                : "未发现会话。可添加其他 CLI / Desktop 使用的 Codex 数据目录。"}
+                ? t("正在扫描本地历史…")
+                : t(
+                    "未发现会话。可添加其他 CLI / Desktop 使用的 Codex 数据目录。",
+                  )}
             </p>
           )}
         </div>
@@ -2009,24 +2051,30 @@ function HistoryDialog({
         {report && <p role="status">{report}</p>}
         {warnings.length > 0 && (
           <details>
-            <summary>{warnings.length} 条导入提示</summary>
+            <summary>
+              {warnings.length} {t("条导入提示")}
+            </summary>
             <pre>{warnings.join("\n")}</pre>
           </details>
         )}
         <div className="agent-import-footer">
-          <span>找到 {entries.length} 个会话</span>
+          <span>
+            {t("找到")}
+            {entries.length} {t("个会话")}
+          </span>
           <button
             disabled={busy || !checked.size}
             onClick={() => void runImport(false)}
           >
-            导入选中 ({checked.size})
+            {t("导入选中 (")}
+            {checked.size})
           </button>
           <button
             className="primary"
             disabled={busy || !entries.length}
             onClick={() => void runImport(true)}
           >
-            {busy ? "处理中…" : "导入全部"}
+            {busy ? t("处理中…") : t("导入全部")}
           </button>
         </div>
       </div>
@@ -2044,6 +2092,8 @@ function Operations({
   call: (n: string, a?: unknown) => Promise<any>;
   close: () => void;
 }) {
+  useI18n();
+
   const [method, setMethod] = useState<string>(initialMethod),
     [params, setParams] = useState(
       JSON.stringify(
@@ -2055,14 +2105,15 @@ function Operations({
     [result, setResult] = useState(""),
     [busy, setBusy] = useState(false);
   return (
-    <Dialog title="CLI 能力与配置" onClose={busy ? () => {} : close}>
+    <Dialog title={t("CLI 能力与配置")} onClose={busy ? () => {} : close}>
       <div className="agent-operations">
         <p>
-          直接调用当前 CLI 的 app-server 协议。配置保存在此会话的隔离目录。不同
-          CLI 版本可用的操作和参数会有差异。
+          {t(
+            "直接调用当前 CLI 的 app-server 协议。配置保存在此会话的隔离目录。不同 CLI 版本可用的操作和参数会有差异。",
+          )}
         </p>
         <label>
-          操作
+          {t("操作")}
           <select
             value={method}
             onChange={(e) => {
@@ -2078,13 +2129,13 @@ function Operations({
           >
             {capabilities.map((c) => (
               <option key={c.method} value={c.method}>
-                {c.label} · {c.method}
+                {t(c.label)} · {c.method}
               </option>
             ))}
           </select>
         </label>
         <label>
-          参数（JSON）
+          {t("参数（JSON）")}
           <textarea
             spellCheck={false}
             value={params}
@@ -2111,9 +2162,9 @@ function Operations({
               .finally(() => setBusy(false));
           }}
         >
-          {busy ? "执行中…" : "执行操作"}
+          {busy ? t("执行中…") : t("执行操作")}
         </button>
-        {result && <pre aria-label="CLI 操作结果">{result}</pre>}
+        {result && <pre aria-label={t("CLI 操作结果")}>{result}</pre>}
       </div>
     </Dialog>
   );

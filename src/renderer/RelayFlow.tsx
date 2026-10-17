@@ -1,6 +1,9 @@
+import { t, useI18n } from "./i18n";
 import React from "react";
 import type { Job } from "../shared/types";
 export function RelayFlow({ job }: { job: Job }) {
+  useI18n();
+
   const stage = job.stage ?? "";
   const current =
     job.state === "completed"
@@ -19,15 +22,15 @@ export function RelayFlow({ job }: { job: Job }) {
                 : 1
               : -1;
   const labels = [
-    "准备会话",
-    "执行任务",
-    "确认停止",
-    "轮换 / 等待",
-    "接续原会话",
-    "完成检查",
+    t("准备会话"),
+    t("执行任务"),
+    t("确认停止"),
+    t("轮换 / 等待"),
+    t("接续原会话"),
+    t("完成检查"),
   ];
   return (
-    <ol className="relay-flow" aria-label="任务接力流程">
+    <ol className="relay-flow" aria-label={t("任务接力流程")}>
       {labels.map((label, i) => (
         <li
           key={label}

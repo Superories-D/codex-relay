@@ -1,3 +1,4 @@
+import { t, useI18n } from "./i18n";
 import React, { useEffect, useState } from "react";
 import {
   ArrowLeft,
@@ -42,6 +43,8 @@ function Tree({
   select: (path: string) => void;
   level?: number;
 }) {
+  useI18n();
+
   const [entries, setEntries] = useState<Entry[]>([]),
     [opened, setOpened] = useState<string[]>([]),
     [error, setError] = useState("");
@@ -108,7 +111,7 @@ function Tree({
         </React.Fragment>
       ))}
       {!entries.length && !error && (
-        <p className="file-tree-empty">此目录为空</p>
+        <p className="file-tree-empty">{t("此目录为空")}</p>
       )}
     </div>
   );
@@ -136,18 +139,20 @@ export function Workbench({
   setFile: (v: string) => void;
   setDraft: (v: string) => void;
 }) {
+  useI18n();
+
   return (
     <aside
       className={`workbench ${file ? "with-preview" : ""}`}
-      aria-label="工作面板"
+      aria-label={t("工作面板")}
     >
       <header className="workbench-tabs">
         {(
           [
-            ["summary", "摘要", FileText],
-            ["files", "文件", Folder],
-            ["changes", "更改", GitCompareArrows],
-            ["agents", "代理", Network],
+            ["summary", t("摘要"), FileText],
+            ["files", t("文件"), Folder],
+            ["changes", t("更改"), GitCompareArrows],
+            ["agents", t("代理"), Network],
           ] as const
         ).map(([key, label, Icon]) => (
           <button
@@ -167,7 +172,7 @@ export function Workbench({
         ))}
         <button
           className="workbench-close"
-          aria-label="关闭工作面板"
+          aria-label={t("关闭工作面板")}
           onClick={close}
         >
           <X size={16} />
@@ -189,7 +194,7 @@ export function Workbench({
             <Tree cwd={cwd} call={call} select={setFile} />
           </div>
         ) : (
-          <PanelEmpty text="选择一个项目来浏览文件" />
+          <PanelEmpty text={t("选择一个项目来浏览文件")} />
         )
       ) : tab === "changes" ? (
         <Changes cwd={cwd} call={call} openFile={setFile} comment={setDraft} />
@@ -202,6 +207,8 @@ export function Workbench({
   );
 }
 function PanelEmpty({ text }: { text: string }) {
+  useI18n();
+
   return (
     <div className="panel-empty">
       <FileText size={28} strokeWidth={1} />
@@ -220,6 +227,8 @@ function Summary({
   openFile: (path: string) => void;
   setTab: (tab: WorkbenchTab) => void;
 }) {
+  useI18n();
+
   const changes = [
     ...new Set(
       items.flatMap((i) =>
@@ -241,8 +250,8 @@ function Summary({
     <div className="summary-scroll">
       <section className="summary-card">
         <div className="summary-card-title">
-          <span>输出内容</span>
-          <button title="浏览项目文件" onClick={() => setTab("files")}>
+          <span>{t("输出内容")}</span>
+          <button title={t("浏览项目文件")} onClick={() => setTab("files")}>
             <Plus size={17} />
           </button>
         </div>
@@ -258,12 +267,12 @@ function Summary({
             </button>
           ))
         ) : (
-          <p>创建文件或站点</p>
+          <p>{t("创建文件或站点")}</p>
         )}
         <hr />
         <div className="summary-card-title">
-          <span>来源</span>
-          <button title="浏览来源文件" onClick={() => setTab("files")}>
+          <span>{t("来源")}</span>
+          <button title={t("浏览来源文件")} onClick={() => setTab("files")}>
             <Plus size={17} />
           </button>
         </div>
@@ -279,31 +288,33 @@ function Summary({
             </button>
           ))
         ) : (
-          <p>添加文件作为任务上下文</p>
+          <p>{t("添加文件作为任务上下文")}</p>
         )}
         {(changes.length > 0 || attachments.length > 0) && (
           <button className="summary-all" onClick={() => setTab("files")}>
             <GitBranch size={15} />
-            查看全部
+            {t("查看全部")}
           </button>
         )}
       </section>
       {plan && (
         <section className="summary-card summary-plan">
-          <div className="summary-card-title">执行计划</div>
+          <div className="summary-card-title">{t("执行计划")}</div>
           <MarkdownText text={plan.text + "\n" + (plan.detail || "")} />
         </section>
       )}
       {!!job?.agents?.length && (
         <button className="summary-agent-link" onClick={() => setTab("agents")}>
           <Network size={16} />
-          <span>{job.agents.length} 个子代理</span>
+          <span>
+            {job.agents.length} {t("个子代理")}
+          </span>
           <ChevronRight size={14} />
         </button>
       )}
       {job?.tokenUsage && (
         <div className="usage-card">
-          <span>上下文使用</span>
+          <span>{t("上下文使用")}</span>
           <strong>{job.tokenUsage.totalTokens.toLocaleString()} tokens</strong>
           {job.tokenUsage.modelContextWindow && (
             <div className="usage-track">
@@ -315,7 +326,8 @@ function Summary({
             </div>
           )}
           <small>
-            输入 {job.tokenUsage.inputTokens.toLocaleString()} · 输出{" "}
+            {t("输入")}
+            {job.tokenUsage.inputTokens.toLocaleString()} {t("· 输出")}{" "}
             {job.tokenUsage.outputTokens.toLocaleString()}
           </small>
         </div>
@@ -334,6 +346,8 @@ function FilePreview({
   call: Call;
   close: () => void;
 }) {
+  useI18n();
+
   const [data, setData] = useState<any>(),
     [text, setText] = useState(""),
     [edit, setEdit] = useState(false),
@@ -361,20 +375,20 @@ function FilePreview({
   return (
     <div className="file-preview">
       <header>
-        <button aria-label="返回文件列表" onClick={close}>
+        <button aria-label={t("返回文件列表")} onClick={close}>
           <ArrowLeft size={15} />
         </button>
         <span title={file}>{file.split(/[\\/]/).at(-1)}</span>
         {data?.kind === "text" && (
           <button
-            title={edit ? "预览文件" : "编辑文件"}
+            title={edit ? t("预览文件") : t("编辑文件")}
             onClick={() => setEdit(!edit)}
           >
             <Pencil size={14} />
           </button>
         )}
         <button
-          title="在默认应用中打开"
+          title={t("在默认应用中打开")}
           onClick={() =>
             void call("workspace.open", { cwd, path: file }).catch((e) =>
               setError(String(e)),
@@ -385,7 +399,7 @@ function FilePreview({
         </button>
         {edit && (
           <button
-            title="保存文件"
+            title={t("保存文件")}
             disabled={busy || text === data.content}
             onClick={() => {
               setBusy(true);
@@ -411,7 +425,7 @@ function FilePreview({
       ) : !data ? (
         <div className="panel-loading">
           <LoaderCircle className="spin" size={20} />
-          读取文件…
+          {t("读取文件…")}
         </div>
       ) : data.kind === "image" ? (
         <div className="image-preview">
@@ -420,19 +434,22 @@ function FilePreview({
       ) : data.kind === "pdf" ? (
         <div className="panel-empty">
           <FileText size={36} />
-          <p>PDF 文档 · {(data.size / 1024).toFixed(0)} KB</p>
+          <p>
+            {t("PDF 文档 ·")}
+            {(data.size / 1024).toFixed(0)} KB
+          </p>
           <button
             onClick={() => void call("workspace.open", { cwd, path: file })}
           >
-            在 PDF 阅读器中打开
+            {t("在 PDF 阅读器中打开")}
           </button>
         </div>
       ) : data.kind === "binary" ? (
-        <PanelEmpty text="此文件使用二进制格式，请在默认应用中打开" />
+        <PanelEmpty text={t("此文件使用二进制格式，请在默认应用中打开")} />
       ) : edit ? (
         <textarea
           className="file-editor"
-          aria-label="编辑文件内容"
+          aria-label={t("编辑文件内容")}
           spellCheck={false}
           value={text}
           onChange={(e) => setText(e.target.value)}
@@ -455,7 +472,13 @@ function FilePreview({
       )}
       <footer>
         {data &&
-          `${data.kind === "text" ? `${text.split("\n").length} 行 · UTF-8 · ` : ""}${(data.size / 1024).toFixed(1)} KB`}
+          t("{p0}{p1} KB", {
+            p0:
+              data.kind === "text"
+                ? `${text.split("\n").length} 行 · UTF-8 · `
+                : "",
+            p1: (data.size / 1024).toFixed(1),
+          })}
       </footer>
     </div>
   );
@@ -471,6 +494,8 @@ function Changes({
   openFile: (path: string) => void;
   comment: (text: string) => void;
 }) {
+  useI18n();
+
   const [state, setState] = useState<any>(),
     [selected, setSelected] = useState(""),
     [diff, setDiff] = useState(""),
@@ -531,16 +556,16 @@ function Changes({
       setBusy(false);
     }
   };
-  if (!cwd) return <PanelEmpty text="选择项目以查看 Git 更改" />;
+  if (!cwd) return <PanelEmpty text={t("选择项目以查看 Git 更改")} />;
   return (
     <div className="changes-pane">
       <div className="changes-heading">
         <GitBranch size={15} />
         <span>{state?.branch || "Git"}</span>
-        <button title="刷新变更" onClick={refresh}>
+        <button title={t("刷新变更")} onClick={refresh}>
           <RefreshCw size={14} />
         </button>
-        <button title="提交更改" onClick={() => setCommit(!commit)}>
+        <button title={t("提交更改")} onClick={() => setCommit(!commit)}>
           <GitCommitHorizontal size={16} />
         </button>
       </div>
@@ -550,14 +575,14 @@ function Changes({
         </p>
       )}
       {state?.error ? (
-        <PanelEmpty text="当前项目尚未初始化 Git 仓库" />
+        <PanelEmpty text={t("当前项目尚未初始化 Git 仓库")} />
       ) : (
         <>
           {commit && (
             <div className="commit-form">
               <textarea
-                aria-label="提交信息"
-                placeholder="描述这次更改…"
+                aria-label={t("提交信息")}
+                placeholder={t("描述这次更改…")}
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
               />
@@ -567,11 +592,11 @@ function Changes({
                   onClick={() => void action("commit")}
                 >
                   <Check size={14} />
-                  提交已暂存更改
+                  {t("提交已暂存更改")}
                 </button>
                 <button disabled={busy} onClick={() => void action("push")}>
                   <Upload size={14} />
-                  推送
+                  {t("推送")}
                 </button>
               </div>
             </div>
@@ -594,13 +619,16 @@ function Changes({
               </button>
             ))}
             {state && !state.files.length && (
-              <PanelEmpty text="工作区没有未提交的更改" />
+              <PanelEmpty text={t("工作区没有未提交的更改")} />
             )}
           </div>
           {selected && (
             <>
               <div className="diff-toolbar">
-                <button title="打开文件" onClick={() => openFile(selected)}>
+                <button
+                  title={t("打开文件")}
+                  onClick={() => openFile(selected)}
+                >
                   {selected.split("/").at(-1)}
                 </button>
                 <label>
@@ -609,17 +637,17 @@ function Changes({
                     checked={staged}
                     onChange={(e) => setStaged(e.target.checked)}
                   />
-                  已暂存
+                  {t("已暂存")}
                 </label>
                 <button
-                  title="暂存文件"
+                  title={t("暂存文件")}
                   disabled={busy}
                   onClick={() => void action(staged ? "unstage" : "stage")}
                 >
                   <Plus size={14} />
                 </button>
                 <button
-                  title="还原文件"
+                  title={t("还原文件")}
                   disabled={busy}
                   onClick={() => setConfirmRestore(true)}
                 >
@@ -628,11 +656,13 @@ function Changes({
               </div>
               {confirmRestore && (
                 <div className="restore-confirm">
-                  <p>将丢弃此文件尚未暂存的更改。</p>
+                  <p>{t("将丢弃此文件尚未暂存的更改。")}</p>
                   <button onClick={() => void action("restore")}>
-                    确认还原此文件
+                    {t("确认还原此文件")}
                   </button>
-                  <button onClick={() => setConfirmRestore(false)}>取消</button>
+                  <button onClick={() => setConfirmRestore(false)}>
+                    {t("取消")}
+                  </button>
                 </div>
               )}
               <div className="diff-lines">
@@ -650,10 +680,13 @@ function Changes({
                     }
                   >
                     <button
-                      title="把这一行加入审查意见"
+                      title={t("把这一行加入审查意见")}
                       onClick={() =>
                         comment(
-                          `请检查 ${selected} 的以下变更，并根据我的意见修改：\n\n\`\`\`diff\n${line}\n\`\`\`\n\n意见：`,
+                          t(
+                            "请检查 {p0} 的以下变更，并根据我的意见修改：\n\n```diff\n{p1}\n```\n\n意见：",
+                            { p0: selected, p1: line },
+                          ),
                         )
                       }
                     >
@@ -666,7 +699,9 @@ function Changes({
             </>
           )}
           {!selected && state?.files.length > 0 && (
-            <PanelEmpty text="选择文件查看差异，点击行号旁的加号添加审查意见" />
+            <PanelEmpty
+              text={t("选择文件查看差异，点击行号旁的加号添加审查意见")}
+            />
           )}
         </>
       )}
@@ -682,6 +717,8 @@ function Agents({
   call: Call;
   openFile: (path: string) => void;
 }) {
+  useI18n();
+
   const [selected, setSelected] = useState<AgentState>(),
     [chat, setChat] = useState<ChatPage>(),
     [error, setError] = useState(""),
@@ -713,31 +750,34 @@ function Agents({
     };
   }, [job?.id, selected?.threadId]);
   const states: Record<string, string> = {
-    running: "运行中",
-    pendingInit: "初始化",
-    completed: "已完成",
-    shutdown: "已关闭",
-    interrupted: "已停止",
-    errored: "出错",
-    waiting: "等待中",
+    running: t("运行中"),
+    pendingInit: t("初始化"),
+    completed: t("已完成"),
+    shutdown: t("已关闭"),
+    interrupted: t("已停止"),
+    errored: t("出错"),
+    waiting: t("等待中"),
   };
   return (
     <div className="agents-pane">
       {!job?.agents?.length ? (
         <div className="panel-empty">
           <Network size={30} strokeWidth={1} />
-          <p>子代理会在这里显示</p>
+          <p>{t("子代理会在这里显示")}</p>
           <small>
-            发送需要并行调查的任务，Codex
-            可按需派出子代理。你能查看每个代理的进展和结果。
+            {t(
+              "发送需要并行调查的任务，Codex 可按需派出子代理。你能查看每个代理的进展和结果。",
+            )}
           </small>
         </div>
       ) : (
         <>
           <div className="agent-tree-root">
             <Network size={16} />
-            <span>主代理</span>
-            <small>{job.agents.length} 个子代理</small>
+            <span>{t("主代理")}</span>
+            <small>
+              {job.agents.length} {t("个子代理")}
+            </small>
           </div>
           <div className="agent-tree">
             {job.agents.map((a) => (
@@ -753,7 +793,7 @@ function Agents({
                 <span>
                   <strong>{a.name}</strong>
                   <small>
-                    {a.role || "子代理"}
+                    {a.role || t("子代理")}
                     {a.model ? ` · ${a.model}` : ""}
                   </small>
                 </span>
@@ -766,7 +806,7 @@ function Agents({
               <header>
                 <span>{selected.name}</span>
                 <button
-                  title="停止子代理"
+                  title={t("停止子代理")}
                   onClick={() =>
                     void call("chat.agent.control", {
                       id: job.id,
@@ -780,7 +820,7 @@ function Agents({
               </header>
               {selected.prompt && (
                 <div className="child-prompt">
-                  <span>任务</span>
+                  <span>{t("任务")}</span>
                   <MarkdownText text={selected.prompt} />
                 </div>
               )}
@@ -812,12 +852,12 @@ function Agents({
                 }}
               >
                 <input
-                  aria-label="给子代理发送消息"
-                  placeholder="向子代理补充要求…"
+                  aria-label={t("给子代理发送消息")}
+                  placeholder={t("向子代理补充要求…")}
                   value={message}
                   onChange={(e) => setMessage(e.target.value)}
                 />
-                <button disabled={!message.trim()} title="发送给子代理">
+                <button disabled={!message.trim()} title={t("发送给子代理")}>
                   <ChevronRight size={16} />
                 </button>
               </form>

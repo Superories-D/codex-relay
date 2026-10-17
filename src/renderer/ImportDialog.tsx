@@ -1,3 +1,4 @@
+import { t, useI18n } from "./i18n";
 import React, { useState } from "react";
 import { Dialog } from "./Dialog";
 import type { ImportPreview } from "../core/account-import";
@@ -7,14 +8,14 @@ export function ImportDialog({
   cancel,
 }: {
   preview: ImportPreview;
-  commit: (
-    indices: number[],
-  ) => Promise<{
+  commit: (indices: number[]) => Promise<{
     imported: number;
     results: { index: number; label: string; ok: boolean; error?: string }[];
   }>;
   cancel: () => void;
 }) {
+  useI18n();
+
   const [selected, setSelected] = useState(() =>
     preview.rows.filter((r) => r.action !== "skip").map((r) => r.index),
   );
@@ -22,12 +23,13 @@ export function ImportDialog({
     [error, setError] = useState("");
   const [result, setResult] = useState<Awaited<ReturnType<typeof commit>>>();
   return (
-    <Dialog title="预览账户导入" busy={busy} onClose={cancel}>
+    <Dialog title={t("预览账户导入")} busy={busy} onClose={cancel}>
       <p className="eyebrow">ACCOUNT IMPORT</p>
-      <h2>{result ? "导入结果" : "确认要导入的账户"}</h2>
+      <h2>{result ? t("导入结果") : t("确认要导入的账户")}</h2>
       <p className="subtle">
-        支持官方 auth.json、CodexPilot / cockpit-tools
-        JSON、JSONL。已存在账户会更新凭据，旧备份的额度读数不会直接作为可用依据。
+        {t(
+          "支持官方 auth.json、CodexPilot / cockpit-tools JSON、JSONL。已存在账户会更新凭据，旧备份的额度读数不会直接作为可用依据。",
+        )}
       </p>
       {error && (
         <div role="alert" className="alert">
@@ -37,16 +39,17 @@ export function ImportDialog({
       {result ? (
         <>
           <p role="status">
-            已导入 {result.imported} 个账户。额度将由后台核实。
+            {t("已导入")}
+            {result.imported} {t("个账户。额度将由后台核实。")}
           </p>
           {result.results.map((r) => (
             <div className="import-row" key={r.index}>
               <b>{r.label}</b>
-              <span>{r.ok ? "已保存" : r.error}</span>
+              <span>{r.ok ? t("已保存") : r.error}</span>
             </div>
           ))}
           <button className="primary full" onClick={cancel}>
-            完成
+            {t("完成")}
           </button>
         </>
       ) : (
@@ -76,14 +79,19 @@ export function ImportDialog({
                   )}
                 </span>
                 <em>
-                  {{ add: "新增", update: "更新", skip: "跳过" }[row.action]}
+                  {
+                    { add: t("新增"), update: t("更新"), skip: t("跳过") }[
+                      row.action
+                    ]
+                  }
                 </em>
               </label>
             ))}
           </div>
           <p className="subtle">
-            预览有效期 10
-            分钟。正在运行或等待进程恢复的账户需先暂停并完成恢复检查。
+            {t(
+              "预览有效期 10 分钟。正在运行或等待进程恢复的账户需先暂停并完成恢复检查。",
+            )}
           </p>
           <button
             className="primary full"
@@ -97,7 +105,9 @@ export function ImportDialog({
                 .finally(() => setBusy(false));
             }}
           >
-            {busy ? "正在安全保存…" : `确认导入 ${selected.length} 个账户`}
+            {busy
+              ? t("正在安全保存…")
+              : t("确认导入 {p0} 个账户", { p0: selected.length })}
           </button>
         </>
       )}

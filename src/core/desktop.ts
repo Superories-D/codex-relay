@@ -34,6 +34,7 @@ export interface DesktopData {
   preferences: {
     theme: "dark" | "light" | "system";
     notifications: boolean;
+    language?: "auto" | "zh-CN" | "zh-TW" | "en";
     textSize?: number;
     codeSize?: number;
     accent?: string;
@@ -51,7 +52,7 @@ export class Desktop {
   data: DesktopData = {
     projects: [],
     schedules: [],
-    preferences: { theme: "dark", notifications: true },
+    preferences: { theme: "dark", notifications: true, language: "auto" },
   };
   private writes: Promise<void> = Promise.resolve();
   constructor(readonly root: string) {}

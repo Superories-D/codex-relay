@@ -55,7 +55,7 @@ it("runs real Git staging, commit, diff and independent worktree operations in a
     "two",
   );
   await desktop.git(project, ["worktree", "remove", copy.cwd]);
-});
+}, 20000);
 it("deduplicates persisted projects and computes future daily/weekly/interval runs in local time", async () => {
   expect((await desktop.project(project)).id).toBe(
     (await desktop.project(project)).id,

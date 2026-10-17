@@ -1,3 +1,4 @@
+import { t, useI18n } from "./i18n";
 import React, { useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
@@ -13,6 +14,8 @@ export function TerminalPane({
   close: () => void;
   call: (name: string, args?: unknown) => Promise<any>;
 }) {
+  useI18n();
+
   const [sessions, setSessions] = useState<Session[]>([]),
     [selected, setSelected] = useState(""),
     [error, setError] = useState("");
@@ -111,11 +114,11 @@ export function TerminalPane({
     };
   }, [selected]);
   return (
-    <section className="terminal-pane" aria-label="集成终端">
+    <section className="terminal-pane" aria-label={t("集成终端")}>
       <header>
         <span className="terminal-label">
           <SquareTerminal size={15} />
-          终端
+          {t("终端")}
         </span>
         <div className="terminal-tabs">
           {sessions.map((s, index) => (
@@ -124,7 +127,7 @@ export function TerminalPane({
                 {s.name} {index + 1}
               </button>
               <button
-                aria-label={`关闭终端 ${index + 1}`}
+                aria-label={t("关闭终端 {p0}", { p0: index + 1 })}
                 onClick={async () => {
                   try {
                     await call("terminal.close", { id: s.id });
@@ -142,14 +145,18 @@ export function TerminalPane({
           ))}
         </div>
         <button
-          title="新建终端"
-          aria-label="新建终端"
+          title={t("新建终端")}
+          aria-label={t("新建终端")}
           disabled={opening || !cwd}
           onClick={() => void add()}
         >
           <Plus size={16} />
         </button>
-        <button title="隐藏终端" aria-label="隐藏终端" onClick={close}>
+        <button
+          title={t("隐藏终端")}
+          aria-label={t("隐藏终端")}
+          onClick={close}
+        >
           <ChevronDown size={16} />
         </button>
       </header>
@@ -165,7 +172,7 @@ export function TerminalPane({
           disabled={opening || !cwd}
           onClick={() => void add()}
         >
-          {opening ? "正在连接 PowerShell…" : "新建终端"}
+          {opening ? t("正在连接 PowerShell…") : t("新建终端")}
         </button>
       )}
     </section>

@@ -1,0 +1,68 @@
+const fs = require("node:fs");
+const path = require("node:path");
+const ts = require("typescript");
+const esbuild = require("esbuild");
+const root = path.resolve(__dirname, "../..");
+
+function audit() {
+  const built = esbuild.buildSync({
+    entryPoints: [path.join(root, "src/renderer/locales/en.ts")],
+    bundle: true,
+    platform: "node",
+    format: "cjs",
+    write: false,
+  });
+  const dictionary = { exports: {} };
+  new Function("module", "exports", built.outputFiles[0].text)(
+    dictionary,
+    dictionary.exports,
+  );
+  const keys = new Map(),
+    unlocalized = [];
+  for (const name of fs.readdirSync(path.join(root, "src/renderer"))) {
+    if (!/\.tsx?$/.test(name) || name === "i18n.ts") continue;
+    const source = ts.createSourceFile(
+      name,
+      fs.readFileSync(path.join(root, "src/renderer", name), "utf8"),
+      ts.ScriptTarget.Latest,
+      true,
+      name.endsWith("tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+    );
+    function visit(node) {
+      if (
+        ts.isCallExpression(node) &&
+        ts.isIdentifier(node.expression) &&
+        node.expression.text === "t" &&
+        node.arguments[0] &&
+        ts.isStringLiteral(node.arguments[0])
+      )
+        keys.set(node.arguments[0].text, name);
+      if (ts.isJsxText(node) && /[\u3400-\u9fff]/.test(node.text))
+        unlocalized.push(
+          `${name}:${source.getLineAndCharacterOfPosition(node.pos).line + 1}: ${node.text.trim()}`,
+        );
+      if (
+        ts.isJsxAttribute(node) &&
+        node.initializer &&
+        ts.isStringLiteral(node.initializer) &&
+        /[\u3400-\u9fff]/.test(node.initializer.text)
+      )
+        unlocalized.push(`${name}: ${node.name.text}=${node.initializer.text}`);
+      ts.forEachChild(node, visit);
+    }
+    visit(source);
+  }
+  return {
+    keys: keys.size,
+    missing: [...keys]
+      .filter(([key]) => !(key in dictionary.exports.english))
+      .map(([key, file]) => ({ key, file })),
+    unlocalized,
+  };
+}
+module.exports = { audit };
+if (require.main === module) {
+  const result = audit();
+  console.log(JSON.stringify(result, null, 2));
+  if (result.missing.length || result.unlocalized.length) process.exitCode = 1;
+}

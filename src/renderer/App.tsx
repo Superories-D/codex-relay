@@ -1,3 +1,4 @@
+import { t, useI18n, formatDate, getLanguage } from "./i18n";
 import React, { useEffect, useState, useRef } from "react";
 import { createRoot } from "react-dom/client";
 import type {
@@ -42,23 +43,20 @@ const states: Record<string, string> = {
   completed: "已完成",
   cancelled: "已取消",
 };
-const time = (ts?: number | null) =>
-  ts
-    ? new Date(ts).toLocaleString("zh-CN", {
-        month: "2-digit",
-        day: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-      })
-    : "未知";
+const time = (ts?: number | null) => (ts ? formatDate(ts) : t("未知"));
 const duration = (ts?: number) => {
   if (!ts) return "—";
   const s = Math.max(0, Math.ceil((ts - Date.now()) / 1000));
   return s >= 86400
-    ? `${Math.floor(s / 86400)}天 ${Math.floor((s % 86400) / 3600)}小时`
+    ? t("{p0}天 {p1}小时", {
+        p0: Math.floor(s / 86400),
+        p1: Math.floor((s % 86400) / 3600),
+      })
     : `${Math.floor(s / 3600)}:${String(Math.floor((s % 3600) / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 };
 function Icon({ name }: { name: string }) {
+  useI18n();
+
   return (
     <span className="icon" aria-hidden>
       {{
@@ -83,12 +81,14 @@ function QuotaBar({
   window: WindowQuota | null | undefined;
   label: string;
 }) {
+  useI18n();
+
   const left = w ? Math.max(0, 100 - w.usedPercent) : null;
   return (
     <div className="quota">
       <div className="row">
         <span>{label}</span>
-        <b>{left === null ? "未提供" : `${Number(left.toFixed(1))}%`}</b>
+        <b>{left === null ? t("未提供") : `${Number(left.toFixed(1))}%`}</b>
       </div>
       <div className="track">
         <div
@@ -98,15 +98,17 @@ function QuotaBar({
       </div>
       <small>
         {w?.resetsAt
-          ? `${time(w.resetsAt)} 重置`
+          ? t("{p0} 重置", { p0: time(w.resetsAt) })
           : w
-            ? "重置时间未提供"
-            : "该窗口未返回，按服务器信息判断"}
+            ? t("重置时间未提供")
+            : t("该窗口未返回，按服务器信息判断")}
       </small>
     </div>
   );
 }
 function App({ initialTab = "dashboard" }: { initialTab?: string }) {
+  useI18n();
+
   const [snapshot, setSnapshot] = useState<Snapshot>();
   const [tab, setTab] = useState(initialTab);
   const [error, setError] = useState("");
@@ -145,7 +147,7 @@ function App({ initialTab = "dashboard" }: { initialTab?: string }) {
   }, [notice]);
   useEffect(() => {
     if (!window.relay) {
-      setError("请通过 Codex Relay 桌面程序启动此界面");
+      setError(t("请通过 Codex Relay 桌面程序启动此界面"));
       return;
     }
     let alive = true;
@@ -153,7 +155,7 @@ function App({ initialTab = "dashboard" }: { initialTab?: string }) {
     const initialTimer = setTimeout(() => {
       if (alive) {
         setConnection("offline");
-        setError("读取状态较慢，请等待后台响应，或重试读取。");
+        setError(t("读取状态较慢，请等待后台响应，或重试读取。"));
       }
     }, 8000);
     void window.relay
@@ -200,13 +202,13 @@ function App({ initialTab = "dashboard" }: { initialTab?: string }) {
         });
     };
     const health = setInterval(ping, 5000);
-    const t = setInterval(() => setClock((x) => x + 1), 1000);
+    const clockTimer = setInterval(() => setClock((x) => x + 1), 1000);
     return () => {
       alive = false;
       off();
       clearTimeout(initialTimer);
       clearInterval(health);
-      clearInterval(t);
+      clearInterval(clockTimer);
     };
   }, []);
   const cmd = (name: string, args?: unknown): Promise<unknown> => {
@@ -214,7 +216,7 @@ function App({ initialTab = "dashboard" }: { initialTab?: string }) {
     const previous = inFlight.current.get(key);
     if (previous) {
       if (previous.name === name) return previous.promise;
-      const message = "同一账户正在处理另一项操作，请等待完成后重试。";
+      const message = t("同一账户正在处理另一项操作，请等待完成后重试。");
       setError(message);
       return Promise.reject(new Error(message));
     }
@@ -251,11 +253,11 @@ function App({ initialTab = "dashboard" }: { initialTab?: string }) {
       <div className="startup">
         <div className="brand-mark">R</div>
         <h1>Codex Relay</h1>
-        <p>{error || "正在读取任务与账户…"}</p>
+        <p>{error || t("正在读取任务与账户…")}</p>
         {error && window.relay && (
           <button
             onClick={() => {
-              setError("正在重新读取…");
+              setError(t("正在重新读取…"));
               void window.relay
                 .snapshot()
                 .then((v) => {
@@ -265,7 +267,7 @@ function App({ initialTab = "dashboard" }: { initialTab?: string }) {
                 .catch((e) => setError(String(e)));
             }}
           >
-            重试读取
+            {t("重试读取")}
           </button>
         )}
       </div>
@@ -304,12 +306,16 @@ function App({ initialTab = "dashboard" }: { initialTab?: string }) {
       setConfirmAction({
         title:
           job.existing && job.existing.phase !== "managed"
-            ? "取消接入？"
-            : "取消这个任务？",
+            ? t("取消接入？")
+            : t("取消这个任务？"),
         message:
           job.existing && job.existing.phase !== "managed"
-            ? "取消 Relay 的接入监控，原窗口保持原状态。如果交接已经开始，需先完成停止确认。"
-            : "已生成的文件与会话会保留。取消后不再自动恢复，需要继续时请新建任务。",
+            ? t(
+                "取消 Relay 的接入监控，原窗口保持原状态。如果交接已经开始，需先完成停止确认。",
+              )
+            : t(
+                "已生成的文件与会话会保留。取消后不再自动恢复，需要继续时请新建任务。",
+              ),
         run,
       });
     else run();
@@ -328,7 +334,7 @@ function App({ initialTab = "dashboard" }: { initialTab?: string }) {
             }
             onClick={() => act("session.handoff", job.id)}
           >
-            立即交接并继续
+            {t("立即交接并继续")}
           </button>
         )}
       {["paused", "needs_attention"].includes(job.state) && (
@@ -340,10 +346,10 @@ function App({ initialTab = "dashboard" }: { initialTab?: string }) {
           onClick={() => control(job, "resume")}
         >
           {job.existing && job.existing.phase !== "managed"
-            ? "继续监控 / 恢复检查"
+            ? t("继续监控 / 恢复检查")
             : job.recoveryRequired
-              ? "检查并恢复"
-              : "继续任务"}
+              ? t("检查并恢复")
+              : t("继续任务")}
         </button>
       )}
       {[
@@ -364,8 +370,8 @@ function App({ initialTab = "dashboard" }: { initialTab?: string }) {
           onClick={() => control(job, "pause")}
         >
           {job.state === "pausing" || isPending("job.control", { id: job.id })
-            ? "正在确认停止…"
-            : "暂停任务"}
+            ? t("正在确认停止…")
+            : t("暂停任务")}
         </button>
       )}
       {!["completed", "cancelled"].includes(job.state) && (
@@ -377,11 +383,13 @@ function App({ initialTab = "dashboard" }: { initialTab?: string }) {
           onClick={() => control(job, "cancel")}
         >
           {job.existing && job.existing.phase !== "managed"
-            ? "取消接入"
-            : "取消任务"}
+            ? t("取消接入")
+            : t("取消任务")}
         </button>
       )}
-      <button onClick={() => act("job.directory", job.id)}>打开工作目录</button>
+      <button onClick={() => act("job.directory", job.id)}>
+        {t("打开工作目录")}
+      </button>
       {job.mode === "desktop" &&
         ["preparing", "running", "pausing"].includes(job.state) && (
           <>
@@ -389,7 +397,7 @@ function App({ initialTab = "dashboard" }: { initialTab?: string }) {
               disabled={isPending("job.desktop.show")}
               onClick={() => act("job.desktop.show", job.id)}
             >
-              打开受管客户端 ↗
+              {t("打开受管客户端 ↗")}
             </button>
             <button
               disabled={isPending("job.desktop.inspect")}
@@ -399,7 +407,7 @@ function App({ initialTab = "dashboard" }: { initialTab?: string }) {
                   .catch(() => {})
               }
             >
-              检查适配
+              {t("检查适配")}
             </button>
           </>
         )}
@@ -424,16 +432,16 @@ function App({ initialTab = "dashboard" }: { initialTab?: string }) {
         <div className="brand">
           <div className="brand-mark">R</div>
           <div>
-            Codex Relay<small>让任务继续</small>
+            Codex Relay<small>{t("让任务继续")}</small>
           </div>
         </div>
         <nav>
           {[
-            ["dashboard", "工作台"],
-            ["accounts", "账户轮换"],
-            ["tasks", "任务队列"],
-            ["logs", "运行记录"],
-            ["settings", "设置"],
+            ["dashboard", t("工作台")],
+            ["accounts", t("账户轮换")],
+            ["tasks", t("任务队列")],
+            ["logs", t("运行记录")],
+            ["settings", t("设置")],
           ].map(([key, label]) => (
             <button
               key={key}
@@ -458,10 +466,11 @@ function App({ initialTab = "dashboard" }: { initialTab?: string }) {
           <span
             className={`status-dot ${connection === "offline" ? "offline" : ""}`}
           />{" "}
-          {connection === "offline" ? "后台响应较慢" : "后台已连接"} · 本机加密
+          {connection === "offline" ? t("后台响应较慢") : t("后台已连接")}{" "}
+          {t("· 本机加密")}
           <small>Agent client / v0.5.0</small>
           <button className="text-button" onClick={() => act("data.open")}>
-            打开数据目录 ↗
+            {t("打开数据目录 ↗")}
           </button>
         </div>
       </aside>
@@ -472,38 +481,40 @@ function App({ initialTab = "dashboard" }: { initialTab?: string }) {
             {
               (
                 {
-                  dashboard: "工作台",
-                  accounts: "账户轮换",
-                  tasks: "任务队列",
-                  logs: "运行记录",
-                  settings: "设置",
+                  dashboard: t("工作台"),
+                  accounts: t("账户轮换"),
+                  tasks: t("任务队列"),
+                  logs: t("运行记录"),
+                  settings: t("设置"),
                 } as any
               )[tab]
             }
           </div>
           <div className="header-right">
             <span className="pill">
-              {snapshot.platform === "win32" ? "Windows" : "开发环境"}
+              {snapshot.platform === "win32" ? "Windows" : t("开发环境")}
             </span>
             <button
               disabled={connection === "offline"}
               onClick={() => setShowExisting(true)}
             >
-              接入已有会话
+              {t("接入已有会话")}
             </button>
             <button
               className="primary"
               disabled={connection === "offline"}
               onClick={() => setModal("job")}
             >
-              <Icon name="plus" /> 新建任务
+              <Icon name="plus" /> {t("新建任务")}
             </button>
           </div>
         </header>
         <div className="content">
           {connection === "offline" && (
             <div className="alert" role="status">
-              后台暂未响应，任务结果仍未知。界面可继续查看；恢复连接前不要重复提交任务。
+              {t(
+                "后台暂未响应，任务结果仍未知。界面可继续查看；恢复连接前不要重复提交任务。",
+              )}
             </div>
           )}
           {!!Object.keys(pending).length && (
@@ -515,8 +526,10 @@ function App({ initialTab = "dashboard" }: { initialTab?: string }) {
                   .join(" · ")}
                 <small>
                   {Object.values(pending).some((p) => Date.now() - p.at > 15000)
-                    ? "操作耗时较长，正在等待进程或服务器确认。你可以切换页面，状态会自动更新。"
-                    : "无需重复点击，可以继续查看其他页面。"}
+                    ? t(
+                        "操作耗时较长，正在等待进程或服务器确认。你可以切换页面，状态会自动更新。",
+                      )
+                    : t("无需重复点击，可以继续查看其他页面。")}
                 </small>
               </div>
             </div>
@@ -533,38 +546,43 @@ function App({ initialTab = "dashboard" }: { initialTab?: string }) {
             </div>
           )}
           {snapshot.loginError && (
-            <div className="alert">登录未完成：{snapshot.loginError}</div>
+            <div className="alert">
+              {t("登录未完成：")}
+              {snapshot.loginError}
+            </div>
           )}
           {snapshot.jobs.some((j) => j.recoveryRequired) && (
             <div className="alert">
-              检测到上次异常退出，队列暂时冻结。在任务队列中继续或取消待恢复任务，确认原进程已停止后才能继续调度。
+              {t(
+                "检测到上次异常退出，队列暂时冻结。在任务队列中继续或取消待恢复任务，确认原进程已停止后才能继续调度。",
+              )}
             </div>
           )}
           {snapshot.login && (
             <div className="login-banner">
               <div>
-                <b>完成账户登录</b>
+                <b>{t("完成账户登录")}</b>
                 <p>
                   {snapshot.login.code ? (
                     <>
-                      在官方页面输入{" "}
+                      {t("在官方页面输入")}{" "}
                       <strong className="device-code">
                         {snapshot.login.code}
                       </strong>
                     </>
                   ) : (
-                    "浏览器登录完成后，账户将自动出现在这里。"
+                    t("浏览器登录完成后，账户将自动出现在这里。")
                   )}
                 </p>
               </div>
               <button onClick={() => act("account.openLogin")}>
-                重新打开登录页 ↗
+                {t("重新打开登录页 ↗")}
               </button>
               <button
                 className="text-button"
                 onClick={() => act("account.cancelLogin")}
               >
-                取消
+                {t("取消")}
               </button>
             </div>
           )}
@@ -580,11 +598,11 @@ function App({ initialTab = "dashboard" }: { initialTab?: string }) {
               <div className="page-title">
                 <div>
                   <p className="eyebrow">STAY IN FLOW</p>
-                  <h1>接力工作，不丢进度。</h1>
-                  <p>额度用尽后保存会话、轮换账户，恢复后继续原任务。</p>
+                  <h1>{t("接力工作，不丢进度。")}</h1>
+                  <p>{t("额度用尽后保存会话、轮换账户，恢复后继续原任务。")}</p>
                 </div>
                 <span className="subtle">
-                  {new Date().toLocaleDateString("zh-CN", {
+                  {new Date().toLocaleDateString(getLanguage(), {
                     month: "long",
                     day: "numeric",
                     weekday: "long",
@@ -593,30 +611,30 @@ function App({ initialTab = "dashboard" }: { initialTab?: string }) {
               </div>
               <div className="stats">
                 <Stat
-                  label="可用账户"
+                  label={t("可用账户")}
                   value={`${ready}`}
-                  note={`/ ${snapshot.accounts.length} 个账户`}
+                  note={t("/ {p0} 个账户", { p0: snapshot.accounts.length })}
                 />
                 <Stat
-                  label="进行中的任务"
+                  label={t("进行中的任务")}
                   value={`${snapshot.jobs.filter((j) => !["completed", "cancelled"].includes(j.state)).length}`}
-                  note="按顺序执行"
+                  note={t("按顺序执行")}
                 />
                 <Stat
-                  label="累计账户接力"
+                  label={t("累计账户接力")}
                   value={`${snapshot.jobs.reduce((n, j) => n + j.rotations, 0)}`}
-                  note="保留原始会话"
+                  note={t("保留原始会话")}
                 />
                 <Stat
-                  label="已完成任务"
+                  label={t("已完成任务")}
                   value={`${snapshot.jobs.filter((j) => j.state === "completed").length}`}
-                  note="额度暂停不计入完成"
+                  note={t("额度暂停不计入完成")}
                 />
               </div>
               <section className="work-card">
                 <div className="section-heading">
                   <div>
-                    <span className="status-dot" /> 当前任务
+                    <span className="status-dot" /> {t("当前任务")}
                   </div>
                   {live && <Badge state={live.state} />}
                 </div>
@@ -630,20 +648,20 @@ function App({ initialTab = "dashboard" }: { initialTab?: string }) {
                           <span>
                             {live.mode === "cli"
                               ? "Codex CLI"
-                              : "官方客户端 · 实验适配"}
+                              : t("官方客户端 · 实验适配")}
                           </span>
-                          <span>{live.model || "账户默认模型"}</span>
+                          <span>{live.model || t("账户默认模型")}</span>
                           <span>
                             {live.existing && live.existing.phase !== "managed"
-                              ? "原窗口账户"
-                              : (activeAccount?.label ?? "等待账户")}
+                              ? t("原窗口账户")
+                              : (activeAccount?.label ?? t("等待账户"))}
                           </span>
                         </div>
                       </div>
                       <div className="work-actions">
                         {live.state === "waiting" ? (
                           <>
-                            <small>下次核实额度</small>
+                            <small>{t("下次核实额度")}</small>
                             <strong className="countdown">
                               {duration(live.nextWakeAt)}
                             </strong>
@@ -676,11 +694,11 @@ function App({ initialTab = "dashboard" }: { initialTab?: string }) {
                 ) : (
                   <div className="empty hero-empty">
                     <span className="empty-orbit">↻</span>
-                    <h2>准备好接下一棒</h2>
+                    <h2>{t("准备好接下一棒")}</h2>
                     <p>
                       {snapshot.accounts.length
-                        ? "创建任务，Relay 会自动选择可用账户。"
-                        : "先添加你的 ChatGPT 账户，再创建第一个任务。"}
+                        ? t("创建任务，Relay 会自动选择可用账户。")
+                        : t("先添加你的 ChatGPT 账户，再创建第一个任务。")}
                     </p>
                     <button
                       className="primary"
@@ -688,7 +706,7 @@ function App({ initialTab = "dashboard" }: { initialTab?: string }) {
                         setModal(snapshot.accounts.length ? "job" : "login")
                       }
                     >
-                      {snapshot.accounts.length ? "创建任务" : "添加账户"}{" "}
+                      {snapshot.accounts.length ? t("创建任务") : t("添加账户")}{" "}
                       <Icon name="arrow" />
                     </button>
                   </div>
@@ -696,7 +714,7 @@ function App({ initialTab = "dashboard" }: { initialTab?: string }) {
               </section>
               <div className="section-heading">
                 <h2>
-                  账户池{" "}
+                  {t("账户池")}{" "}
                   <span className="count-label">
                     {snapshot.accounts.length}
                   </span>
@@ -705,7 +723,7 @@ function App({ initialTab = "dashboard" }: { initialTab?: string }) {
                   className="text-button"
                   onClick={() => navigate("accounts")}
                 >
-                  管理账户 →
+                  {t("管理账户 →")}
                 </button>
               </div>
               <div className="account-grid">
@@ -726,7 +744,7 @@ function App({ initialTab = "dashboard" }: { initialTab?: string }) {
                         }
                         onClick={() => act("account.refresh", a.id)}
                       >
-                        刷新额度 ↻
+                        {t("刷新额度 ↻")}
                       </button>
                     }
                   />
@@ -737,18 +755,18 @@ function App({ initialTab = "dashboard" }: { initialTab?: string }) {
                     onClick={() => setModal("login")}
                   >
                     <Icon name="plus" />
-                    <b>连接第一个账户</b>
-                    <small>使用官方浏览器登录或设备码</small>
+                    <b>{t("连接第一个账户")}</b>
+                    <small>{t("使用官方浏览器登录或设备码")}</small>
                   </button>
                 )}
               </div>
               <div className="section-heading">
-                <h2>最近记录</h2>
+                <h2>{t("最近记录")}</h2>
                 <button
                   className="text-button"
                   onClick={() => navigate("logs")}
                 >
-                  全部记录 →
+                  {t("全部记录 →")}
                 </button>
               </div>
               <LogList logs={snapshot.logs.slice(-5)} />
@@ -758,31 +776,31 @@ function App({ initialTab = "dashboard" }: { initialTab?: string }) {
             <>
               <div className="page-title">
                 <div>
-                  <h1>账户轮换</h1>
-                  <p>按卡片顺序循环选择。每次接力前重新核实额度。</p>
+                  <h1>{t("账户轮换")}</h1>
+                  <p>{t("按卡片顺序循环选择。每次接力前重新核实额度。")}</p>
                 </div>
                 <div className="row gap wrap">
                   <button
                     disabled={isPending("account.importLocal")}
                     onClick={() => openImport("account.importLocal")}
                   >
-                    导入本机登录
+                    {t("导入本机登录")}
                   </button>
                   <button
                     disabled={isPending("account.import")}
                     onClick={() => openImport("account.import")}
                   >
-                    导入账户备份
+                    {t("导入账户备份")}
                   </button>
                   <button className="primary" onClick={() => setModal("login")}>
-                    ＋ 添加账户
+                    {t("＋ 添加账户")}
                   </button>
                 </div>
               </div>
               <div className="notice">
-                无 5
-                小时限制的账户可以只返回周额度。未提供的窗口显示为“未提供”，不会被当作
-                0%。
+                {t(
+                  "无 5 小时限制的账户可以只返回周额度。未提供的窗口显示为“未提供”，不会被当作 0%。",
+                )}
               </div>
               <div className="account-grid">
                 {snapshot.accounts.map((a, i) => (
@@ -804,30 +822,30 @@ function App({ initialTab = "dashboard" }: { initialTab?: string }) {
                               })
                             }
                           />
-                          参与轮换
+                          {t("参与轮换")}
                         </label>
                         <div className="row gap">
                           <button
-                            title="向前移动"
+                            title={t("向前移动")}
                             disabled={i === 0}
                             onClick={() => swap(a.id, -1)}
                           >
                             ←
                           </button>
                           <button
-                            title="向后移动"
+                            title={t("向后移动")}
                             disabled={i === snapshot.accounts.length - 1}
                             onClick={() => swap(a.id, 1)}
                           >
                             →
                           </button>
                           <button
-                            title="核实额度"
+                            title={t("核实额度")}
                             disabled={isPending("account.refresh", a.id)}
                             onClick={() => act("account.refresh", a.id)}
                           >
                             {isPending("account.refresh", a.id)
-                              ? "核实中…"
+                              ? t("核实中…")
                               : "↻"}
                           </button>
                           <button
@@ -835,14 +853,15 @@ function App({ initialTab = "dashboard" }: { initialTab?: string }) {
                             disabled={isPending("account.remove", a.id)}
                             onClick={() => {
                               setConfirmAction({
-                                title: `删除 ${a.label}？`,
-                                message:
+                                title: t("删除 {p0}？", { p0: a.label }),
+                                message: t(
                                   "仅移除本机保存的账户凭据。正在执行任务的账户需要先暂停。",
+                                ),
                                 run: () => act("account.remove", a.id),
                               });
                             }}
                           >
-                            删除
+                            {t("删除")}
                           </button>
                         </div>
                       </>
@@ -856,28 +875,28 @@ function App({ initialTab = "dashboard" }: { initialTab?: string }) {
             <>
               <div className="page-title">
                 <div>
-                  <h1>任务队列</h1>
-                  <p>暂停保留上下文。恢复会话时，接着完成原始目标。</p>
+                  <h1>{t("任务队列")}</h1>
+                  <p>{t("暂停保留上下文。恢复会话时，接着完成原始目标。")}</p>
                 </div>
               </div>
               <div className="filter-bar">
                 <input
-                  aria-label="搜索任务"
-                  placeholder="搜索任务名称或工作目录"
+                  aria-label={t("搜索任务")}
+                  placeholder={t("搜索任务名称或工作目录")}
                   value={taskSearch}
                   onChange={(e) => setTaskSearch(e.target.value)}
                 />
                 <select
-                  aria-label="任务状态筛选"
+                  aria-label={t("任务状态筛选")}
                   value={taskFilter}
                   onChange={(e) => setTaskFilter(e.target.value)}
                 >
-                  <option value="all">全部任务</option>
-                  <option value="active">未完成</option>
-                  <option value="needs_attention">需要处理</option>
-                  <option value="waiting">等待额度</option>
-                  <option value="paused">已暂停</option>
-                  <option value="completed">已完成</option>
+                  <option value="all">{t("全部任务")}</option>
+                  <option value="active">{t("未完成")}</option>
+                  <option value="needs_attention">{t("需要处理")}</option>
+                  <option value="waiting">{t("等待额度")}</option>
+                  <option value="paused">{t("已暂停")}</option>
+                  <option value="completed">{t("已完成")}</option>
                 </select>
               </div>
               <div className="task-layout">
@@ -898,16 +917,20 @@ function App({ initialTab = "dashboard" }: { initialTab?: string }) {
                           </div>
                           <p>{j.cwd}</p>
                           <small>
-                            {time(j.createdAt)} · {j.rotations} 次接力
+                            {time(j.createdAt)} · {j.rotations} {t("次接力")}
                           </small>
                         </button>
                       ))
                   ) : (
                     <div className="empty">
                       <h3>
-                        {snapshot.jobs.length ? "没有匹配的任务" : "还没有任务"}
+                        {snapshot.jobs.length
+                          ? t("没有匹配的任务")
+                          : t("还没有任务")}
                       </h3>
-                      <button onClick={() => setModal("job")}>新建任务</button>
+                      <button onClick={() => setModal("job")}>
+                        {t("新建任务")}
+                      </button>
                     </div>
                   )}
                 </section>
@@ -919,31 +942,31 @@ function App({ initialTab = "dashboard" }: { initialTab?: string }) {
                     </div>
                     <p className="prompt">{focus.prompt}</p>
                     <dl>
-                      <dt>工作目录</dt>
+                      <dt>{t("工作目录")}</dt>
                       <dd>{focus.cwd}</dd>
-                      <dt>会话 ID</dt>
-                      <dd>{focus.threadId ?? "等待创建"}</dd>
-                      <dt>执行模式</dt>
+                      <dt>{t("会话 ID")}</dt>
+                      <dd>{focus.threadId ?? t("等待创建")}</dd>
+                      <dt>{t("执行模式")}</dt>
                       <dd>
                         {focus.mode === "cli"
                           ? "Codex CLI"
-                          : "官方客户端（实验）"}
+                          : t("官方客户端（实验）")}
                       </dd>
                       {focus.completionMarker && (
                         <>
-                          <dt>完成标记</dt>
+                          <dt>{t("完成标记")}</dt>
                           <dd>
-                            {focus.completionMarker} · 自动补完{" "}
+                            {focus.completionMarker} {t("· 自动补完")}{" "}
                             {focus.completionRetries ?? 0}/
                             {focus.maxCompletionRetries ?? 3}
                           </dd>
                         </>
                       )}
-                      <dt>额度分组</dt>
+                      <dt>{t("额度分组")}</dt>
                       <dd>{focus.bucket}</dd>
                       {focus.nextWakeAt && (
                         <>
-                          <dt>下次额度核实</dt>
+                          <dt>{t("下次额度核实")}</dt>
                           <dd>
                             {time(focus.nextWakeAt)} ·{" "}
                             {duration(focus.nextWakeAt)}
@@ -956,7 +979,7 @@ function App({ initialTab = "dashboard" }: { initialTab?: string }) {
                     )}
                     <JobStatus job={focus} />
                     {jobActions(focus)}
-                    <h3>任务输出</h3>
+                    <h3>{t("任务输出")}</h3>
                     <LogList
                       logs={snapshot.logs
                         .filter((l) => l.jobId === focus.id)
@@ -971,28 +994,30 @@ function App({ initialTab = "dashboard" }: { initialTab?: string }) {
             <>
               <div className="page-title">
                 <div>
-                  <h1>运行记录</h1>
-                  <p>账户接力、等待原因与任务输出。</p>
+                  <h1>{t("运行记录")}</h1>
+                  <p>{t("账户接力、等待原因与任务输出。")}</p>
                 </div>
-                <button onClick={() => act("logs.export")}>导出诊断记录</button>
+                <button onClick={() => act("logs.export")}>
+                  {t("导出诊断记录")}
+                </button>
               </div>
               <div className="filter-bar">
                 <input
-                  aria-label="搜索运行记录"
-                  placeholder="搜索错误、账户或输出内容"
+                  aria-label={t("搜索运行记录")}
+                  placeholder={t("搜索错误、账户或输出内容")}
                   value={logSearch}
                   onChange={(e) => setLogSearch(e.target.value)}
                 />
                 <select
-                  aria-label="日志级别"
+                  aria-label={t("日志级别")}
                   value={logLevel}
                   onChange={(e) => setLogLevel(e.target.value)}
                 >
-                  <option value="all">全部记录</option>
-                  <option value="error">错误</option>
-                  <option value="warning">警告</option>
-                  <option value="info">状态</option>
-                  <option value="output">任务输出</option>
+                  <option value="all">{t("全部记录")}</option>
+                  <option value="error">{t("错误")}</option>
+                  <option value="warning">{t("警告")}</option>
+                  <option value="info">{t("状态")}</option>
+                  <option value="output">{t("任务输出")}</option>
                 </select>
               </div>
               <LogList logs={filteredLogs.slice().reverse()} />
@@ -1003,16 +1028,17 @@ function App({ initialTab = "dashboard" }: { initialTab?: string }) {
           )}
         </div>
         <footer>
-          <span>任务与账户仅在本机管理</span>
+          <span>{t("任务与账户仅在本机管理")}</span>
           <span>
-            关闭窗口后留在托盘 ·
-            退出会暂停受管任务与监控，尚未交接的原窗口继续运行
+            {t(
+              "关闭窗口后留在托盘 · 退出会暂停受管任务与监控，尚未交接的原窗口继续运行",
+            )}
           </span>
         </footer>
       </main>
       {modal && (
         <Dialog
-          title={modal === "job" ? "新建任务" : "添加账户"}
+          title={modal === "job" ? t("新建任务") : t("添加账户")}
           busy={busy}
           onClose={() => setModal(null)}
         >
@@ -1027,7 +1053,7 @@ function App({ initialTab = "dashboard" }: { initialTab?: string }) {
               submit={async (a) => {
                 await cmd("account.login", a);
                 setModal(null);
-                setNotice("请在官方页面完成登录，账户会自动添加。");
+                setNotice(t("请在官方页面完成登录，账户会自动添加。"));
               }}
             />
           ) : (
@@ -1040,7 +1066,7 @@ function App({ initialTab = "dashboard" }: { initialTab?: string }) {
                 setSelected(job.id);
                 setModal(null);
                 setTab("tasks");
-                setNotice("任务已加入队列，可以在这里查看执行进度。");
+                setNotice(t("任务已加入队列，可以在这里查看执行进度。"));
               }}
             />
           )}
@@ -1054,7 +1080,7 @@ function App({ initialTab = "dashboard" }: { initialTab?: string }) {
             setShowExisting(false);
             setSelected(job.id);
             setTab("tasks");
-            setNotice("已接入原会话，可在任务详情查看监控和交接进度。");
+            setNotice(t("已接入原会话，可在任务详情查看监控和交接进度。"));
           }}
         />
       )}
@@ -1082,7 +1108,9 @@ function App({ initialTab = "dashboard" }: { initialTab?: string }) {
           <h2>{confirmAction.title}</h2>
           <p>{confirmAction.message}</p>
           <div className="row gap">
-            <button onClick={() => setConfirmAction(undefined)}>返回</button>
+            <button onClick={() => setConfirmAction(undefined)}>
+              {t("返回")}
+            </button>
             <button
               className="primary"
               onClick={() => {
@@ -1091,43 +1119,48 @@ function App({ initialTab = "dashboard" }: { initialTab?: string }) {
                 action.run();
               }}
             >
-              确认
+              {t("确认")}
             </button>
           </div>
         </Dialog>
       )}
       {desktopReport && (
         <Dialog
-          title="客户端适配检查"
+          title={t("客户端适配检查")}
           onClose={() => setDesktopReport(undefined)}
         >
           <p className="eyebrow">DESKTOP CHECK</p>
-          <h2>客户端适配检查</h2>
+          <h2>{t("客户端适配检查")}</h2>
           <div className="diagnostic-grid">
             <p>
-              <b>{desktopReport.connected ? "已连接" : "未连接"}</b>受管调试连接
+              <b>{desktopReport.connected ? t("已连接") : t("未连接")}</b>
+              {t("受管调试连接")}
             </p>
             <p>
-              <b>{desktopReport.threadSelected ? "已确认" : "未确认"}</b>
-              当前目标会话
+              <b>{desktopReport.threadSelected ? t("已确认") : t("未确认")}</b>
+              {t("当前目标会话")}
             </p>
             {Object.entries(desktopReport.counts ?? {}).map(([key, value]) => (
               <p key={key}>
-                <b>{String(value)} 个</b>
+                <b>
+                  {String(value)} {t("个")}
+                </b>
                 {(
                   {
-                    editorSelector: "可用输入框",
-                    sendSelector: "可用发送按钮",
-                    stopSelector: "可用停止按钮",
-                    threadSelector: "会话控件",
+                    editorSelector: t("可用输入框"),
+                    sendSelector: t("可用发送按钮"),
+                    stopSelector: t("可用停止按钮"),
+                    threadSelector: t("会话控件"),
                   } as any
                 )[key] ?? key}
               </p>
             ))}
           </div>
           <p className="notice">
-            运行中发送按钮可能不可用；停止按钮应唯一。检测只读取控件状态，不会发送消息或改写草稿。
-            {desktopReport.hasDraft ? " 当前输入框内有草稿。" : ""}
+            {t(
+              "运行中发送按钮可能不可用；停止按钮应唯一。检测只读取控件状态，不会发送消息或改写草稿。",
+            )}
+            {desktopReport.hasDraft ? t(" 当前输入框内有草稿。") : ""}
           </p>
           <button
             onClick={() => {
@@ -1135,7 +1168,7 @@ function App({ initialTab = "dashboard" }: { initialTab?: string }) {
               setTab("settings");
             }}
           >
-            查看适配设置
+            {t("查看适配设置")}
           </button>
         </Dialog>
       )}
@@ -1143,43 +1176,56 @@ function App({ initialTab = "dashboard" }: { initialTab?: string }) {
   );
 }
 function JobStatus({ job }: { job: Job }) {
+  useI18n();
+
   const explanation: Record<string, string> = {
-    watching:
+    watching: t(
       "原窗口 / 终端继续运行，审批在那里处理。额度中断后自动交接，保留原会话。",
-    queued: "等待可用账户，系统会自动启动。",
-    waiting: "任务尚未完成。到点会重新核实服务器额度，再接着原会话执行。",
+    ),
+    queued: t("等待可用账户，系统会自动启动。"),
+    waiting: t("任务尚未完成。到点会重新核实服务器额度，再接着原会话执行。"),
     paused:
       job.existing && job.existing.phase !== "managed"
-        ? "接入监控已暂停；原窗口可能仍在运行。可以继续监控或立即交接。"
-        : "手动暂停，不会自行恢复。点击继续任务后接续原会话。",
+        ? t("接入监控已暂停；原窗口可能仍在运行。可以继续监控或立即交接。")
+        : t("手动暂停，不会自行恢复。点击继续任务后接续原会话。"),
     needs_attention:
       job.existing && job.existing.phase !== "managed"
-        ? "请核查原窗口和错误详情，再选择继续监控或立即交接；其他队列任务暂不启动。"
+        ? t(
+            "请核查原窗口和错误详情，再选择继续监控或立即交接；其他队列任务暂不启动。",
+          )
         : job.recoveryRequired
-          ? "无法确认旧进程是否停止，整个队列已保护性冻结。确认后点击检查并恢复。"
-          : "请查看错误详情。处理问题后点击继续任务，将沿用原会话。",
-    completed: "本轮正常结束，最终答复与额度检查通过。",
-    cancelled: "任务已取消，已有文件和会话仍保留。",
-    pausing: "正在确认停止并保存状态。此时不会启动另一个任务进程。",
+          ? t(
+              "无法确认旧进程是否停止，整个队列已保护性冻结。确认后点击检查并恢复。",
+            )
+          : t("请查看错误详情。处理问题后点击继续任务，将沿用原会话。"),
+    completed: t("本轮正常结束，最终答复与额度检查通过。"),
+    cancelled: t("任务已取消，已有文件和会话仍保留。"),
+    pausing: t("正在确认停止并保存状态。此时不会启动另一个任务进程。"),
   };
   return (
     <div className="job-status" role="status">
       <b>
         {["preparing", "running", "rotating", "watching"].includes(job.state)
-          ? (job.stage ?? states[job.state])
-          : states[job.state]}
+          ? t(job.stage ?? states[job.state])
+          : t(states[job.state])}
       </b>
       <p>
         {explanation[job.state] ??
           (job.mode === "desktop"
-            ? "需要审批或输入时，请打开受管客户端处理。"
-            : "正在执行原始任务，长时间思考不等于卡死。")}
+            ? t("需要审批或输入时，请打开受管客户端处理。")
+            : t("正在执行原始任务，长时间思考不等于卡死。"))}
       </p>
       {job.lastHeartbeatAt && (
-        <small>最近连接确认：{time(job.lastHeartbeatAt)}</small>
+        <small>
+          {t("最近连接确认：")}
+          {time(job.lastHeartbeatAt)}
+        </small>
       )}
       {job.lastActivityAt && (
-        <small>最近输出：{time(job.lastActivityAt)}</small>
+        <small>
+          {t("最近输出：")}
+          {time(job.lastActivityAt)}
+        </small>
       )}
     </div>
   );
@@ -1193,6 +1239,8 @@ function Stat({
   value: string;
   note: string;
 }) {
+  useI18n();
+
   return (
     <div className="stat">
       <span>{label}</span>
@@ -1202,7 +1250,9 @@ function Stat({
   );
 }
 function Badge({ state }: { state: string }) {
-  return <span className={`badge ${state}`}>{states[state] ?? state}</span>;
+  useI18n();
+
+  return <span className={`badge ${state}`}>{t(states[state] ?? state)}</span>;
 }
 function AccountCard({
   account: a,
@@ -1213,14 +1263,16 @@ function AccountCard({
   active: boolean;
   actions: React.ReactNode;
 }) {
+  useI18n();
+
   const q = a.quotas.codex;
   const label = (w: WindowQuota | null | undefined, fallback: string) =>
     w?.windowDurationMins === 300
-      ? "5 小时剩余"
+      ? t("5 小时剩余")
       : w?.windowDurationMins === 10080
-        ? "本周剩余"
+        ? t("本周剩余")
         : w?.windowDurationMins
-          ? `${w.windowDurationMins} 分钟剩余`
+          ? t("{p0} 分钟剩余", { p0: w.windowDurationMins })
           : fallback;
   return (
     <article
@@ -1231,14 +1283,17 @@ function AccountCard({
         <div className="account-title">
           <b>{a.label}</b>
           <small>
-            {a.plan.toUpperCase()} · {active ? "当前账户" : a.email}
+            {a.plan.toUpperCase()} · {active ? t("当前账户") : a.email}
           </small>
         </div>
         <Badge state={a.status} />
       </div>
-      <QuotaBar label={label(q?.primary, "主窗口剩余")} window={q?.primary} />
       <QuotaBar
-        label={label(q?.secondary, "次窗口剩余")}
+        label={label(q?.primary, t("主窗口剩余"))}
+        window={q?.primary}
+      />
+      <QuotaBar
+        label={label(q?.secondary, t("次窗口剩余"))}
         window={q?.secondary}
       />
       {Object.keys(a.quotas)
@@ -1248,7 +1303,7 @@ function AccountCard({
             {k}:{" "}
             {a.quotas[k].primary
               ? `${100 - a.quotas[k].primary!.usedPercent}%`
-              : "未提供"}
+              : t("未提供")}
           </small>
         ))}
       {a.lastError && <p className="error-message">{a.lastError}</p>}
@@ -1257,6 +1312,8 @@ function AccountCard({
   );
 }
 function LogList({ logs }: { logs: Snapshot["logs"] }) {
+  useI18n();
+
   const [limit, setLimit] = useState(100);
   return (
     <div className="log-list">
@@ -1264,18 +1321,21 @@ function LogList({ logs }: { logs: Snapshot["logs"] }) {
         logs.slice(0, limit).map((l) => (
           <div className={`log-row ${l.level}`} key={l.id}>
             <time>
-              {new Date(l.at).toLocaleTimeString("zh-CN", { hour12: false })}
+              {new Date(l.at).toLocaleTimeString(getLanguage(), {
+                hour12: false,
+              })}
             </time>
             <span className="log-dot" />
             <pre>{l.message}</pre>
           </div>
         ))
       ) : (
-        <div className="empty compact">新的运行记录会出现在这里</div>
+        <div className="empty compact">{t("新的运行记录会出现在这里")}</div>
       )}
       {logs.length > limit && (
         <button className="full" onClick={() => setLimit((n) => n + 100)}>
-          再显示 100 条（共 {logs.length} 条）
+          {t("再显示 100 条（共")}
+          {logs.length} {t("条）")}
         </button>
       )}
     </div>
@@ -1288,6 +1348,8 @@ function LoginForm({
   busy: boolean;
   submit: (a: { label: string; device: boolean }) => Promise<void>;
 }) {
+  useI18n();
+
   const [label, setLabel] = useState("");
   const [device, setDevice] = useState(false);
   return (
@@ -1298,12 +1360,12 @@ function LoginForm({
       }}
     >
       <p className="eyebrow">CONNECT ACCOUNT</p>
-      <h2>添加 ChatGPT 账户</h2>
-      <p>登录由官方 Codex 完成。Relay 保存加密的本机凭据。</p>
+      <h2>{t("添加 ChatGPT 账户")}</h2>
+      <p>{t("登录由官方 Codex 完成。Relay 保存加密的本机凭据。")}</p>
       <label>
-        账户备注
+        {t("账户备注")}
         <input
-          placeholder="例如：主账户 / 备用账户"
+          placeholder={t("例如：主账户 / 备用账户")}
           value={label}
           onChange={(e) => setLabel(e.target.value)}
         />
@@ -1314,22 +1376,23 @@ function LoginForm({
           className={!device ? "chosen" : ""}
           onClick={() => setDevice(false)}
         >
-          浏览器登录
+          {t("浏览器登录")}
         </button>
         <button
           type="button"
           className={device ? "chosen" : ""}
           onClick={() => setDevice(true)}
         >
-          设备码登录
+          {t("设备码登录")}
         </button>
       </div>
       <p className="subtle">
-        添加多个账户时，在浏览器中选择对应账户。设备码登录需要在 ChatGPT
-        设置中开启。
+        {t(
+          "添加多个账户时，在浏览器中选择对应账户。设备码登录需要在 ChatGPT 设置中开启。",
+        )}
       </p>
       <button className="primary full" disabled={busy}>
-        {busy ? "正在启动登录…" : "前往官方登录页 ↗"}
+        {busy ? t("正在启动登录…") : t("前往官方登录页 ↗")}
       </button>
     </form>
   );
@@ -1345,6 +1408,8 @@ function JobForm({
   command: (name: string, args?: unknown) => Promise<unknown>;
   submit: (a: NewJob) => Promise<void>;
 }) {
+  useI18n();
+
   const [form, setForm] = useState<NewJob>({
     title: "",
     prompt: "",
@@ -1367,19 +1432,19 @@ function JobForm({
       }}
     >
       <p className="eyebrow">NEW TASK</p>
-      <h2>开始一段持续工作</h2>
+      <h2>{t("开始一段持续工作")}</h2>
       <label>
-        任务名称
+        {t("任务名称")}
         <input
           required
           maxLength={120}
-          placeholder="例如：完成项目的账户管理功能"
+          placeholder={t("例如：完成项目的账户管理功能")}
           value={form.title}
           onChange={(e) => patch("title", e.target.value)}
         />
       </label>
       <label>
-        工作目录
+        {t("工作目录")}
         <div className="input-button">
           <input
             required
@@ -1397,33 +1462,33 @@ function JobForm({
                 .catch(() => {})
             }
           >
-            选择
+            {t("选择")}
           </button>
         </div>
       </label>
       <label>
-        任务目标
+        {t("任务目标")}
         <textarea
           required
           rows={4}
-          placeholder="描述要完成的任务和验收标准…"
+          placeholder={t("描述要完成的任务和验收标准…")}
           value={form.prompt}
           onChange={(e) => patch("prompt", e.target.value)}
         />
       </label>
       <div className="form-grid">
         <label>
-          执行方式
+          {t("执行方式")}
           <select
             value={form.mode}
             onChange={(e) => patch("mode", e.target.value)}
           >
-            <option value="cli">Codex CLI（协议接入）</option>
-            <option value="desktop">官方客户端（实验适配）</option>
+            <option value="cli">{t("Codex CLI（协议接入）")}</option>
+            <option value="desktop">{t("官方客户端（实验适配）")}</option>
           </select>
         </label>
         <label>
-          额度分组
+          {t("额度分组")}
           <input
             value={form.bucket}
             onChange={(e) => patch("bucket", e.target.value)}
@@ -1441,10 +1506,10 @@ function JobForm({
           </datalist>
         </label>
         <label>
-          模型
+          {t("模型")}
           <div className="input-button">
             <input
-              placeholder="留空使用默认模型"
+              placeholder={t("留空使用默认模型")}
               value={form.model}
               onChange={(e) => patch("model", e.target.value)}
               list="models"
@@ -1458,7 +1523,7 @@ function JobForm({
                   .catch(() => {})
               }
             >
-              读取
+              {t("读取")}
             </button>
           </div>
           <datalist id="models">
@@ -1470,32 +1535,32 @@ function JobForm({
           </datalist>
         </label>
         <label>
-          推理强度
+          {t("推理强度")}
           <select
             value={form.effort}
             onChange={(e) => patch("effort", e.target.value)}
           >
             {["", "low", "medium", "high", "xhigh", "max", "ultra"].map((v) => (
               <option key={v} value={v}>
-                {v || "模型默认"}
+                {v || t("模型默认")}
               </option>
             ))}
           </select>
         </label>
       </div>
       <details>
-        <summary>完成校验（可选）</summary>
+        <summary>{t("完成校验（可选）")}</summary>
         <label>
-          完成标记
+          {t("完成标记")}
           <input
             maxLength={80}
-            placeholder="例如 [TASK_DONE]，留空使用默认检查"
+            placeholder={t("例如 [TASK_DONE]，留空使用默认检查")}
             value={form.completionMarker ?? ""}
             onChange={(e) => patch("completionMarker", e.target.value)}
           />
         </label>
         <label>
-          自动补完次数上限
+          {t("自动补完次数上限")}
           <input
             type="number"
             min={0}
@@ -1510,39 +1575,44 @@ function JobForm({
           />
         </label>
         <p className="subtle">
-          要求最终答复最后独立一行出现标记。缺失时继续原会话，达到上限后保留任务等待检查。额度耗尽仍优先暂停轮换，标记不能代替实际验收。
+          {t(
+            "要求最终答复最后独立一行出现标记。缺失时继续原会话，达到上限后保留任务等待检查。额度耗尽仍优先暂停轮换，标记不能代替实际验收。",
+          )}
         </p>
       </details>
       <details>
-        <summary>执行权限</summary>
+        <summary>{t("执行权限")}</summary>
         <div className="form-grid">
           <label>
-            文件权限
+            {t("文件权限")}
             <select
               value={form.sandbox}
               onChange={(e) => patch("sandbox", e.target.value)}
             >
-              <option value="workspaceWrite">允许工作目录读写</option>
-              <option value="readOnly">只读</option>
-              <option value="dangerFullAccess">完整访问（无沙盒）</option>
+              <option value="workspaceWrite">{t("允许工作目录读写")}</option>
+              <option value="readOnly">{t("只读")}</option>
+              <option value="dangerFullAccess">
+                {t("完整访问（无沙盒）")}
+              </option>
             </select>
           </label>
           <label>
-            审批策略
+            {t("审批策略")}
             <select
               value={form.approvalPolicy}
               onChange={(e) => patch("approvalPolicy", e.target.value)}
             >
-              <option value="on-request">需要时由我审批</option>
-              <option value="never">不请求审批，超出权限直接拒绝</option>
+              <option value="on-request">{t("需要时由我审批")}</option>
+              <option value="never">{t("不请求审批，超出权限直接拒绝")}</option>
             </select>
           </label>
         </div>
       </details>
       {form.mode === "desktop" && (
         <p className="notice">
-          客户端模式会启动独立实例，通过可见控件操作，并核对本机会话记录。界面不兼容时会保留任务，需调整设置中的选择器。此模式尚未进行
-          Windows 实机验证。
+          {t(
+            "客户端模式会启动独立实例，通过可见控件操作，并核对本机会话记录。界面不兼容时会保留任务，需调整设置中的选择器。此模式尚未进行 Windows 实机验证。",
+          )}
         </p>
       )}
       <button
@@ -1550,8 +1620,8 @@ function JobForm({
         disabled={busy || !accounts.some((a) => a.enabled)}
       >
         {accounts.some((a) => a.enabled)
-          ? "加入队列并开始 →"
-          : "请先添加并启用账户"}
+          ? t("加入队列并开始 →")
+          : t("请先添加并启用账户")}
       </button>
     </form>
   );
@@ -1563,6 +1633,8 @@ function ApprovalCard({
   approval: Approval;
   respond: (v: unknown) => void;
 }) {
+  useI18n();
+
   const p = a.params as any;
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [json, setJson] = useState("{}");
@@ -1570,21 +1642,25 @@ function ApprovalCard({
   if (a.kind === "permissions")
     return (
       <section className="approval">
-        <h3>需要额外权限</h3>
+        <h3>{t("需要额外权限")}</h3>
         <p>{p.reason}</p>
         <pre>{JSON.stringify(p.permissions, null, 2)}</pre>
         <div className="row gap">
           <button onClick={() => respond({ decision: "accept" })}>
-            仅允许本轮
+            {t("仅允许本轮")}
           </button>
-          <button onClick={() => respond({ decision: "decline" })}>拒绝</button>
+          <button onClick={() => respond({ decision: "decline" })}>
+            {t("拒绝")}
+          </button>
         </div>
       </section>
     );
   if (a.kind === "elicitation")
     return (
       <section className="approval">
-        <h3>{p.serverName} 请求输入</h3>
+        <h3>
+          {p.serverName} {t("请求输入")}
+        </h3>
         <p>{p.message}</p>
         {p.mode === "url" ? (
           <button
@@ -1594,16 +1670,16 @@ function ApprovalCard({
                 .catch((e) => setInputError(String(e)))
             }
           >
-            在浏览器中完成 ↗
+            {t("在浏览器中完成 ↗")}
           </button>
         ) : (
           <>
             <details>
-              <summary>查看表单格式</summary>
+              <summary>{t("查看表单格式")}</summary>
               <pre>{JSON.stringify(p.requestedSchema, null, 2)}</pre>
             </details>
             <label>
-              表单内容（JSON）
+              {t("表单内容（JSON）")}
               <textarea
                 value={json}
                 onChange={(e) => setJson(e.target.value)}
@@ -1626,28 +1702,31 @@ function ApprovalCard({
               }
             }}
           >
-            提交
+            {t("提交")}
           </button>
           <button
             onClick={() =>
               respond({ action: "decline", content: null, _meta: null })
             }
           >
-            拒绝
+            {t("拒绝")}
           </button>
           <button
             onClick={() =>
               respond({ action: "cancel", content: null, _meta: null })
             }
           >
-            取消
+            {t("取消")}
           </button>
         </div>
       </section>
     );
   return (
     <section className="approval">
-      <h3>需要你的{a.kind === "input" ? "输入" : "审批"}</h3>
+      <h3>
+        {t("需要你的")}
+        {a.kind === "input" ? t("输入") : t("审批")}
+      </h3>
       {a.kind === "input" ? (
         <>
           {(p.questions ?? []).map((q: any) => (
@@ -1660,7 +1739,7 @@ function ApprovalCard({
                     setAnswers({ ...answers, [q.id]: e.target.value })
                   }
                 >
-                  <option value="">请选择</option>
+                  <option value="">{t("请选择")}</option>
                   {q.options.map((o: any) => (
                     <option key={o.label} value={o.label}>
                       {o.label} — {o.description}
@@ -1689,7 +1768,7 @@ function ApprovalCard({
               })
             }
           >
-            提交回答
+            {t("提交回答")}
           </button>
         </>
       ) : (
@@ -1700,13 +1779,13 @@ function ApprovalCard({
               className="primary"
               onClick={() => respond({ decision: "accept" })}
             >
-              允许这一次
+              {t("允许这一次")}
             </button>
             <button onClick={() => respond({ decision: "decline" })}>
-              拒绝
+              {t("拒绝")}
             </button>
             <button onClick={() => respond({ decision: "cancel" })}>
-              取消本轮
+              {t("取消本轮")}
             </button>
           </div>
         </>
@@ -1721,6 +1800,8 @@ function SettingsForm({
   settings: Settings;
   command: (name: string, args?: unknown) => Promise<unknown>;
 }) {
+  useI18n();
+
   const [form, setForm] = useState(settings);
   const [saved, setSaved] = useState(false);
   const [detecting, setDetecting] = useState(false);
@@ -1745,15 +1826,15 @@ function SettingsForm({
     >
       <div className="page-title">
         <div>
-          <h1>设置</h1>
-          <p>设置本机 Codex 路径与轮换节奏。</p>
+          <h1>{t("设置")}</h1>
+          <p>{t("设置本机 Codex 路径与轮换节奏。")}</p>
         </div>
         <button className="primary" disabled={saving}>
-          {saving ? "正在保存…" : saved ? "已保存 ✓" : "保存设置"}
+          {saving ? t("正在保存…") : saved ? t("已保存 ✓") : t("保存设置")}
         </button>
       </div>
       <section className="settings-section">
-        <h2>本机程序</h2>
+        <h2>{t("本机程序")}</h2>
         <button
           type="button"
           disabled={checking}
@@ -1765,7 +1846,7 @@ function SettingsForm({
               .finally(() => setChecking(false));
           }}
         >
-          {checking ? "正在检查环境…" : "检查运行环境"}
+          {checking ? t("正在检查环境…") : t("检查运行环境")}
         </button>
         {diagnostics && (
           <div className="environment-checks" role="status">
@@ -1781,7 +1862,7 @@ function SettingsForm({
           </div>
         )}
         <p className="subtle">
-          环境检查使用已保存的 CLI 路径。修改路径后请先保存。
+          {t("环境检查使用已保存的 CLI 路径。修改路径后请先保存。")}
         </p>
         <button
           type="button"
@@ -1803,26 +1884,28 @@ function SettingsForm({
               .finally(() => setDetecting(false));
           }}
         >
-          {detecting ? "正在检测…" : "自动检测官方客户端"}
+          {detecting ? t("正在检测…") : t("自动检测官方客户端")}
         </button>
         {detected && (
           <p className="notice">
             {installations.length
-              ? `发现 ${installations.length} 个安装；选择后保存设置。`
-              : "未找到已知安装位置，请手动选择 Codex.exe。"}
+              ? t("发现 {p0} 个安装；选择后保存设置。", {
+                  p0: installations.length,
+                })
+              : t("未找到已知安装位置，请手动选择 Codex.exe。")}
           </p>
         )}
         {installations.length > 1 && (
           <label>
-            检测到的安装
+            {t("检测到的安装")}
             <select
-              aria-label="选择客户端安装"
+              aria-label={t("选择客户端安装")}
               value={form.desktopPath}
               onChange={(e) =>
                 setForm((p) => ({ ...p, desktopPath: e.target.value }))
               }
             >
-              <option value="">选择一个安装</option>
+              <option value="">{t("选择一个安装")}</option>
               {installations.map((i) => (
                 <option key={i.executable} value={i.executable}>
                   {i.name} · {i.version} · {i.source}
@@ -1848,16 +1931,18 @@ function SettingsForm({
                   .catch(() => {})
               }
             >
-              选择文件
+              {t("选择文件")}
             </button>
           </div>
-          <small>可以填写 codex、codex.exe 或 npm 安装生成的 codex.cmd。</small>
+          <small>
+            {t("可以填写 codex、codex.exe 或 npm 安装生成的 codex.cmd。")}
+          </small>
         </label>
         <label>
-          官方客户端路径（可选）
+          {t("官方客户端路径（可选）")}
           <div className="input-button">
             <input
-              placeholder="留空尝试发现 Microsoft Store 安装"
+              placeholder={t("留空尝试发现 Microsoft Store 安装")}
               value={form.desktopPath}
               onChange={(e) =>
                 setForm({ ...form, desktopPath: e.target.value })
@@ -1873,16 +1958,16 @@ function SettingsForm({
                   .catch(() => {})
               }
             >
-              选择文件
+              {t("选择文件")}
             </button>
           </div>
         </label>
       </section>
       <section className="settings-section">
-        <h2>额度与恢复</h2>
+        <h2>{t("额度与恢复")}</h2>
         <div className="form-grid">
           <label>
-            额度核实间隔 / 秒
+            {t("额度核实间隔 / 秒")}
             <input
               type="number"
               min={10}
@@ -1894,7 +1979,7 @@ function SettingsForm({
             />
           </label>
           <label>
-            未知重置时间的重试间隔 / 秒
+            {t("未知重置时间的重试间隔 / 秒")}
             <input
               type="number"
               min={30}
@@ -1907,7 +1992,7 @@ function SettingsForm({
           </label>
         </div>
         <label>
-          中断后继续执行的提示
+          {t("中断后继续执行的提示")}
           <textarea
             rows={3}
             value={form.resumePrompt}
@@ -1915,14 +2000,17 @@ function SettingsForm({
           />
         </label>
         <div className="notice">
-          所有账户都用尽时，根据每个账户全部受限窗口的重置时间等待。时间到了仍需从服务器确认恢复，不直接假定额度已满。
+          {t(
+            "所有账户都用尽时，根据每个账户全部受限窗口的重置时间等待。时间到了仍需从服务器确认恢复，不直接假定额度已满。",
+          )}
         </div>
       </section>
       <section className="settings-section">
-        <h2>官方客户端适配 · 实验</h2>
+        <h2>{t("官方客户端适配 · 实验")}</h2>
         <p>
-          先检测安装并保存设置。运行 Desktop
-          任务后，可在任务详情打开受管窗口或检查会话与控件。首次启动若出现引导或权限提示，请在官方窗口完成。以下选择器仅在默认适配失败时调整。
+          {t(
+            "先检测安装并保存设置。运行 Desktop 任务后，可在任务详情打开受管窗口或检查会话与控件。首次启动若出现引导或权限提示，请在官方窗口完成。以下选择器仅在默认适配失败时调整。",
+          )}
         </p>
         {Object.entries(form.desktop)
           .filter(([key]) => key !== "projectSelector")
@@ -1931,10 +2019,10 @@ function SettingsForm({
               {
                 (
                   {
-                    editorSelector: "输入框 CSS 选择器",
-                    sendSelector: "发送按钮 CSS 选择器",
-                    stopSelector: "停止按钮 CSS 选择器",
-                    threadSelector: "会话 CSS 选择器，{threadId} 会自动替换",
+                    editorSelector: t("输入框 CSS 选择器"),
+                    sendSelector: t("发送按钮 CSS 选择器"),
+                    stopSelector: t("停止按钮 CSS 选择器"),
+                    threadSelector: t("会话 CSS 选择器，{threadId} 会自动替换"),
                   } as any
                 )[key]
               }

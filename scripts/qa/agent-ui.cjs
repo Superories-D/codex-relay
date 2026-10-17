@@ -451,6 +451,35 @@ const root = path.resolve(__dirname, "../..");
       path: path.join(root, "qa-output/desktop-terminal.png"),
     });
     await page.getByRole("button", { name: "隐藏终端" }).click();
+    await page.getByRole("button", { name: "账户轮换", exact: true }).click();
+    await page.getByRole("button", { name: "常规", exact: true }).click();
+    await page
+      .getByRole("combobox", { name: "语言", exact: true })
+      .selectOption("en");
+    await page.getByRole("heading", { name: "General", exact: true }).waitFor();
+    assert.equal(await page.locator("html").getAttribute("lang"), "en");
+    await page.getByRole("button", { name: "Appearance", exact: true }).click();
+    await page
+      .getByRole("heading", { name: "Appearance", exact: true })
+      .waitFor();
+    await page.screenshot({
+      path: path.join(root, "qa-output/desktop-english.png"),
+    });
+    await page.getByRole("button", { name: "General", exact: true }).click();
+    await page
+      .getByRole("combobox", { name: "Language", exact: true })
+      .selectOption("zh-TW");
+    await page
+      .getByRole("button", { name: "帳戶與接力", exact: true })
+      .waitFor();
+    assert.equal(await page.locator("html").getAttribute("lang"), "zh-TW");
+    await page.screenshot({
+      path: path.join(root, "qa-output/desktop-traditional.png"),
+    });
+    await page
+      .getByRole("combobox", { name: "語言", exact: true })
+      .selectOption("zh-CN");
+    await page.getByRole("button", { name: "返回聊天", exact: true }).click();
     const calls = await page.evaluate(() => window.qaCalls);
     assert.deepEqual(
       calls.filter((c) => c.name === "chat.send").map((c) => c.args.action),
@@ -485,6 +514,7 @@ const root = path.resolve(__dirname, "../..");
           pluginsSkillsMcpPages: true,
           filePreview: true,
           keyboardSearchAndTerminal: true,
+          liveLanguageSwitch: ["en", "zh-TW", "zh-CN"],
           rendererErrors: errors,
         },
         null,

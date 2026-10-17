@@ -1,3 +1,4 @@
+import { t, useI18n } from "./i18n";
 import React, { useEffect, useRef, useState } from "react";
 
 export type ModelOption = {
@@ -20,7 +21,7 @@ const labels: Record<string, string> = {
   max: "极高",
   ultra: "最高",
 };
-const label = (value: string) => labels[value] ?? value;
+const label = (value: string) => t(labels[value] ?? value);
 
 export function ModelPicker({
   model,
@@ -37,6 +38,8 @@ export function ModelPicker({
   setOpen: (open: boolean) => void;
   onChange: (model: string, effort: string) => void;
 }) {
+  useI18n();
+
   const root = useRef<HTMLDivElement>(null);
   const [models, setModels] = useState<ModelOption[]>([]);
   const [loading, setLoading] = useState(false);
@@ -50,8 +53,8 @@ export function ModelPicker({
   const value = effort || current?.defaultReasoningEffort || "";
   const index = options.findIndex((o) => o.reasoningEffort === value);
   const fraction = Math.max(0, index) / Math.max(1, options.length - 1);
-  const name = current?.displayName || model || "默认模型";
-  const strength = value ? label(value) : "默认强度";
+  const name = current?.displayName || model || t("默认模型");
+  const strength = value ? label(value) : t("默认强度");
 
   useEffect(() => {
     let alive = true;
@@ -106,7 +109,7 @@ export function ModelPicker({
     <div className="agent-model-picker" ref={root}>
       <button
         className="agent-model-trigger"
-        aria-label="选择模型和思考强度"
+        aria-label={t("选择模型和思考强度")}
         aria-expanded={open}
         aria-haspopup="dialog"
         onClick={() => setOpen(!open)}
@@ -119,7 +122,7 @@ export function ModelPicker({
         <div
           className="agent-model-popover"
           role="dialog"
-          aria-label="模型和思考强度"
+          aria-label={t("模型和思考强度")}
         >
           <div className="agent-model-heading">
             <span className="agent-model-bolt" aria-hidden="true">
@@ -137,8 +140,8 @@ export function ModelPicker({
             </span>
             <strong>{strength}</strong>
             <button
-              aria-label="重置思考强度"
-              title="恢复此模型的默认思考强度"
+              aria-label={t("重置思考强度")}
+              title={t("恢复此模型的默认思考强度")}
               disabled={!current}
               onClick={() => onChange(model, current!.defaultReasoningEffort)}
             >
@@ -165,22 +168,26 @@ export function ModelPicker({
           </button>
           {loading ? (
             <p className="agent-model-note" role="status">
-              正在读取 CLI 模型…
+              {t("正在读取 CLI 模型…")}
             </p>
           ) : error ? (
             <div className="agent-model-note" role="alert">
               {error}
-              <button onClick={() => setRetry((n) => n + 1)}>重新读取</button>
+              <button onClick={() => setRetry((n) => n + 1)}>
+                {t("重新读取")}
+              </button>
             </div>
           ) : !accountId ? (
-            <p className="agent-model-note">请先在账户中添加并启用登录。</p>
+            <p className="agent-model-note">
+              {t("请先在账户中添加并启用登录。")}
+            </p>
           ) : (
             <>
               {list ? (
                 <div
                   className="agent-model-list"
                   role="group"
-                  aria-label="可用模型"
+                  aria-label={t("可用模型")}
                 >
                   {models
                     .filter((m) => !m.hidden || m === current)
@@ -204,13 +211,15 @@ export function ModelPicker({
                       >
                         <span>
                           {m.displayName || m.model}
-                          {m.isDefault ? " · 默认" : ""}
+                          {m.isDefault ? t(" · 默认") : ""}
                         </span>
                         <small>{m.description}</small>
                       </button>
                     ))}
                   {!models.length && (
-                    <p className="agent-model-note">CLI 未返回可用模型。</p>
+                    <p className="agent-model-note">
+                      {t("CLI 未返回可用模型。")}
+                    </p>
                   )}
                 </div>
               ) : (
@@ -233,7 +242,7 @@ export function ModelPicker({
                         </div>
                         <input
                           type="range"
-                          aria-label="思考强度"
+                          aria-label={t("思考强度")}
                           aria-valuetext={strength}
                           min={0}
                           max={Math.max(1, options.length - 1)}
@@ -254,15 +263,15 @@ export function ModelPicker({
                       </div>
                       {index < 0 && (
                         <p className="agent-model-note">
-                          此模型不支持已保存的强度，请选择新档位。
+                          {t("此模型不支持已保存的强度，请选择新档位。")}
                         </p>
                       )}
                     </div>
                   ) : (
                     <p className="agent-model-note">
                       {current
-                        ? "此模型未提供可调思考强度。"
-                        : "选择模型以查看可用思考强度。"}
+                        ? t("此模型未提供可调思考强度。")
+                        : t("选择模型以查看可用思考强度。")}
                     </p>
                   )}
                 </>

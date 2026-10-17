@@ -322,6 +322,7 @@ async function boot() {
           z
             .object({
               theme: z.enum(["dark", "light", "system"]).optional(),
+              language: z.enum(["auto", "zh-CN", "zh-TW", "en"]).optional(),
               notifications: z.boolean().optional(),
               textSize: z.number().int().min(12).max(20).optional(),
               codeSize: z.number().int().min(10).max(20).optional(),

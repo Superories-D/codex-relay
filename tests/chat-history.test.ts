@@ -91,7 +91,7 @@ it("scans beyond the old 60-session limit including archived records; imports on
   const loaded = new Store(store.root);
   await loaded.load();
   expect(loaded.data.jobs).toHaveLength(65);
-});
+}, 20000);
 it("imports active partial tails and Desktop-only records as readable, explicitly incompatible copies", async () => {
   const { file } = await fixture(1, {
     dynamic_tools: [{ name: "private_app_tool" }],

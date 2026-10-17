@@ -1,3 +1,4 @@
+import { t, useI18n, formatDate } from "./i18n";
 import React, { useEffect, useState } from "react";
 import {
   ArrowLeft,
@@ -36,6 +37,8 @@ export function ExtensionsPage({
   call: Call;
   close: () => void;
 }) {
+  useI18n();
+
   const [tab, setTab] = useState(initial),
     [query, setQuery] = useState(""),
     [data, setData] = useState<any>(),
@@ -94,11 +97,11 @@ export function ExtensionsPage({
   return (
     <div className="feature-page">
       <header className="feature-header">
-        <button aria-label="返回聊天" onClick={close}>
+        <button aria-label={t("返回聊天")} onClick={close}>
           <ArrowLeft size={19} />
         </button>
-        <span>工具与能力</span>
-        <button title="刷新" onClick={() => void load()} disabled={busy}>
+        <span>{t("工具与能力")}</span>
+        <button title={t("刷新")} onClick={() => void load()} disabled={busy}>
           <RefreshCw size={17} className={busy ? "spin" : ""} />
         </button>
       </header>
@@ -106,9 +109,9 @@ export function ExtensionsPage({
         <nav className="feature-nav">
           {(
             [
-              ["plugins", "插件", Blocks],
+              ["plugins", t("插件"), Blocks],
               ["skills", "Skills", Sparkles],
-              ["mcp", "MCP 服务器", Network],
+              ["mcp", t("MCP 服务器"), Network],
             ] as const
           ).map(([key, label, Icon]) => (
             <button
@@ -128,29 +131,31 @@ export function ExtensionsPage({
                 {tab === "skills"
                   ? "Skills"
                   : tab === "mcp"
-                    ? "MCP 服务器"
-                    : "插件"}
+                    ? t("MCP 服务器")
+                    : t("插件")}
               </h1>
               <p>
                 {tab === "skills"
-                  ? "给 Codex 更多做事的方法。技能会在合适的任务中自动使用。"
+                  ? t("给 Codex 更多做事的方法。技能会在合适的任务中自动使用。")
                   : tab === "mcp"
-                    ? "连接工具、数据和服务，让 Codex 在任务中直接使用。"
-                    : "为你的工作添加工具、技能和应用连接。"}
+                    ? t("连接工具、数据和服务，让 Codex 在任务中直接使用。")
+                    : t("为你的工作添加工具、技能和应用连接。")}
               </p>
             </div>
             {tab === "mcp" && (
               <button className="solid-button" onClick={() => setMcp(true)}>
                 <Plus size={15} />
-                添加服务器
+                {t("添加服务器")}
               </button>
             )}
           </div>
           <div className="feature-search">
             <Search size={17} />
             <input
-              aria-label="搜索工具"
-              placeholder={tab === "plugins" ? "搜索插件…" : "搜索名称和描述…"}
+              aria-label={t("搜索工具")}
+              placeholder={
+                tab === "plugins" ? t("搜索插件…") : t("搜索名称和描述…")
+              }
               value={query}
               onChange={(e) => setQuery(e.target.value)}
             />
@@ -158,13 +163,13 @@ export function ExtensionsPage({
           {error && (
             <div className="feature-error" role="alert">
               <p>{error}</p>
-              <button onClick={() => void load()}>重试</button>
+              <button onClick={() => void load()}>{t("重试")}</button>
             </div>
           )}
           {busy && !data && (
             <div className="feature-loading">
               <LoaderCircle size={22} className="spin" />
-              <p>正在读取你的 CLI 能力…</p>
+              <p>{t("正在读取你的 CLI 能力…")}</p>
             </div>
           )}
           <div className="feature-grid">
@@ -189,19 +194,22 @@ export function ExtensionsPage({
                     {entry.description ||
                       entry.interface?.shortDescription ||
                       (tab === "mcp"
-                        ? `${Object.keys(entry.tools || {}).length} 个工具 · ${entry.authStatus}`
+                        ? t("{p0} 个工具 · {p1}", {
+                            p0: Object.keys(entry.tools || {}).length,
+                            p1: entry.authStatus,
+                          })
                         : "")}
                   </p>
                   <small>
                     {tab === "skills"
                       ? entry.enabled
-                        ? "已启用"
-                        : "已停用"
+                        ? t("已启用")
+                        : t("已停用")
                       : tab === "mcp"
-                        ? entry.runtimeStatus?.status || "已配置"
+                        ? entry.runtimeStatus?.status || t("已配置")
                         : entry.installed
-                          ? "已安装"
-                          : entry.interface?.developerName || "查看详情"}
+                          ? t("已安装")
+                          : entry.interface?.developerName || t("查看详情")}
                   </small>
                 </div>
                 <ChevronRight size={15} />
@@ -213,17 +221,19 @@ export function ExtensionsPage({
               <Blocks size={32} strokeWidth={1} />
               <h3>
                 {query
-                  ? "没有匹配的结果"
+                  ? t("没有匹配的结果")
                   : tab === "mcp"
-                    ? "还没有配置 MCP 服务器"
+                    ? t("还没有配置 MCP 服务器")
                     : tab === "skills"
-                      ? "当前目录没有可用技能"
-                      : "CLI 没有返回可用插件"}
+                      ? t("当前目录没有可用技能")
+                      : t("CLI 没有返回可用插件")}
               </h3>
               <p>
                 {tab === "skills"
-                  ? "项目技能放在 .agents/skills 或 .codex/skills 中；客户端全局技能保存在数据目录的 cli-profile/skills。"
-                  : "可以刷新，或检查当前账户及网络连接。"}
+                  ? t(
+                      "项目技能放在 .agents/skills 或 .codex/skills 中；客户端全局技能保存在数据目录的 cli-profile/skills。",
+                    )
+                  : t("可以刷新，或检查当前账户及网络连接。")}
               </p>
             </div>
           )}
@@ -246,11 +256,11 @@ export function ExtensionsPage({
           <section
             className="feature-detail"
             role="dialog"
-            aria-label="工具详情"
+            aria-label={t("工具详情")}
           >
             <button
               className="detail-close"
-              aria-label="关闭详情"
+              aria-label={t("关闭详情")}
               onClick={() => setSelected(undefined)}
             >
               <X size={20} />
@@ -275,9 +285,9 @@ export function ExtensionsPage({
                 <small>
                   {selected.httpOrigin ||
                     selected.serverInfo?.name ||
-                    "本地工具进程"}
+                    t("本地工具进程")}
                 </small>
-                <h3>工具</h3>
+                <h3>{t("工具")}</h3>
                 <div className="mcp-tools">
                   {Object.entries(selected.tools || {}).map(
                     ([name, tool]: [string, any]) => (
@@ -308,7 +318,8 @@ export function ExtensionsPage({
                     }
                   }}
                 >
-                  登录 / 重新授权 <ArrowUpRight size={15} />
+                  {t("登录 / 重新授权")}
+                  <ArrowUpRight size={15} />
                 </button>
               </>
             ) : (
@@ -354,11 +365,11 @@ export function ExtensionsPage({
                 )}
                 {tab === "skills"
                   ? selected.enabled
-                    ? "停用技能"
-                    : "启用技能"
+                    ? t("停用技能")
+                    : t("启用技能")
                   : selected.installed
-                    ? "卸载插件"
-                    : "安装插件"}
+                    ? t("卸载插件")
+                    : t("安装插件")}
               </button>
             )}
             {error && <p className="panel-error">{error}</p>}
@@ -389,6 +400,8 @@ function McpForm({
   close: () => void;
   save: (value: { name: string; config: any }) => Promise<void>;
 }) {
+  useI18n();
+
   const [name, setName] = useState(""),
     [type, setType] = useState("http"),
     [url, setUrl] = useState(""),
@@ -401,11 +414,11 @@ function McpForm({
       <form
         className="feature-detail"
         role="dialog"
-        aria-label="添加 MCP 服务器"
+        aria-label={t("添加 MCP 服务器")}
         onSubmit={(e) => {
           e.preventDefault();
           if (!/^[\w-]+$/.test(name)) {
-            setError("名称只允许字母、数字、下划线和短横线");
+            setError(t("名称只允许字母、数字、下划线和短横线"));
             return;
           }
           setBusy(true);
@@ -427,14 +440,14 @@ function McpForm({
         <button
           type="button"
           className="detail-close"
-          aria-label="取消添加"
+          aria-label={t("取消添加")}
           onClick={close}
         >
           <X size={20} />
         </button>
-        <h2>添加 MCP 服务器</h2>
+        <h2>{t("添加 MCP 服务器")}</h2>
         <label>
-          名称
+          {t("名称")}
           <input
             required
             value={name}
@@ -443,15 +456,15 @@ function McpForm({
           />
         </label>
         <label>
-          连接方式
+          {t("连接方式")}
           <select value={type} onChange={(e) => setType(e.target.value)}>
             <option value="http">HTTP</option>
-            <option value="stdio">本地进程（stdio）</option>
+            <option value="stdio">{t("本地进程（stdio）")}</option>
           </select>
         </label>
         {type === "http" ? (
           <label>
-            服务器 URL
+            {t("服务器 URL")}
             <input
               required
               type="url"
@@ -463,7 +476,7 @@ function McpForm({
         ) : (
           <>
             <label>
-              可执行程序
+              {t("可执行程序")}
               <input
                 required
                 value={command}
@@ -472,7 +485,7 @@ function McpForm({
               />
             </label>
             <label>
-              参数（每行一个）
+              {t("参数（每行一个）")}
               <textarea
                 value={args}
                 onChange={(e) => setArgs(e.target.value)}
@@ -487,7 +500,7 @@ function McpForm({
           </p>
         )}
         <button disabled={busy} className="solid-button">
-          {busy ? "正在保存…" : "保存服务器"}
+          {busy ? t("正在保存…") : t("保存服务器")}
         </button>
       </form>
     </div>
@@ -508,6 +521,8 @@ export function SchedulesPage({
   close: () => void;
   select: (id: string) => void;
 }) {
+  useI18n();
+
   const [form, setForm] = useState<Partial<ScheduledTask>>(),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
@@ -527,22 +542,24 @@ export function SchedulesPage({
   return (
     <div className="feature-page">
       <header className="feature-header">
-        <button aria-label="返回聊天" onClick={close}>
+        <button aria-label={t("返回聊天")} onClick={close}>
           <ArrowLeft size={19} />
         </button>
-        <span>定时任务</span>
+        <span>{t("定时任务")}</span>
       </header>
       <div className="scheduled-main">
         <div className="feature-title">
           <div>
-            <h1>让工作按时继续</h1>
+            <h1>{t("让工作按时继续")}</h1>
             <p>
-              把重复的工作交给 Codex。任务运行时，需要保持本机和客户端开启。
+              {t(
+                "把重复的工作交给 Codex。任务运行时，需要保持本机和客户端开启。",
+              )}
             </p>
           </div>
           <button className="solid-button" onClick={add}>
             <Plus size={16} />
-            新建定时任务
+            {t("新建定时任务")}
           </button>
         </div>
         {error && (
@@ -554,16 +571,16 @@ export function SchedulesPage({
           <div className="schedule-suggestions">
             {[
               [
-                "每天检查项目",
-                "检查项目的新变更、构建状态和潜在问题，给出简短报告。",
+                t("每天检查项目"),
+                t("检查项目的新变更、构建状态和潜在问题，给出简短报告。"),
               ],
               [
-                "定期整理待办",
-                "查看项目中的 TODO 与待处理事项，整理下一步的工作建议。",
+                t("定期整理待办"),
+                t("查看项目中的 TODO 与待处理事项，整理下一步的工作建议。"),
               ],
               [
-                "每周代码回顾",
-                "回顾本周提交，概括变更和需要进一步测试的部分。",
+                t("每周代码回顾"),
+                t("回顾本周提交，概括变更和需要进一步测试的部分。"),
               ],
             ].map(([title, prompt]) => (
               <button
@@ -603,14 +620,23 @@ export function SchedulesPage({
                   </button>
                   <p>
                     {task.cadence === "interval"
-                      ? `每 ${task.minutes} 分钟`
+                      ? t("每 {p0} 分钟", { p0: task.minutes })
                       : task.cadence === "weekly"
-                        ? `每周 ${["日", "一", "二", "三", "四", "五", "六"][task.weekday]} ${String(task.hour).padStart(2, "0")}:${String(task.minute).padStart(2, "0")}`
-                        : `每天 ${String(task.hour).padStart(2, "0")}:${String(task.minute).padStart(2, "0")}`}{" "}
+                        ? t("每周 {p0} {p1}:{p2}", {
+                            p0: ["日", "一", "二", "三", "四", "五", "六"][
+                              task.weekday
+                            ],
+                            p1: String(task.hour).padStart(2, "0"),
+                            p2: String(task.minute).padStart(2, "0"),
+                          })
+                        : t("每天 {p0}:{p1}", {
+                            p0: String(task.hour).padStart(2, "0"),
+                            p1: String(task.minute).padStart(2, "0"),
+                          })}{" "}
                     ·{" "}
                     {task.enabled
-                      ? `下次 ${new Date(task.nextRun).toLocaleString()}`
-                      : "已暂停"}
+                      ? t("下次 {p0}", { p0: formatDate(task.nextRun) })
+                      : t("已暂停")}
                   </p>
                   {task.lastError && (
                     <p className="panel-error">{task.lastError}</p>
@@ -620,12 +646,13 @@ export function SchedulesPage({
                       className="text-link"
                       onClick={() => select(task.lastJobId!)}
                     >
-                      查看上次运行 <ArrowUpRight size={13} />
+                      {t("查看上次运行")}
+                      <ArrowUpRight size={13} />
                     </button>
                   )}
                 </div>
                 <button
-                  title={task.enabled ? "暂停定时任务" : "启用定时任务"}
+                  title={task.enabled ? t("暂停定时任务") : t("启用定时任务")}
                   onClick={async () => {
                     try {
                       const {
@@ -648,7 +675,7 @@ export function SchedulesPage({
                   <Power size={16} />
                 </button>
                 <button
-                  title="立即运行一次"
+                  title={t("立即运行一次")}
                   disabled={busy}
                   onClick={async () => {
                     setBusy(true);
@@ -675,7 +702,7 @@ export function SchedulesPage({
           <form
             className="feature-detail schedule-form"
             role="dialog"
-            aria-label="编辑定时任务"
+            aria-label={t("编辑定时任务")}
             onSubmit={(e) => {
               e.preventDefault();
               setBusy(true);
@@ -693,14 +720,14 @@ export function SchedulesPage({
             <button
               type="button"
               className="detail-close"
-              aria-label="关闭定时任务编辑"
+              aria-label={t("关闭定时任务编辑")}
               onClick={() => setForm(undefined)}
             >
               <X size={19} />
             </button>
-            <h2>{form.id ? "编辑定时任务" : "新建定时任务"}</h2>
+            <h2>{form.id ? t("编辑定时任务") : t("新建定时任务")}</h2>
             <label>
-              名称
+              {t("名称")}
               <input
                 required
                 value={form.title}
@@ -708,7 +735,7 @@ export function SchedulesPage({
               />
             </label>
             <label>
-              任务内容
+              {t("任务内容")}
               <textarea
                 required
                 rows={4}
@@ -717,7 +744,7 @@ export function SchedulesPage({
               />
             </label>
             <label>
-              项目目录
+              {t("项目目录")}
               <div className="directory-field">
                 <input
                   required
@@ -732,13 +759,13 @@ export function SchedulesPage({
                     )
                   }
                 >
-                  选择
+                  {t("选择")}
                 </button>
               </div>
             </label>
             <div className="schedule-time">
               <label>
-                频率
+                {t("频率")}
                 <select
                   value={form.cadence}
                   onChange={(e) =>
@@ -748,14 +775,14 @@ export function SchedulesPage({
                     })
                   }
                 >
-                  <option value="daily">每天</option>
-                  <option value="weekly">每周</option>
-                  <option value="interval">固定间隔</option>
+                  <option value="daily">{t("每天")}</option>
+                  <option value="weekly">{t("每周")}</option>
+                  <option value="interval">{t("固定间隔")}</option>
                 </select>
               </label>
               {form.cadence === "interval" ? (
                 <label>
-                  间隔（分钟）
+                  {t("间隔（分钟）")}
                   <input
                     type="number"
                     min={5}
@@ -769,7 +796,7 @@ export function SchedulesPage({
               ) : (
                 <>
                   <label>
-                    时间
+                    {t("时间")}
                     <input
                       type="time"
                       required
@@ -784,20 +811,27 @@ export function SchedulesPage({
                   </label>
                   {form.cadence === "weekly" && (
                     <label>
-                      星期
+                      {t("星期")}
                       <select
                         value={form.weekday}
                         onChange={(e) =>
                           setForm({ ...form, weekday: Number(e.target.value) })
                         }
                       >
-                        {["日", "一", "二", "三", "四", "五", "六"].map(
-                          (value, i) => (
-                            <option value={i} key={i}>
-                              周{value}
-                            </option>
-                          ),
-                        )}
+                        {[
+                          t("日"),
+                          t("一"),
+                          t("二"),
+                          t("三"),
+                          t("四"),
+                          t("五"),
+                          t("六"),
+                        ].map((value, i) => (
+                          <option value={i} key={i}>
+                            {t("周")}
+                            {value}
+                          </option>
+                        ))}
                       </select>
                     </label>
                   )}
@@ -812,7 +846,7 @@ export function SchedulesPage({
                   setForm({ ...form, worktree: e.target.checked })
                 }
               />
-              在独立 Git Worktree 中运行
+              {t("在独立 Git Worktree 中运行")}
             </label>
             {error && (
               <p role="alert" className="panel-error">
@@ -823,7 +857,7 @@ export function SchedulesPage({
               {form.id && (
                 <button
                   type="button"
-                  title="删除定时任务"
+                  title={t("删除定时任务")}
                   onClick={() =>
                     void call("schedule.remove", form.id)
                       .then(() => {
@@ -837,7 +871,7 @@ export function SchedulesPage({
                 </button>
               )}
               <button className="solid-button" disabled={busy}>
-                {busy ? "正在保存…" : "保存定时任务"}
+                {busy ? t("正在保存…") : t("保存定时任务")}
               </button>
             </div>
           </form>

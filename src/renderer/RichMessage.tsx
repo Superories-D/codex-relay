@@ -1,3 +1,4 @@
+import { t, useI18n } from "./i18n";
 import React, { useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -23,6 +24,8 @@ export function MarkdownText({
   text: string;
   onOpen?: (path: string) => void;
 }) {
+  useI18n();
+
   return (
     <div className="rich-markdown">
       <Markdown
@@ -47,7 +50,10 @@ export function MarkdownText({
           ),
           pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
           img: ({ alt }) => (
-            <span className="markdown-image">图片 · {alt || "附件"}</span>
+            <span className="markdown-image">
+              {t("图片 ·")}
+              {alt || t("附件")}
+            </span>
           ),
         }}
       >
@@ -57,6 +63,8 @@ export function MarkdownText({
   );
 }
 function CodeBlock({ children }: { children?: React.ReactNode }) {
+  useI18n();
+
   const [copied, setCopied] = useState(false);
   const child = React.Children.toArray(children)[0] as
     | React.ReactElement<{ className?: string }>
@@ -65,10 +73,10 @@ function CodeBlock({ children }: { children?: React.ReactNode }) {
     <div className="code-block">
       <div>
         <span>
-          {child?.props?.className?.match(/language-(\S+)/)?.[1] || "代码"}
+          {child?.props?.className?.match(/language-(\S+)/)?.[1] || t("代码")}
         </span>
         <button
-          title="复制代码"
+          title={t("复制代码")}
           onClick={(e) => {
             const text =
               e.currentTarget.closest(".code-block")?.querySelector("pre")
@@ -80,7 +88,7 @@ function CodeBlock({ children }: { children?: React.ReactNode }) {
           }}
         >
           {copied ? <Check size={13} /> : <Copy size={13} />}
-          {copied ? "已复制" : "复制代码"}
+          {copied ? t("已复制") : t("复制代码")}
         </button>
       </div>
       <pre>{children}</pre>
@@ -98,6 +106,8 @@ function RichMessageView({
   onAgents: () => void;
   onChanges: () => void;
 }) {
+  useI18n();
+
   const [copied, setCopied] = useState(false);
   if (item.role === "tool") {
     const agent = ["collabAgentToolCall", "subAgentActivity"].includes(
@@ -134,19 +144,19 @@ function RichMessageView({
             </span>
             <span>
               {reasoning
-                ? "思考过程"
+                ? t("思考过程")
                 : files
                   ? paths.length
-                    ? `已编辑 ${paths.length} 个文件`
-                    : "文件变更"
+                    ? t("已编辑 {p0} 个文件", { p0: paths.length })
+                    : t("文件变更")
                   : agent
                     ? item.text
                     : plan
-                      ? "执行计划"
+                      ? t("执行计划")
                       : item.text.slice(0, 180)}
             </span>
             <span className="activity-status">
-              {status ? "进行中" : item.status === "failed" ? "失败" : ""}
+              {status ? t("进行中") : item.status === "failed" ? t("失败") : ""}
             </span>
             <ChevronDown size={14} />
           </summary>
@@ -172,12 +182,14 @@ function RichMessageView({
         </details>
         {files && (
           <button className="activity-action" onClick={onChanges}>
-            查看更改 <ChevronRight size={13} />
+            {t("查看更改")}
+            <ChevronRight size={13} />
           </button>
         )}
         {agent && (
           <button className="activity-action" onClick={onAgents}>
-            查看子代理 <ChevronRight size={13} />
+            {t("查看子代理")}
+            <ChevronRight size={13} />
           </button>
         )}
       </div>
@@ -202,8 +214,8 @@ function RichMessageView({
       {item.role === "assistant" && (
         <div className="message-actions">
           <button
-            aria-label="复制回答"
-            title="复制回答"
+            aria-label={t("复制回答")}
+            title={t("复制回答")}
             onClick={() =>
               void navigator.clipboard.writeText(item.text).then(() => {
                 setCopied(true);
