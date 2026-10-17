@@ -13,6 +13,7 @@ import {
   powerSaveBlocker,
   Notification,
   nativeTheme,
+  clipboard,
 } from "electron";
 import path from "node:path";
 import { promises as fs } from "node:fs";
@@ -56,6 +57,7 @@ import { Rpc } from "../core/rpc";
 import { capabilities } from "../shared/capabilities";
 import { resolveLanguage, translate } from "../shared/locale";
 import { BackgroundHistoryImport } from "../core/history-import";
+import { Attachments, clipboardFilePaths } from "../core/attachments";
 app.setName("Codex Relay");
 const startupTrace = (stage: string) => {
   if (process.env.CODEX_RELAY_STARTUP_TRACE === "1")
@@ -180,6 +182,7 @@ async function boot() {
     new WindowsExistingDriver(path.join(dataRoot, "session-requests"), scripts),
   );
   const history = new History(store, scheduler.chats);
+  const attachments = new Attachments(store.root);
   const backgroundHistory = new BackgroundHistoryImport(
     store,
     desktop,
@@ -796,15 +799,56 @@ async function boot() {
           title: nativeText("添加图片或项目文件"),
           properties: ["openFile", "multiSelections"],
         });
-        return r.canceled
-          ? []
-          : r.filePaths.slice(0, 20).map((p) => ({
-              type: /\.(png|jpe?g|webp|gif)$/i.test(p)
-                ? "localImage"
-                : "mention",
-              path: p,
-              name: path.basename(p),
-            }));
+        return r.canceled ? [] : attachments.files(r.filePaths);
+      }
+      case "chat.attachments.files": {
+        const a = z
+          .object({ paths: z.array(z.string().max(32768)).max(20) })
+          .strict()
+          .parse(args);
+        return attachments.files(a.paths);
+      }
+      case "chat.attachments.upload": {
+        const a = z
+          .object({
+            files: z
+              .array(
+                z
+                  .object({
+                    name: z.string().max(255),
+                    data: z.string().max(89478488),
+                  })
+                  .strict(),
+              )
+              .max(20),
+          })
+          .strict()
+          .parse(args);
+        return attachments.upload(a.files);
+      }
+      case "chat.attachments.clipboard": {
+        const items = await clipboard.read();
+        for (const item of items) {
+          if (item.types.includes("text/uri-list")) {
+            const paths = clipboardFilePaths(
+              await (await item.getType("text/uri-list")).text(),
+            );
+            if (paths.length) return attachments.files(paths);
+          }
+        }
+        for (const item of items) {
+          if (!item.types.includes("image/png")) continue;
+          const image = await item.getType("image/png");
+          if (image.size > 64 * 1024 * 1024)
+            throw Error("附件内容无效或超过 64 MiB");
+          return attachments.upload([
+            {
+              name: `clipboard-${Date.now()}.png`,
+              data: Buffer.from(await image.arrayBuffer()).toString("base64"),
+            },
+          ]);
+        }
+        return [];
       }
       case "link.open": {
         const url = new URL(z.string().max(10000).parse(args));

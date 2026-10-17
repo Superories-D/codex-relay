@@ -12,7 +12,9 @@ import type {
 import { capabilities } from "../shared/capabilities";
 import { Dialog } from "./Dialog";
 import { ModelPicker } from "./ModelPicker";
-import { RichMessage } from "./RichMessage";
+import { ActivityTimeline } from "./ActivityTimeline";
+import { importPastedFiles } from "./paste-files";
+import { MotionRegion } from "./MotionRegion";
 import { mergePage } from "./chat-view";
 import { TerminalPane } from "./TerminalPane";
 import { Workbench, type WorkbenchTab } from "./Workbench";
@@ -159,6 +161,8 @@ export function AgentApp({
     }
   });
   const [files, setFiles] = useState<Record<string, ChatAttachment[]>>({});
+  const [pasting, setPasting] = useState<Record<string, number>>({});
+  const pasteLocks = useRef(new Map<string, number>());
   const [cwd, setCwd] = useState(
     () => localStorage.getItem("relay.project") || "",
   );
@@ -211,6 +215,27 @@ export function AgentApp({
     void fn()
       .catch((e) => setError(String(e).replace(/^Error: /, "")))
       .finally(() => setPending(false));
+  };
+  const addPastedFiles = (
+    target: string,
+    operation: () => Promise<ChatAttachment[]>,
+  ) => {
+    pasteLocks.current.set(target, (pasteLocks.current.get(target) || 0) + 1);
+    setPasting(Object.fromEntries(pasteLocks.current));
+    void operation()
+      .then((added) => {
+        setFiles((previous) => ({
+          ...previous,
+          [target]: [...(previous[target] || []), ...added].slice(0, 20),
+        }));
+      })
+      .catch((e) => setError(t(String(e).replace(/^Error: /, ""))))
+      .finally(() => {
+        const remaining = (pasteLocks.current.get(target) || 1) - 1;
+        if (remaining) pasteLocks.current.set(target, remaining);
+        else pasteLocks.current.delete(target);
+        setPasting(Object.fromEntries(pasteLocks.current));
+      });
   };
   const refreshDesktop = () => {
     void window.relay
@@ -421,6 +446,7 @@ export function AgentApp({
     mode: "send" | "queue" | "steer" = "send",
     review = false,
   ) => {
+    if (pasteLocks.current.has(key)) return;
     if (!draft.trim() && !review) return;
     const slash = draft.trim().match(/^\/([a-z]+)(?:\s+(.*))?$/s);
     if (slash && !review) {
@@ -1121,28 +1147,26 @@ export function AgentApp({
                         {t("加载更早的消息")}
                       </button>
                     )}
-                    {allItems.map((item) => (
-                      <RichMessage
-                        key={`${job?.id}:${item.id}`}
-                        item={item}
-                        onSource={() => {
-                          void call("chat.source.open", {
-                            id: selectedRef.current,
-                          }).catch(() => {});
-                        }}
-                        onOpen={openFile}
-                        onAgents={() => {
-                          setWorkspaceTab("agents");
-                          setInspector(true);
-                          setPreviewFile("");
-                        }}
-                        onChanges={() => {
-                          setWorkspaceTab("changes");
-                          setInspector(true);
-                          setPreviewFile("");
-                        }}
-                      />
-                    ))}
+                    <ActivityTimeline
+                      scope={job?.id || "new"}
+                      items={allItems}
+                      onSource={() => {
+                        void call("chat.source.open", {
+                          id: selectedRef.current,
+                        }).catch(() => {});
+                      }}
+                      onOpen={openFile}
+                      onAgents={() => {
+                        setWorkspaceTab("agents");
+                        setInspector(true);
+                        setPreviewFile("");
+                      }}
+                      onChanges={() => {
+                        setWorkspaceTab("changes");
+                        setInspector(true);
+                        setPreviewFile("");
+                      }}
+                    />
                     {job && !allItems.length && (
                       <p className="agent-muted">
                         {running(job)
@@ -1181,7 +1205,29 @@ export function AgentApp({
                   </div>
                 </div>
                 <div className="agent-composer-wrap">
-                  <div className="agent-composer">
+                  <div
+                    className={`agent-composer ${pasting[key] ? "is-pasting" : ""}`}
+                    onDragOver={(event) => {
+                      if (
+                        Array.from(event.dataTransfer.types).includes(
+                          "Files",
+                        ) &&
+                        !job?.archived &&
+                        !job?.historySource?.issue
+                      ) {
+                        event.preventDefault();
+                        event.dataTransfer.dropEffect = "copy";
+                      }
+                    }}
+                    onDrop={(event) => {
+                      if (!event.dataTransfer.files.length) return;
+                      event.preventDefault();
+                      if (job?.archived || job?.historySource?.issue) return;
+                      const dropped = Array.from(event.dataTransfer.files);
+                      addPastedFiles(key, () => importPastedFiles(dropped));
+                      messageInput.current?.focus();
+                    }}
+                  >
                     {draft.startsWith("/") && !draft.includes(" ") && (
                       <div
                         className="slash-commands"
@@ -1236,6 +1282,12 @@ export function AgentApp({
                         ))}
                       </div>
                     )}
+                    {!!pasting[key] && (
+                      <div className="attachment-progress" role="status">
+                        <LoaderCircle size={14} className="spin" />
+                        {t("正在添加附件…")}
+                      </div>
+                    )}
                     <textarea
                       ref={messageInput}
                       aria-label={t("消息")}
@@ -1251,6 +1303,18 @@ export function AgentApp({
                       onChange={(e) =>
                         setDrafts((d) => ({ ...d, [key]: e.target.value }))
                       }
+                      onPaste={(event) => {
+                        const pasted = Array.from(event.clipboardData.files);
+                        if (pasted.length) {
+                          event.preventDefault();
+                          addPastedFiles(key, () => importPastedFiles(pasted));
+                        } else if (!event.clipboardData.getData("text/plain")) {
+                          // Explorer file lists can omit browser File objects.
+                          addPastedFiles(key, () =>
+                            call("chat.attachments.clipboard"),
+                          );
+                        }
+                      }}
                       onKeyDown={(e) => {
                         if (
                           e.key === "Enter" &&
@@ -1475,6 +1539,7 @@ export function AgentApp({
                           }
                           disabled={
                             pending ||
+                            !!pasting[key] ||
                             !draft.trim() ||
                             !!job?.archived ||
                             !!job?.historySource?.issue
@@ -1561,7 +1626,11 @@ export function AgentApp({
                   </div>
                 </div>
               </div>
-              {inspector && (
+              <MotionRegion
+                open={inspector}
+                axis="horizontal"
+                preview={!!previewFile}
+              >
                 <Workbench
                   tab={workspaceTab}
                   setTab={setWorkspaceTab}
@@ -1576,15 +1645,15 @@ export function AgentApp({
                     setDrafts((d) => ({ ...d, [key]: text }));
                   }}
                 />
-              )}
+              </MotionRegion>
             </div>
-            {terminal && (
+            <MotionRegion open={terminal} axis="vertical">
               <TerminalPane
                 cwd={currentCwd}
                 call={call}
                 close={() => setTerminal(false)}
               />
-            )}
+            </MotionRegion>
           </main>
         )}
         {threadMenu && (

@@ -575,6 +575,20 @@ export const english: Record<string, string> = {
   需要处理: "Needs attention",
   本轮完成: "Turn complete",
   已取消: "Cancelled",
+  编辑了文件并运行了命令: "Edited files and ran commands",
+  编辑了文件: "Edited files",
+  运行了命令: "Ran commands",
+  "{p0} 项操作": "{p0} actions",
+  "{p0} 项失败": "{p0} failed",
+  "正在添加附件…": "Adding attachments…",
+  "每条消息最多添加 20 个附件": "Each message supports up to 20 attachments",
+  "单个附件最大 64 MiB，每次添加总计最大 128 MiB":
+    "Each attachment can be up to 64 MiB, with a total of 128 MiB per batch",
+  "附件内容无效或超过 64 MiB": "Invalid attachment or file exceeds 64 MiB",
+  "请粘贴文件，文件夹请通过选择项目打开":
+    "Paste files here. Open folders using the project picker",
+  "复制时原文件已更改，请重新粘贴":
+    "The file changed while copying. Please paste it again",
   语言: "Language",
   "选择界面语言，聊天内容、代码和终端输出会保留原文。":
     "Choose the interface language. Your messages, code, and terminal output keep their original language.",

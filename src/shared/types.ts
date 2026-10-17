@@ -249,6 +249,7 @@ export interface HistoryEntry {
   imported?: boolean;
 }
 export interface Bridge {
+  filePath?: (file: File) => string;
   snapshot(): Promise<Snapshot>;
   command(name: string, args?: unknown): Promise<unknown>;
   onSnapshot(fn: (snapshot: Snapshot) => void): () => void;

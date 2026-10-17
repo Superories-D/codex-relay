@@ -1,5 +1,31 @@
 import type { ChatItem, ChatPage } from "../shared/types";
 
+// Preserve assistant commentary, reasoning, plans and agent controls between runs.
+// Use the first tool ID as the run key so live appends do not reset disclosure state.
+export function activityRuns(items: ChatItem[]) {
+  const runs: { group: boolean; items: ChatItem[] }[] = [];
+  const separate = new Set([
+    "reasoning",
+    "plan",
+    "collabAgentToolCall",
+    "subAgentActivity",
+  ]);
+  for (const item of items) {
+    const activity = item.role === "tool" && !separate.has(item.kind);
+    const last = runs.at(-1);
+    if (
+      activity &&
+      last?.group &&
+      (!item.turnId ||
+        !last.items[0].turnId ||
+        item.turnId === last.items[0].turnId)
+    )
+      last.items.push(item);
+    else runs.push({ group: activity, items: [item] });
+  }
+  return runs;
+}
+
 export function sameChatItem(previous: ChatItem, next: ChatItem) {
   return (
     previous === next ||

@@ -26,7 +26,8 @@ import {
   X,
 } from "lucide-react";
 import type { AgentState, ChatItem, ChatPage, Job } from "../shared/types";
-import { MarkdownText, RichMessage } from "./RichMessage";
+import { MarkdownText } from "./RichMessage";
+import { ActivityTimeline } from "./ActivityTimeline";
 import { mergePage } from "./chat-view";
 type Call = (name: string, args?: unknown) => Promise<any>;
 export type WorkbenchTab = "summary" | "files" | "changes" | "agents";
@@ -860,15 +861,13 @@ function Agents({
                 </div>
               )}
               {error && <p className="panel-error">{error}</p>}
-              {chat?.items.map((i) => (
-                <RichMessage
-                  key={`${selected.threadId}:${i.id}`}
-                  item={i}
-                  onOpen={openFile}
-                  onAgents={() => {}}
-                  onChanges={() => {}}
-                />
-              ))}
+              <ActivityTimeline
+                scope={selected.threadId}
+                items={chat?.items || []}
+                onOpen={openFile}
+                onAgents={() => {}}
+                onChanges={() => {}}
+              />
               {!chat?.items.length && selected.message && (
                 <MarkdownText text={selected.message} />
               )}

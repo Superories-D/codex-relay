@@ -1,6 +1,7 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 import type { Bridge, Snapshot } from "../shared/types";
 const bridge: Bridge = {
+  filePath: (file) => webUtils.getPathForFile(file),
   snapshot: () => ipcRenderer.invoke("relay:command", "snapshot"),
   command: (name, args) => ipcRenderer.invoke("relay:command", name, args),
   onSnapshot: (fn) => {

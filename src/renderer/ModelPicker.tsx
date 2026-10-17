@@ -1,5 +1,6 @@
 import { t, useI18n } from "./i18n";
 import React, { useEffect, useRef, useState } from "react";
+import { usePresence } from "./MotionRegion";
 
 export type ModelOption = {
   id: string;
@@ -39,6 +40,7 @@ export function ModelPicker({
   onChange: (model: string, effort: string) => void;
 }) {
   useI18n();
+  const present = usePresence(open);
 
   const root = useRef<HTMLDivElement>(null);
   const [models, setModels] = useState<ModelOption[]>([]);
@@ -118,9 +120,12 @@ export function ModelPicker({
         <span>{strength}</span>
         <span aria-hidden="true">⌄</span>
       </button>
-      {open && (
+      {present && (
         <div
           className="agent-model-popover"
+          data-open={open}
+          inert={!open}
+          aria-hidden={!open}
           role="dialog"
           aria-label={t("模型和思考强度")}
         >

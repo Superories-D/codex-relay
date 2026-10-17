@@ -1,4 +1,7 @@
 .desktop-shell {
+  --motion-fast: 140ms;
+  --motion-normal: 220ms;
+  --motion-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
   --bg: #181818;
   --surface: #262626;
   --line: #333;
@@ -30,8 +33,13 @@
 .desktop-shell button {
   -webkit-app-region: no-drag;
   transition:
-    background-color 110ms ease,
-    color 110ms ease;
+    background-color var(--motion-fast) ease,
+    color var(--motion-fast) ease,
+    border-color var(--motion-fast) ease,
+    transform var(--motion-fast) var(--motion-ease);
+}
+.desktop-shell button:active:not(:disabled) {
+  transform: translateY(1px);
 }
 .desktop-shell button:focus-visible,
 .desktop-shell input:focus-visible,
@@ -106,6 +114,7 @@
   opacity: 0.45;
 }
 .desktop-shell .agent-shell {
+  transition: grid-template-columns var(--motion-normal) var(--motion-ease);
   height: calc(100vh - 39px);
   grid-template-columns: 54px 278px minmax(0, 1fr);
   --bg: #181818;
@@ -3168,5 +3177,275 @@
   background: none;
   margin: 4px 0 8px 27px;
 }
-.source-truncated-note { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 10px 0; font-size: 12px; color: var(--subtle); }
-.source-truncated-note button { color: var(--accent); border: 0; background: transparent; }
+.source-truncated-note {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin: 10px 0;
+  font-size: 12px;
+  color: var(--subtle);
+}
+.source-truncated-note button {
+  color: var(--accent);
+  border: 0;
+  background: transparent;
+}
+
+/* Animate bounded surfaces. Streamed text keeps its position and never replays an entrance. */
+@keyframes surface-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes panel-enter {
+  from {
+    opacity: 0;
+    transform: translateX(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.desktop-shell .agent-model-popover,
+.desktop-shell .composer-add-menu,
+.desktop-shell .thread-menu,
+.desktop-shell .slash-commands,
+.desktop-shell .search-palette,
+.desktop-shell .modal {
+  transform-origin: bottom center;
+  animation: surface-enter var(--motion-normal) var(--motion-ease);
+}
+.desktop-shell .workbench {
+  animation: panel-enter var(--motion-normal) var(--motion-ease);
+}
+.desktop-shell .terminal-pane,
+.desktop-shell .agent-attachments button,
+.desktop-shell .attachment-progress {
+  animation: surface-enter var(--motion-normal) var(--motion-ease);
+}
+.desktop-shell .agent-composer {
+  transition:
+    border-color var(--motion-fast) ease,
+    box-shadow var(--motion-normal) ease;
+}
+.desktop-shell .agent-composer:focus-within {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+.attachment-progress {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 17px 0;
+  color: var(--subtle);
+  font-size: 12px;
+}
+.activity-group {
+  margin: 13px 0;
+  color: var(--subtle);
+  font-size: 13px;
+}
+.activity-group > summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 32px;
+  padding: 3px 0;
+  width: fit-content;
+  max-width: 100%;
+  border-radius: 5px;
+  transition: color var(--motion-fast) ease;
+}
+.activity-group > summary:hover {
+  color: var(--text);
+}
+.activity-group > summary::marker {
+  display: none;
+}
+.activity-group > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+}
+.activity-group > summary > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.activity-group > summary > small {
+  font-size: 11px;
+  white-space: nowrap;
+}
+.activity-group .activity-running {
+  color: #8daee3;
+}
+.activity-group .activity-failed {
+  color: #dd9b92;
+}
+.disclosure-chevron {
+  transition: transform var(--motion-normal) var(--motion-ease);
+}
+.activity-group[open] > summary .disclosure-chevron {
+  transform: rotate(180deg);
+}
+.activity-group-scroll {
+  max-height: 340px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  padding-left: 2px;
+}
+.activity-group-scroll > .activity-item {
+  margin: 3px 0;
+}
+.activity-group-scroll > .change-card {
+  background: none;
+  border: 0;
+  border-radius: 0;
+}
+.activity-group-scroll .change-card details > summary {
+  min-height: 29px;
+  padding: 3px 0;
+  color: inherit;
+}
+.activity-group-scroll .change-card .activity-icon {
+  padding: 0;
+  background: transparent;
+}
+.activity-group-scroll .change-card > .activity-action {
+  display: none;
+}
+.activity-group-scroll .activity-item details > summary > svg {
+  opacity: 0.65;
+}
+.motion-region {
+  min-height: 0;
+  min-width: 0;
+  flex-shrink: 0;
+}
+.motion-region.horizontal {
+  --panel-width: 348px;
+  width: 0;
+  opacity: 0;
+  overflow: clip;
+  transition:
+    width var(--motion-normal) var(--motion-ease),
+    opacity var(--motion-fast) ease;
+}
+.motion-region.horizontal[data-open="true"] {
+  width: var(--panel-width);
+  opacity: 1;
+}
+.motion-region.horizontal.preview {
+  --panel-width: min(44%, 632px);
+}
+.motion-region.horizontal > .motion-region-content {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+}
+.motion-region.horizontal .workbench {
+  width: calc(100% - 12px);
+  min-width: 0;
+  height: 100%;
+  animation: none;
+}
+.motion-region.vertical {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition:
+    grid-template-rows var(--motion-normal) var(--motion-ease),
+    opacity var(--motion-fast) ease;
+}
+.motion-region.vertical[data-open="true"] {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+.motion-region.vertical > .motion-region-content {
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+  overflow: clip;
+}
+.motion-region.vertical .terminal-pane {
+  animation: none;
+  min-width: 0;
+  width: 100%;
+}
+.agent-model-popover[data-open="false"] {
+  opacity: 0;
+  transform: translateY(5px) scale(0.99);
+  pointer-events: none;
+}
+.desktop-shell .agent-model-popover {
+  transition:
+    opacity var(--motion-fast) ease,
+    transform var(--motion-normal) var(--motion-ease);
+}
+@media (max-width: 1400px) {
+  .motion-region.horizontal {
+    --panel-width: 307px;
+  }
+}
+@media (max-width: 1150px) {
+  .motion-region.horizontal {
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    z-index: 18;
+    --panel-width: 320px;
+  }
+  .motion-region.horizontal.preview {
+    --panel-width: 65%;
+  }
+  .motion-region.horizontal .workbench {
+    position: relative;
+    width: 100%;
+  }
+}
+@supports (interpolate-size: allow-keywords) {
+  .desktop-shell details {
+    interpolate-size: allow-keywords;
+  }
+  .desktop-shell details::details-content {
+    height: 0;
+    overflow: clip;
+    opacity: 0;
+    transition:
+      height var(--motion-normal) var(--motion-ease),
+      opacity var(--motion-fast) ease,
+      content-visibility var(--motion-normal) allow-discrete;
+  }
+  .desktop-shell details[open]::details-content {
+    height: auto;
+    opacity: 1;
+  }
+}
+.desktop-shell.reduce-motion *,
+.desktop-shell.reduce-motion *::before,
+.desktop-shell.reduce-motion *::after,
+.desktop-shell.reduce-motion details::details-content {
+  animation: none !important;
+  transition: none !important;
+  scroll-behavior: auto !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  .desktop-shell *,
+  .desktop-shell *::before,
+  .desktop-shell *::after,
+  .desktop-shell details::details-content {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}

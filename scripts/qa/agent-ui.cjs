@@ -711,6 +711,23 @@ const root = path.resolve(__dirname, "../..");
       ),
     );
     console.log("Agent UI checks passed");
+  } catch (error) {
+    await page
+      .screenshot({ path: path.join(root, "qa-output/agent-ui-failure.png") })
+      .catch(() => {});
+    console.log(
+      await page
+        .locator(".motion-region, .terminal-pane, .agent-main")
+        .evaluateAll((nodes) =>
+          nodes.map((node) => ({
+            class: node.className,
+            rect: node.getBoundingClientRect().toJSON(),
+            style: getComputedStyle(node).gridTemplateRows,
+          })),
+        )
+        .catch(() => []),
+    );
+    throw error;
   } finally {
     await browser.close();
     await new Promise((r) => server.close(r));
