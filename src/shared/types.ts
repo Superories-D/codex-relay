@@ -221,6 +221,7 @@ export interface ChatAttachment {
   name: string;
 }
 export interface ChatItem {
+  images?: ChatImage[];
   sourceTruncated?: boolean;
   turnId?: string;
   id: string;
@@ -231,6 +232,21 @@ export interface ChatItem {
   status?: string;
   detail?: string;
   data?: Record<string, any>;
+}
+export interface ChatImage {
+  url?: string;
+  id: string;
+  origin: "input" | "view" | "generated";
+  name: string;
+  path?: string;
+  data?: string;
+  mime?: string;
+}
+export interface ChatAsset {
+  url?: string;
+  path: string;
+  name: string;
+  kind: "image" | "file";
 }
 export interface ChatPage {
   items: ChatItem[];

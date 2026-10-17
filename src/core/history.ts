@@ -7,6 +7,7 @@ import { Store } from "./store";
 import { Chats, jsonLines, rolloutRecords } from "./chat";
 import { captureRollout, HistoryDependencyError } from "./rollout-snapshot";
 import { TextWriter } from "./text-writer";
+import { persistImages } from "./chat-media";
 
 export class History {
   private entries = new Map<
@@ -14,6 +15,7 @@ export class History {
     { entry: HistoryEntry; file: string; home: string }
   >();
   private busy = false;
+  private mediaCopies = new Map<string, string>();
   constructor(
     private store: Store,
     private chats: Chats,
@@ -44,7 +46,8 @@ export class History {
       const titles = new Map<string, string>();
       try {
         for await (const r of jsonLines(path.join(home, "session_index.jsonl")))
-                  if (r.id && typeof r.thread_name==="string") titles.set(r.id, r.thread_name);
+          if (r.id && typeof r.thread_name === "string")
+            titles.set(r.id, r.thread_name);
       } catch {}
       const walk = async (dir: string) => {
         let files;
@@ -97,7 +100,7 @@ export class History {
                 title:
                   titles.get(meta.id) ??
                   (prompt || "Codex 会话").replace(/\s+/g, " ").slice(0, 100),
-                cwd: typeof meta.cwd==="string"?meta.cwd:"",
+                cwd: typeof meta.cwd === "string" ? meta.cwd : "",
                 source,
                 updatedAt: (await fs.stat(file)).mtimeMs,
                 archived: relative.split(path.sep)[0] === "archived_sessions",
@@ -262,7 +265,14 @@ export class History {
     const transcriptWriter = new TextWriter(transcript);
     try {
       for await (const item of rolloutRecords(snapshot, this.maxRecordBytes))
-        await transcriptWriter.write(JSON.stringify(item) + "\n");
+        await transcriptWriter.write(
+          JSON.stringify(
+            await persistImages(this.store.root, item, {
+              copyFilesFrom: entry.cwd,
+              copies: this.mediaCopies,
+            }),
+          ) + "\n",
+        );
       await transcriptWriter.flush();
     } finally {
       await transcript.close();

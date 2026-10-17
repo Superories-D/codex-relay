@@ -1107,6 +1107,301 @@
   font-size: 11px;
   text-align: left;
 }
+.summary-card {
+  border-radius: 22px;
+  padding: 18px 19px;
+  background: #2a2a2a;
+  border-color: #343434;
+}
+.summary-card-title {
+  min-height: 30px;
+  font-size: 13px;
+  letter-spacing: 0.01em;
+  color: #b2b2b2;
+}
+.desktop-shell .summary-card-title button {
+  border-radius: 7px;
+  padding: 5px;
+  margin-right: -5px;
+}
+.summary-card > p {
+  line-height: 1.7;
+  margin: 7px 0 13px;
+  color: #808080;
+}
+.summary-card hr {
+  margin: 17px 0 13px;
+  background: #3b3b3b;
+}
+.summary-assets {
+  margin: 4px -7px 0;
+}
+.summary-file-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 7px;
+  border-radius: 9px;
+  min-height: 46px;
+  transition: background-color var(--motion-fast) ease;
+}
+.summary-file-row:hover {
+  background: #ffffff07;
+}
+.asset-file-icon {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 32px;
+  flex-shrink: 0;
+  border-radius: 6px;
+  background: #ffffff08;
+  color: #aaa;
+  border: 1px solid #ffffff0b;
+}
+.asset-file-icon.code {
+  color: #a9bed6;
+  background: #6a8dad12;
+}
+.desktop-shell .summary-file-label {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 0;
+  min-width: 0;
+  flex: 1;
+  text-align: left;
+  color: #bcbcbc;
+  background: none;
+}
+.summary-file-label > span {
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.summary-file-label > small {
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 10px;
+  color: #808080;
+}
+.asset-row-chevron {
+  opacity: 0;
+  color: #999;
+  transition:
+    opacity var(--motion-fast) ease,
+    transform var(--motion-fast) ease;
+}
+.summary-file-row:hover .asset-row-chevron,
+.summary-file-row:focus-within .asset-row-chevron {
+  opacity: 1;
+  transform: translateX(2px);
+}
+.summary-assets-more > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  list-style: none;
+  cursor: pointer;
+  padding: 10px 7px 4px;
+  font-size: 12px;
+  color: #939393;
+}
+.summary-assets-more > summary::marker {
+  display: none;
+}
+.summary-assets-more > summary:hover {
+  color: #ccc;
+}
+.summary-assets-more > summary > svg:last-child {
+  margin-left: auto;
+  transition: transform var(--motion-normal) var(--motion-ease);
+}
+.summary-assets-more[open] > summary > svg:last-child {
+  transform: rotate(180deg);
+}
+.summary-assets-more .asset-show-less {
+  display: none;
+}
+.summary-assets-more[open] .asset-show-less {
+  display: inline;
+}
+.summary-assets-more[open] .asset-show-more {
+  display: none;
+}
+.summary-assets-extra {
+  max-height: 310px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 4px 0;
+  scrollbar-gutter: stable;
+}
+.desktop-shell .summary-load-more {
+  padding: 9px 7px;
+  font-size: 11px;
+  color: var(--subtle);
+  width: 100%;
+  text-align: left;
+}
+.chat-image-gallery {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 10px 0 17px;
+}
+.desktop-shell .chat-image-thumbnail {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 124px;
+  height: 118px;
+  padding: 0;
+  border: 1px solid #ffffff16;
+  border-radius: 14px;
+  overflow: hidden;
+  background: #ffffff05;
+  color: var(--subtle);
+  isolation: isolate;
+}
+.chat-image-thumbnail img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition:
+    transform var(--motion-normal) var(--motion-ease),
+    opacity var(--motion-fast) ease;
+}
+.chat-image-thumbnail:hover img {
+  transform: scale(1.045);
+}
+.desktop-shell .chat-image-thumbnail.compact {
+  width: 30px;
+  height: 32px;
+  flex-shrink: 0;
+  border-radius: 6px;
+}
+.image-enlarge {
+  display: grid;
+  place-items: center;
+  position: absolute;
+  bottom: 6px;
+  right: 6px;
+  width: 23px;
+  height: 23px;
+  border-radius: 6px;
+  background: #0009;
+  color: white;
+  opacity: 0;
+  transform: translateY(2px);
+  transition:
+    opacity var(--motion-fast) ease,
+    transform var(--motion-fast) var(--motion-ease);
+}
+.chat-image-thumbnail:hover .image-enlarge,
+.chat-image-thumbnail:focus-visible .image-enlarge {
+  opacity: 1;
+  transform: none;
+}
+.image-activity {
+  color: var(--subtle);
+  font-size: 13px;
+  margin: 18px 0;
+}
+.image-activity > details > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  list-style: none;
+  min-height: 30px;
+}
+.image-activity > details > summary::marker {
+  display: none;
+}
+.image-activity > details > summary > svg:last-child {
+  transition: transform var(--motion-normal) var(--motion-ease);
+}
+.image-activity > details:not([open]) > summary > svg:last-child {
+  transform: rotate(-90deg);
+}
+.image-activity-error {
+  color: #d99e96;
+}
+.desktop-shell .modal:has(.image-viewer-canvas) {
+  width: min(1080px, 92vw);
+  max-width: 92vw;
+  padding-bottom: 16px;
+}
+.image-viewer-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-bottom: 12px;
+  color: var(--subtle);
+}
+.image-viewer-toolbar > span {
+  min-width: 45px;
+  text-align: center;
+  font-size: 12px;
+}
+.desktop-shell .image-viewer-toolbar button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px;
+}
+.image-open-original {
+  margin-left: auto;
+  font-size: 12px;
+}
+.image-viewer-canvas {
+  display: grid;
+  place-items: center;
+  height: min(65vh, 700px);
+  overflow: auto;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background-color: #151515;
+  background-image:
+    linear-gradient(45deg, #ffffff04 25%, transparent 25%),
+    linear-gradient(-45deg, #ffffff04 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #ffffff04 75%),
+    linear-gradient(-45deg, transparent 75%, #ffffff04 75%);
+  background-size: 20px 20px;
+  background-position:
+    0 0,
+    0 10px,
+    10px -10px,
+    -10px 0;
+}
+.image-viewer-canvas > img {
+  display: block;
+  max-width: 100%;
+  max-height: min(62vh, 670px);
+  object-fit: contain;
+  transform-origin: center;
+  transition: scale var(--motion-normal) var(--motion-ease);
+}
+.desktop-shell[data-color-scheme="light"] .summary-card {
+  background: #f8f8f8;
+  border-color: #e5e5e5;
+}
+.desktop-shell[data-color-scheme="light"] .summary-file-label {
+  color: #444;
+}
+.desktop-shell[data-color-scheme="light"] .summary-card-title {
+  color: #666;
+}
+.desktop-shell[data-color-scheme="light"] .summary-card hr {
+  background: #e4e4e4;
+}
 .summary-file > span {
   white-space: nowrap;
   text-overflow: ellipsis;

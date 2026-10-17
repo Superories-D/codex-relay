@@ -9,9 +9,12 @@ export function activityRuns(items: ChatItem[]) {
     "plan",
     "collabAgentToolCall",
     "subAgentActivity",
+    "imageView",
+    "imageGeneration",
   ]);
   for (const item of items) {
-    const activity = item.role === "tool" && !separate.has(item.kind);
+    const activity =
+      item.role === "tool" && !separate.has(item.kind) && !item.images?.length;
     const last = runs.at(-1);
     if (
       activity &&
@@ -36,6 +39,8 @@ export function sameChatItem(previous: ChatItem, next: ChatItem) {
       previous.detail === next.detail &&
       previous.status === next.status &&
       previous.sourceTruncated === next.sourceTruncated &&
+      (previous.images === next.images ||
+        JSON.stringify(previous.images) === JSON.stringify(next.images)) &&
       (previous.data === next.data ||
         JSON.stringify(previous.data) === JSON.stringify(next.data)))
   );

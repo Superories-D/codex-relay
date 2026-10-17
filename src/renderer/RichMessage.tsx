@@ -1,7 +1,7 @@
 import { t, useI18n } from "./i18n";
 import { sameChatItem } from "./chat-view";
 import React, { useState } from "react";
-import Markdown from "react-markdown";
+import Markdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import {
@@ -15,8 +15,10 @@ import {
   Network,
   SquareTerminal,
   Sparkles,
+  Image as ImageIcon,
 } from "lucide-react";
 import type { ChatItem } from "../shared/types";
+import { ImageGallery, ImageThumbnail } from "./ChatImages";
 
 export function MarkdownText({
   text,
@@ -30,6 +32,13 @@ export function MarkdownText({
   return (
     <div className="rich-markdown">
       <Markdown
+        urlTransform={(url, key) =>
+          key === "src" &&
+          (/^data:image\/(png|jpeg|webp|gif|avif|bmp);base64,/i.test(url) ||
+            /^[A-Za-z]:[\\/]/.test(url))
+            ? url
+            : defaultUrlTransform(url)
+        }
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeHighlight]}
         components={{
@@ -50,12 +59,26 @@ export function MarkdownText({
             </button>
           ),
           pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
-          img: ({ alt }) => (
-            <span className="markdown-image">
-              {t("图片 ·")}
-              {alt || t("附件")}
-            </span>
-          ),
+          img: ({ alt, src }) =>
+            typeof src === "string" && !/^http:/i.test(src) ? (
+              <ImageThumbnail
+                image={{
+                  id: src,
+                  origin: "generated",
+                  name: alt || t("图片"),
+                  ...(/^https:\/\//i.test(src)
+                    ? { url: src }
+                    : /^data:image\//.test(src)
+                      ? { data: src }
+                      : { path: decodeURIComponent(src) }),
+                }}
+              />
+            ) : (
+              <span className="markdown-image">
+                {t("图片 ·")}
+                {alt || t("附件")}
+              </span>
+            ),
         }}
       >
         {text}
@@ -113,6 +136,59 @@ function RichMessageView({
 
   const [copied, setCopied] = useState(false);
   if (item.role === "tool") {
+    if (
+      item.images?.length ||
+      ["imageView", "imageGeneration"].includes(item.kind)
+    ) {
+      const generated =
+        item.kind === "imageGeneration" ||
+        item.images?.some((image) => image.origin === "generated");
+      const busy = ["running", "inProgress", "in_progress"].includes(
+        item.status || "",
+      );
+      const failed = item.status === "failed" || !!item.data?.failure;
+      return (
+        <div className="image-activity">
+          <details open>
+            <summary>
+              {busy ? (
+                <LoaderCircle size={16} className="spin" />
+              ) : (
+                <ImageIcon size={16} />
+              )}
+              <span>
+                {failed
+                  ? t("图片操作失败")
+                  : busy
+                    ? generated
+                      ? t("正在生成图片…")
+                      : t("正在查看图片…")
+                    : generated
+                      ? t("已生成 {p0} 张图片", {
+                          p0: item.images?.length || 0,
+                        })
+                      : t("已查看 {p0} 张图像", {
+                          p0: item.images?.length || 0,
+                        })}
+              </span>
+              <ChevronDown size={14} />
+            </summary>
+            {!!item.images?.length && <ImageGallery images={item.images} />}
+            {failed && (
+              <p className="image-activity-error" role="alert">
+                {t("图片操作未完成，请查看详情后重试。")}
+              </p>
+            )}
+            {failed && item.detail && (
+              <details className="image-error-details">
+                <summary>{t("查看详情")}</summary>
+                <pre>{item.detail}</pre>
+              </details>
+            )}
+          </details>
+        </div>
+      );
+    }
     const agent = ["collabAgentToolCall", "subAgentActivity"].includes(
       item.kind,
     );
@@ -208,6 +284,7 @@ function RichMessageView({
   }
   return (
     <article className={`agent-message ${item.role}`}>
+      {!!item.images?.length && <ImageGallery images={item.images} />}
       {item.sourceTruncated && (
         <div className="source-truncated-note">
           <span>{t("超长内容显示预览，完整内容已保留在原始记录中。")}</span>

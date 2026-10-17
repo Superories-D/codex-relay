@@ -1644,6 +1644,12 @@ export function AgentApp({
                   setDraft={(text) => {
                     setDrafts((d) => ({ ...d, [key]: text }));
                   }}
+                  draftAttachments={attachments}
+                  addSources={() => {
+                    const target = key;
+                    addPastedFiles(target, () => call("chat.attachments"));
+                    messageInput.current?.focus();
+                  }}
                 />
               </MotionRegion>
             </div>

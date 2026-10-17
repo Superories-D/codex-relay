@@ -231,7 +231,7 @@ const root = path.resolve(__dirname, "../..");
               { name: "README.md", path: "README.md", directory: false },
               { name: "src", path: "src", directory: true },
             ];
-          if (name === "workspace.read")
+          if (name === "workspace.read" || name === "chat.asset.read")
             return {
               path: args.path,
               kind: "text",

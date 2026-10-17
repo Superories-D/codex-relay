@@ -3,6 +3,8 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { ChatItem, ChatPage } from "../shared/types";
 import { redact } from "./redact";
+import { protocolImages, imageSafePayload } from "../shared/chat-images";
+import { persistImages } from "./chat-media";
 
 // Conversations are stored separately from the bounded diagnostic log and snapshots.
 export class Chats {
@@ -20,6 +22,7 @@ export class Chats {
   }
   append(id: string, item: ChatItem) {
     const next = (this.writes.get(id) ?? Promise.resolve()).then(async () => {
+      item = await persistImages(this.root, item);
       await fs.mkdir(path.dirname(this.file(id)), {
         recursive: true,
         mode: 0o700,
@@ -82,6 +85,15 @@ export class Chats {
       kind: "message",
       text,
       detail,
+      images: detail
+        ?.split("\n")
+        .filter((file) => /\.(png|jpe?g|webp|gif|bmp|avif)$/i.test(file))
+        .map((file, index) => ({
+          id: `attachment:${index}`,
+          origin: "input",
+          name: file.split(/[\\/]/).at(-1) || "image",
+          path: file,
+        })),
       at: Date.now(),
     });
   }
@@ -194,13 +206,76 @@ export class Chats {
       ...(start ? { before: start } : {}),
     };
   }
+  async item(id: string, itemId: string) {
+    await this.read(id);
+    return (
+      this.live.get(id)?.get(itemId) ||
+      this.cache.get(id)?.rows.find((item) => item.id === itemId)
+    );
+  }
+  async references(id: string) {
+    await this.read(id);
+    return [
+      ...(this.cache.get(id)?.rows || []),
+      ...(this.live.get(id)?.values() || []),
+    ].flatMap((item) => [
+      ...(item.images || []).flatMap((image) =>
+        image.path ? [image.path] : [],
+      ),
+      ...(item.role === "user"
+        ? item.detail?.split("\n").filter(Boolean) || []
+        : []),
+    ]);
+  }
+  async assets(id: string) {
+    await this.read(id);
+    const rows = [
+      ...(this.cache.get(id)?.rows || []),
+      ...(this.live.get(id)?.values() || []),
+    ];
+    const outputs = new Map<string, import("../shared/types").ChatAsset>(),
+      sources = new Map<string, import("../shared/types").ChatAsset>();
+    const add = (target: typeof outputs, file: string, name?: string) => {
+      if (typeof file !== "string" || !file.trim()) return;
+      target.set(file, {
+        path: file,
+        name: name || file.split(/[\\/]/).at(-1) || file,
+        kind: /\.(png|jpe?g|webp|gif|bmp|avif)$/i.test(file) ? "image" : "file",
+      });
+    };
+    for (const item of rows) {
+      for (const image of item.images || [])
+        if (image.url) {
+          (image.origin === "generated" ? outputs : sources).set(image.url, {
+            path: image.url,
+            url: image.url,
+            name: image.name,
+            kind: "image",
+          });
+        } else if (image.path)
+          add(
+            image.origin === "generated" ? outputs : sources,
+            image.path,
+            image.name,
+          );
+      if (item.role === "user")
+        for (const file of item.detail?.split("\n") || []) add(sources, file);
+      if (item.kind === "fileChange")
+        for (const change of item.data?.changes || [])
+          add(outputs, change.path);
+    }
+    return { outputs: [...outputs.values()], sources: [...sources.values()] };
+  }
 }
 export function protocolItem(p: any, id: string): ChatItem {
+  const images = protocolImages(p);
+  if (images.length) p = imageSafePayload(p);
   if (p.type === "userMessage")
     return {
       id,
       role: "user",
       kind: "message",
+      ...(images.length ? { images } : {}),
       at: Date.now(),
       text: (p.content ?? [])
         .map(
@@ -246,6 +321,8 @@ export function protocolItem(p: any, id: string): ChatItem {
     id,
     role: p.type === "agentMessage" ? "assistant" : "tool",
     kind: p.type,
+    status: p.status,
+    ...(images.length ? { images } : {}),
     text: String(text ?? ""),
     detail: detail ? redact(detail) : undefined,
     at: Date.now(),
@@ -256,6 +333,8 @@ export function protocolItem(p: any, id: string): ChatItem {
       "webSearch",
       "imageGeneration",
       "imageView",
+      "mcpToolCall",
+      "dynamicToolCall",
       "plan",
     ].includes(p.type)
       ? { data: p }
@@ -332,6 +411,16 @@ export async function* rolloutRecords(
         at: Date.parse(r.timestamp) || 0,
       };
     } else if (
+      ["image_generation_call", "imageGeneration", "imageView"].includes(p.type)
+    ) {
+      item = protocolItem(
+        {
+          ...p,
+          type: p.type === "image_generation_call" ? "imageGeneration" : p.type,
+        },
+        `history:${total}`,
+      );
+    } else if (
       [
         "function_call",
         "custom_tool_call",
@@ -357,6 +446,8 @@ export async function* rolloutRecords(
       };
     }
     if (item) {
+      const images = protocolImages(p);
+      if (images.length) item.images = images;
       const previewLimit = 262144;
       if (item.text.length > previewLimit) {
         item.text = item.text.slice(0, previewLimit);

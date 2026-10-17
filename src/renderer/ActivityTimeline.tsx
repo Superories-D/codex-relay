@@ -10,6 +10,7 @@ import { RichMessage } from "./RichMessage";
 import { t, useI18n } from "./i18n";
 import { activityRuns } from "./chat-view";
 import { usePresence } from "./MotionRegion";
+import { MediaContext } from "./ChatImages";
 
 type Props = Omit<React.ComponentProps<typeof RichMessage>, "item">;
 function ActivityGroup({ items, ...props }: Props & { items: ChatItem[] }) {
@@ -72,21 +73,28 @@ function ActivityGroup({ items, ...props }: Props & { items: ChatItem[] }) {
 export function ActivityTimeline({
   items,
   scope,
+  jobId,
   ...props
-}: Props & { items: ChatItem[]; scope: string }) {
-  return activityRuns(items).map((run) =>
-    run.group ? (
-      <ActivityGroup
-        key={`${scope}:${run.items[0].id}`}
-        items={run.items}
-        {...props}
-      />
-    ) : (
-      <RichMessage
-        key={`${scope}:${run.items[0].id}`}
-        item={run.items[0]}
-        {...props}
-      />
-    ),
+}: Props & { items: ChatItem[]; scope: string; jobId?: string }) {
+  return (
+    <MediaContext.Provider
+      value={{ id: jobId || scope, ...(jobId ? { threadId: scope } : {}) }}
+    >
+      {activityRuns(items).map((run) =>
+        run.group ? (
+          <ActivityGroup
+            key={`${scope}:${run.items[0].id}`}
+            items={run.items}
+            {...props}
+          />
+        ) : (
+          <RichMessage
+            key={`${scope}:${run.items[0].id}`}
+            item={run.items[0]}
+            {...props}
+          />
+        ),
+      )}
+    </MediaContext.Provider>
   );
 }

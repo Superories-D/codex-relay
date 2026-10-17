@@ -58,6 +58,7 @@ import { capabilities } from "../shared/capabilities";
 import { resolveLanguage, translate } from "../shared/locale";
 import { BackgroundHistoryImport } from "../core/history-import";
 import { Attachments, clipboardFilePaths } from "../core/attachments";
+import { importRunning } from "../shared/history-import";
 app.setName("Codex Relay");
 const startupTrace = (stage: string) => {
   if (process.env.CODEX_RELAY_STARTUP_TRACE === "1")
@@ -683,6 +684,8 @@ async function boot() {
       case "history.importAll.cancel":
         return backgroundHistory.cancel();
       case "history.scan": {
+        if (importRunning(backgroundHistory.progress.phase))
+          throw Error(nativeText("正在后台导入，请稍后再进行手动导入"));
         const a = z
           .object({
             homes: z
@@ -695,6 +698,8 @@ async function boot() {
         return history.scan(a.homes);
       }
       case "history.import": {
+        if (importRunning(backgroundHistory.progress.phase))
+          throw Error(nativeText("正在后台导入，请稍后再进行手动导入"));
         const a = z
           .object({
             ids: z.array(z.string().regex(/^[a-f0-9]{64}$/)).optional(),
@@ -729,6 +734,89 @@ async function boot() {
       }
       case "chat.send":
         return scheduler.send(chatSendSchema.parse(args));
+      case "chat.assets.list": {
+        const a = z.object({ id: idSchema }).strict().parse(args);
+        if (!store.data.jobs.some((job) => job.id === a.id))
+          throw Error("会话不存在");
+        return scheduler.chats.assets(a.id);
+      }
+      case "chat.asset.read":
+      case "chat.asset.open": {
+        const a = z
+          .object({
+            id: idSchema.optional(),
+            threadId: idSchema.optional(),
+            path: z.string().max(32700),
+            thumbnail: z.boolean().optional(),
+            cwd: z.string().optional(),
+          })
+          .strict()
+          .parse(args);
+        const job = a.id
+          ? store.data.jobs.find((job) => job.id === a.id)
+          : undefined;
+        if (a.id && !job) throw Error("会话不存在");
+        if (
+          a.threadId &&
+          !job?.agents?.some((agent) => agent.threadId === a.threadId)
+        )
+          throw Error("该子代理不属于当前会话");
+        const target = path.resolve(job?.cwd || a.cwd || dataRoot, a.path);
+        let file: string | undefined;
+        for (const root of [
+          path.join(dataRoot, "attachments"),
+          path.join(dataRoot, "media"),
+        ]) {
+          try {
+            file = await desktop.resolve(root, target);
+            break;
+          } catch {}
+        }
+        if (!file && job) {
+          const references = [
+            ...(job.attachments || []).map((attachment) => attachment.path),
+            ...(await scheduler.chats.references(a.threadId || job.id)),
+          ];
+          if (
+            references.some(
+              (reference) =>
+                path.resolve(job.cwd, reference).toLowerCase() ===
+                target.toLowerCase(),
+            )
+          )
+            file = await fs.realpath(target);
+        }
+        if (!file && (job?.cwd || a.cwd))
+          file = await desktop.resolve(job?.cwd || a.cwd!, target);
+        if (!file) throw Error("附件未授权或已不存在");
+        if (name === "chat.asset.open") return shell.openPath(file);
+        const value = await desktop.read(
+          path.dirname(file),
+          path.basename(file),
+        );
+        if (a.thumbnail && value.kind === "image") {
+          const image = nativeImage.createFromDataURL(value.content);
+          if (!image.isEmpty()) {
+            const size = image.getSize();
+            value.content = image
+              .resize({
+                ...(size.width >= size.height
+                  ? { width: Math.min(size.width, 192) }
+                  : { height: Math.min(size.height, 192) }),
+                quality: "good",
+              })
+              .toDataURL();
+          }
+        }
+        let projectFile = false;
+        if (job?.cwd || a.cwd) {
+          try {
+            await desktop.resolve(job?.cwd || a.cwd!, file);
+            projectFile = true;
+          } catch {}
+        }
+        return { ...value, readOnly: !projectFile };
+      }
       case "chat.update": {
         const a = z
           .object({

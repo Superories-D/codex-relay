@@ -25,9 +25,17 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import type { AgentState, ChatItem, ChatPage, Job } from "../shared/types";
+import type {
+  AgentState,
+  ChatItem,
+  ChatPage,
+  Job,
+  ChatAsset,
+  ChatAttachment,
+} from "../shared/types";
 import { MarkdownText } from "./RichMessage";
 import { ActivityTimeline } from "./ActivityTimeline";
+import { ImageThumbnail } from "./ChatImages";
 import { mergePage } from "./chat-view";
 type Call = (name: string, args?: unknown) => Promise<any>;
 export type WorkbenchTab = "summary" | "files" | "changes" | "agents";
@@ -129,6 +137,8 @@ export function Workbench({
   file,
   setFile,
   setDraft,
+  addSources,
+  draftAttachments = [],
 }: {
   tab: WorkbenchTab;
   setTab: (v: WorkbenchTab) => void;
@@ -140,6 +150,8 @@ export function Workbench({
   file: string;
   setFile: (v: string) => void;
   setDraft: (v: string) => void;
+  addSources?: () => void;
+  draftAttachments?: ChatAttachment[];
 }) {
   useI18n();
 
@@ -186,6 +198,7 @@ export function Workbench({
           file={file}
           call={call}
           close={() => setFile("")}
+          jobId={job?.id}
         />
       ) : tab === "files" ? (
         cwd ? (
@@ -203,7 +216,16 @@ export function Workbench({
       ) : tab === "agents" ? (
         <Agents job={job} call={call} openFile={setFile} />
       ) : (
-        <Summary items={items} job={job} openFile={setFile} setTab={setTab} />
+        <Summary
+          items={items}
+          job={job}
+          openFile={setFile}
+          setTab={setTab}
+          call={call}
+          cwd={cwd}
+          addSources={addSources}
+          draftAttachments={draftAttachments}
+        />
       )}
     </aside>
   );
@@ -223,11 +245,19 @@ function Summary({
   job,
   openFile,
   setTab,
+  call,
+  cwd,
+  addSources,
+  draftAttachments,
 }: {
   items: ChatItem[];
   job?: Job;
   openFile: (path: string) => void;
   setTab: (tab: WorkbenchTab) => void;
+  call: Call;
+  cwd: string;
+  addSources?: () => void;
+  draftAttachments: ChatAttachment[];
 }) {
   useI18n();
 
@@ -248,6 +278,53 @@ function Summary({
     ),
   ].filter(Boolean);
   const plan = [...items].reverse().find((i) => i.kind === "plan");
+  const [assetSnapshot, setAll] = useState<{
+    id: string;
+    outputs: ChatAsset[];
+    sources: ChatAsset[];
+  }>();
+  useEffect(() => {
+    if (!job) return;
+    let alive = true;
+    void call("chat.assets.list", { id: job.id })
+      .then((value) => {
+        if (
+          alive &&
+          Array.isArray(value?.outputs) &&
+          Array.isArray(value?.sources)
+        )
+          setAll({ ...value, id: job.id });
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [
+    job?.id,
+    items.length,
+    items
+      .map(
+        (item) =>
+          (item.images?.length || 0) + (item.data?.changes?.length || 0),
+      )
+      .join(","),
+  ]);
+  const all = assetSnapshot?.id === job?.id ? assetSnapshot : undefined;
+  const asset = (file: string): ChatAsset => ({
+    path: file,
+    name: file.split(/[\\/]/).at(-1) || file,
+    kind: /\.(png|jpe?g|webp|gif|bmp|avif)$/i.test(file) ? "image" : "file",
+  });
+  const outputs = all?.outputs || changes.map(asset);
+  const sources = [
+    ...new Map(
+      [
+        ...(all?.sources || attachments.map(asset)),
+        ...(job?.attachments || []).map((attachment) => asset(attachment.path)),
+        ...draftAttachments.map((attachment) => asset(attachment.path)),
+      ].map((file) => [file.path, file]),
+    ).values(),
+  ];
   return (
     <div className="summary-scroll">
       <section className="summary-card">
@@ -257,46 +334,36 @@ function Summary({
             <Plus size={17} />
           </button>
         </div>
-        {changes.length ? (
-          changes.map((file) => (
-            <button
-              key={file}
-              className="summary-file"
-              onClick={() => openFile(file)}
-            >
-              <FileCode2 size={16} />
-              <span>{file.split(/[\\/]/).at(-1)}</span>
-            </button>
-          ))
+        {outputs.length ? (
+          <AssetList
+            files={outputs}
+            openFile={openFile}
+            jobId={job?.id}
+            cwd={cwd}
+          />
         ) : (
           <p>{t("创建文件或站点")}</p>
         )}
         <hr />
         <div className="summary-card-title">
           <span>{t("来源")}</span>
-          <button title={t("浏览来源文件")} onClick={() => setTab("files")}>
+          <button
+            title={t("添加来源文件")}
+            aria-label={t("添加来源文件")}
+            onClick={addSources || (() => setTab("files"))}
+          >
             <Plus size={17} />
           </button>
         </div>
-        {attachments.length ? (
-          attachments.map((file) => (
-            <button
-              key={file}
-              className="summary-file"
-              onClick={() => openFile(file)}
-            >
-              <File size={16} />
-              <span>{file.split(/[\\/]/).at(-1)}</span>
-            </button>
-          ))
+        {sources.length ? (
+          <AssetList
+            files={sources}
+            openFile={openFile}
+            jobId={job?.id}
+            cwd={cwd}
+          />
         ) : (
           <p>{t("添加文件作为任务上下文")}</p>
-        )}
-        {(changes.length > 0 || attachments.length > 0) && (
-          <button className="summary-all" onClick={() => setTab("files")}>
-            <GitBranch size={15} />
-            {t("查看全部")}
-          </button>
         )}
       </section>
       {plan && (
@@ -337,16 +404,102 @@ function Summary({
     </div>
   );
 }
+function AssetList({
+  files,
+  openFile,
+  jobId,
+  cwd,
+}: {
+  files: ChatAsset[];
+  openFile: (path: string) => void;
+  jobId?: string;
+  cwd: string;
+}) {
+  useI18n();
+  const [limit, setLimit] = useState(23);
+  const row = (file: ChatAsset) => (
+    <div className="summary-file-row" key={file.path}>
+      {file.kind === "image" ? (
+        <ImageThumbnail
+          compact
+          context={{ id: jobId, cwd }}
+          image={{
+            id: file.path,
+            name: file.name,
+            origin: "input",
+            path: file.path,
+            url: file.url,
+          }}
+        />
+      ) : (
+        <span
+          className={`asset-file-icon ${/\.(tsx?|jsx?|py|go|rs|json|css|html)$/i.test(file.name) ? "code" : ""}`}
+        >
+          <FileCode2 size={16} />
+        </span>
+      )}
+      <button
+        className="summary-file-label"
+        title={file.path}
+        onClick={() =>
+          file.url
+            ? void window.relay.command("link.open", file.url)
+            : openFile(file.path)
+        }
+      >
+        <span>{file.name}</span>
+        <small>
+          {file.kind === "image"
+            ? `${file.name.split(".").at(-1)?.toUpperCase() || ""} · ${t("图片")}`
+            : file.name.split(".").at(-1)?.toUpperCase()}
+        </small>
+      </button>
+      <ChevronRight className="asset-row-chevron" size={13} />
+    </div>
+  );
+  return (
+    <div className="summary-assets">
+      {files.slice(0, 3).map(row)}
+      {files.length > 3 && (
+        <details className="summary-assets-more">
+          <summary>
+            <GitBranch size={15} />
+            <span className="asset-show-more">
+              {t("查看全部 {p0} 项", { p0: files.length })}
+            </span>
+            <span className="asset-show-less">{t("收起列表")}</span>
+            <ChevronDown size={13} />
+          </summary>
+          <div className="summary-assets-extra">
+            {files.slice(3, limit).map(row)}
+            {files.length > limit && (
+              <button
+                className="summary-load-more"
+                onClick={() => setLimit((value) => value + 20)}
+              >
+                {t("再显示 {p0} 项", {
+                  p0: Math.min(20, files.length - limit),
+                })}
+              </button>
+            )}
+          </div>
+        </details>
+      )}
+    </div>
+  );
+}
 function FilePreview({
   cwd,
   file,
   call,
   close,
+  jobId,
 }: {
   cwd: string;
   file: string;
   call: Call;
   close: () => void;
+  jobId?: string;
 }) {
   useI18n();
 
@@ -360,7 +513,7 @@ function FilePreview({
     setData(undefined);
     setError("");
     setEdit(false);
-    void call("workspace.read", { cwd, path: file })
+    void call("chat.asset.read", { cwd, path: file, id: jobId })
       .then((value) => {
         if (alive) {
           setData(value);
@@ -381,7 +534,7 @@ function FilePreview({
           <ArrowLeft size={15} />
         </button>
         <span title={file}>{file.split(/[\\/]/).at(-1)}</span>
-        {data?.kind === "text" && (
+        {data?.kind === "text" && !data.readOnly && (
           <button
             title={edit ? t("预览文件") : t("编辑文件")}
             onClick={() => setEdit(!edit)}
@@ -392,8 +545,8 @@ function FilePreview({
         <button
           title={t("在默认应用中打开")}
           onClick={() =>
-            void call("workspace.open", { cwd, path: file }).catch((e) =>
-              setError(String(e)),
+            void call("chat.asset.open", { cwd, path: file, id: jobId }).catch(
+              (e) => setError(String(e)),
             )
           }
         >
@@ -441,7 +594,9 @@ function FilePreview({
             {(data.size / 1024).toFixed(0)} KB
           </p>
           <button
-            onClick={() => void call("workspace.open", { cwd, path: file })}
+            onClick={() =>
+              void call("chat.asset.open", { cwd, path: file, id: jobId })
+            }
           >
             {t("在 PDF 阅读器中打开")}
           </button>
@@ -863,6 +1018,7 @@ function Agents({
               {error && <p className="panel-error">{error}</p>}
               <ActivityTimeline
                 scope={selected.threadId}
+                jobId={job?.id}
                 items={chat?.items || []}
                 onOpen={openFile}
                 onAgents={() => {}}
