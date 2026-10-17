@@ -65,11 +65,8 @@ export class CliWorker extends EventEmitter implements Worker {
       type: "chatgptAuthTokens",
       ...auth,
     });
-    await ensureWindowsSandbox(
-      this.rpc,
-      this.ctx.job.cwd,
-      this.ctx.job.sandbox,
-    );
+    const sandbox = this.ctx.job.planMode ? "readOnly" : this.ctx.job.sandbox;
+    await ensureWindowsSandbox(this.rpc, this.ctx.job.cwd, sandbox);
     const quota = await this.quota();
     if (isExhausted(quota[this.ctx.job.bucket]))
       throw new Error("Usage limit exceeded before turn start");
@@ -80,7 +77,7 @@ export class CliWorker extends EventEmitter implements Worker {
         workspaceWrite: "workspace-write",
         readOnly: "read-only",
         dangerFullAccess: "danger-full-access",
-      }[this.ctx.job.sandbox],
+      }[sandbox],
       ...(this.ctx.job.model ? { model: this.ctx.job.model } : {}),
       config: { "features.multi_agent": this.ctx.job.multiAgent !== false },
     };

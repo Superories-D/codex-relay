@@ -57,6 +57,15 @@ const root = path.resolve(__dirname, "../..");
         sandbox: "workspaceWrite",
         threadId: "test-thread",
         interactive: true,
+        agents: [
+          {
+            threadId: "44444444-4444-4444-8444-444444444444",
+            name: "Explorer",
+            role: "explorer",
+            status: "completed",
+            updatedAt: now,
+          },
+        ],
       };
       const data = {
         version: 1,
@@ -136,13 +145,52 @@ const root = path.resolve(__dirname, "../..");
         },
       ];
       let listener;
-      let chatListener;
+      const chatListeners = new Set();
       const desktopData = {
         projects: [],
         schedules: [],
         preferences: { theme: "dark", notifications: true },
       };
       window.qaCalls = [];
+      window.qaPushChat = (id, value) => {
+        for (const fn of chatListeners)
+          fn({ id, page: structuredClone(value) });
+      };
+      window.qaStartStream = () => {
+        const content = Array.from(
+          { length: 20 },
+          (_, n) =>
+            `- Verified case ${n}: keep the established context and review the result.`,
+        ).join("\n");
+        items.splice(
+          0,
+          items.length,
+          ...Array.from({ length: 80 }, (_, n) => ({
+            id: `perf-${n}`,
+            role: "assistant",
+            kind: "message",
+            text:
+              n === 79
+                ? "STREAM_UPDATE_0"
+                : `### Result ${n}\n\n${content}\n\n\`\`\`ts\nconst result = 40 + 2;\n\`\`\``,
+            at: now,
+          })),
+        );
+        window.qaPushChat(job.id, { items, total: items.length });
+      };
+      window.qaRunStream = () => {
+        let count = 0;
+        const timer = setInterval(() => {
+          items[79] = {
+            ...items[79],
+            text:
+              `STREAM_UPDATE_${++count}\n\n` +
+              "Progress remains visible. ".repeat(count),
+          };
+          window.qaPushChat(job.id, { items, total: items.length });
+          if (count === 40) clearInterval(timer);
+        }, 50);
+      };
       window.relay = {
         snapshot: async () => structuredClone(data),
         onSnapshot: (fn) => {
@@ -150,10 +198,8 @@ const root = path.resolve(__dirname, "../..");
           return () => {};
         },
         onChat: (fn) => {
-          chatListener = fn;
-          return () => {
-            chatListener = undefined;
-          };
+          chatListeners.add(fn);
+          return () => chatListeners.delete(fn);
         },
         command: async (name, args) => {
           window.qaCalls.push({ name, args });
@@ -241,6 +287,19 @@ const root = path.resolve(__dirname, "../..");
               state: "running",
             };
           if (name === "chat.read") return { items, total: items.length };
+          if (name === "chat.agent.read")
+            return {
+              items: [
+                {
+                  id: "child-answer",
+                  role: "assistant",
+                  kind: "message",
+                  text: "CHILD_INITIAL",
+                  at: now,
+                },
+              ],
+              total: 1,
+            };
           if (name === "chat.send") {
             items.push({
               id: String(items.length),
@@ -404,6 +463,74 @@ const root = path.resolve(__dirname, "../..");
     });
     await page.getByRole("button", { name: "深色", exact: true }).click();
     await page.getByRole("button", { name: "返回聊天", exact: true }).click();
+    await page.evaluate(() => window.qaStartStream());
+    await page.getByText("STREAM_UPDATE_0", { exact: true }).waitFor();
+    await page.evaluate(() => {
+      const scroll = document.querySelector(".agent-scroll");
+      scroll.scrollTop = 120;
+      scroll.dispatchEvent(new Event("scroll"));
+      window.qaInputFrames = [];
+      window.qaLongTasks = [];
+      const observer = new PerformanceObserver((list) =>
+        window.qaLongTasks.push(
+          ...list.getEntries().map((entry) => entry.duration),
+        ),
+      );
+      observer.observe({ type: "longtask" });
+      window.qaObserver = observer;
+      document
+        .querySelector('textarea[aria-label="消息"]')
+        .addEventListener("input", () => {
+          const at = performance.now();
+          requestAnimationFrame(() =>
+            window.qaInputFrames.push(performance.now() - at),
+          );
+        });
+      window.qaRunStream();
+    });
+    const draftProbe =
+      "typing stays responsive during streaming output ".repeat(3);
+    await page
+      .getByLabel("消息", { exact: true })
+      .pressSequentially(draftProbe, { delay: 12 });
+    await page.getByText(/STREAM_UPDATE_40/).waitFor();
+    assert.equal(
+      await page.getByLabel("消息", { exact: true }).inputValue(),
+      draftProbe,
+    );
+    const smoothness = await page.evaluate(() => {
+      window.qaObserver.disconnect();
+      const frames = window.qaInputFrames.sort((a, b) => a - b);
+      return {
+        renderedMessages: document.querySelectorAll(".agent-message").length,
+        streamUpdates: 40,
+        inputEvents: frames.length,
+        inputFrameP95Ms: frames[Math.floor(frames.length * 0.95)],
+        maxLongTaskMs: Math.max(0, ...window.qaLongTasks),
+        scrollTop: document.querySelector(".agent-scroll").scrollTop,
+      };
+    });
+    assert.ok(smoothness.inputFrameP95Ms < 100, JSON.stringify(smoothness));
+    assert.ok(smoothness.maxLongTaskMs < 250, JSON.stringify(smoothness));
+    assert.ok(
+      Math.abs(smoothness.scrollTop - 120) < 5,
+      "Streaming pulled the reader away from their scroll position",
+    );
+    await page
+      .getByRole("button", { name: "完善文件导入与检索", exact: true })
+      .click();
+    await page.getByLabel("消息", { exact: true }).fill("Second chat draft");
+    await page.getByRole("button", { name: "重命名验证", exact: true }).click();
+    assert.equal(
+      await page.getByLabel("消息", { exact: true }).inputValue(),
+      draftProbe,
+    );
+    assert.ok(
+      Math.abs(
+        (await page.locator(".agent-scroll").evaluate((el) => el.scrollTop)) -
+          120,
+      ) < 5,
+    );
     await page
       .getByRole("button", { name: "插件与 Skills", exact: true })
       .click();
@@ -481,6 +608,48 @@ const root = path.resolve(__dirname, "../..");
       .selectOption("zh-CN");
     await page.getByRole("button", { name: "返回聊天", exact: true }).click();
     const calls = await page.evaluate(() => window.qaCalls);
+    await page.getByRole("button", { name: "会话信息", exact: true }).click();
+    await page
+      .locator(".workbench-tabs")
+      .getByRole("button", { name: /代理/ })
+      .click();
+    await page.locator(".agent-tree button").first().click();
+    await page
+      .locator(".child-conversation")
+      .getByText("CHILD_INITIAL", { exact: true })
+      .waitFor();
+    await page.evaluate(() =>
+      window.qaPushChat("44444444-4444-4444-8444-444444444444", {
+        items: [
+          {
+            id: "child-answer",
+            role: "assistant",
+            kind: "message",
+            text: "CHILD_PUSHED_LIVE",
+            at: 1,
+          },
+        ],
+        total: 1,
+      }),
+    );
+    await page
+      .locator(".child-conversation")
+      .getByText("CHILD_PUSHED_LIVE", { exact: true })
+      .waitFor({ timeout: 2000 });
+    assert.equal(
+      await page
+        .locator(".agent-transcript")
+        .getByText("CHILD_PUSHED_LIVE", { exact: true })
+        .count(),
+      0,
+    );
+    assert.equal(
+      await page.getByLabel("给子代理发送消息", { exact: true }).isDisabled(),
+      true,
+    );
+    await page
+      .getByRole("button", { name: "关闭工作面板", exact: true })
+      .click();
     assert.deepEqual(
       calls.filter((c) => c.name === "chat.send").map((c) => c.args.action),
       ["send", "steer", "queue"],
@@ -515,6 +684,8 @@ const root = path.resolve(__dirname, "../..");
           filePreview: true,
           keyboardSearchAndTerminal: true,
           liveLanguageSwitch: ["en", "zh-TW", "zh-CN"],
+          smoothness,
+          childLiveUpdatesAndReadOnlyHistory: true,
           rendererErrors: errors,
         },
         null,

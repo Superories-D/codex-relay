@@ -234,7 +234,13 @@ async function boot() {
           if (a.remove) watchedChats.delete(a.threadId);
           else watchedChats.add(a.threadId);
         } else {
-          watchedChats.clear();
+          for (const id of watchedChats)
+            if (
+              !job ||
+              (id !== job.id &&
+                !job.agents?.some((agent) => agent.threadId === id))
+            )
+              watchedChats.delete(id);
           if (job) watchedChats.add(job.id);
         }
         return;

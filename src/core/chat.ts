@@ -9,7 +9,10 @@ export class Chats {
   private writes = new Map<string, Promise<void>>();
   private live = new Map<string, Map<string, ChatItem>>();
   private events = new Map<string, Promise<void>>();
-  private cache = new Map<string, { stamp: string; rows: ChatItem[] }>();
+  private cache = new Map<
+    string,
+    { stamp: string; rows: ChatItem[]; positions: Map<string, number> }
+  >();
   private prepared = new Set<string>();
   constructor(private root: string) {}
   file(id: string) {
@@ -46,9 +49,28 @@ export class Chats {
         }
         this.prepared.add(id);
       }
+      const cached = this.cache.get(id);
+      const before = cached
+        ? await fs.stat(this.file(id)).catch(() => undefined)
+        : undefined;
       await fs.appendFile(this.file(id), JSON.stringify(item) + "\n", {
         mode: 0o600,
       });
+      // Our append can update the loaded journal without reparsing its history.
+      // An external edit or repaired crash tail invalidates that shortcut.
+      if (
+        cached &&
+        before &&
+        cached.stamp === `${before.size}:${before.mtimeMs}`
+      ) {
+        const position = cached.positions.get(item.id);
+        if (position === undefined) {
+          cached.positions.set(item.id, cached.rows.length);
+          cached.rows.push(item);
+        } else cached.rows[position] = item;
+        const after = await fs.stat(this.file(id));
+        cached.stamp = `${after.size}:${after.mtimeMs}`;
+      } else this.cache.delete(id);
     });
     this.writes.set(id, next);
     return next;
@@ -132,32 +154,42 @@ export class Chats {
     await this.events.get(id);
     await this.writes.get(id);
     let base: ChatItem[] = [];
+    let positions = new Map<string, number>();
     try {
       const stat = await fs.stat(this.file(id)),
         stamp = `${stat.size}:${stat.mtimeMs}`;
       const cached = this.cache.get(id);
-      if (cached?.stamp === stamp) base = cached.rows;
-      else {
+      if (cached?.stamp === stamp) {
+        base = cached.rows;
+        positions = cached.positions;
+      } else {
         const rows = new Map<string, ChatItem>();
         for await (const row of jsonLines(this.file(id))) rows.set(row.id, row);
         base = [...rows.values()];
+        positions = new Map(base.map((item, index) => [item.id, index]));
         this.cache.delete(id);
-        this.cache.set(id, { stamp, rows: base });
+        this.cache.set(id, { stamp, rows: base, positions });
         while (this.cache.size > 3)
           this.cache.delete(this.cache.keys().next().value!);
       }
     } catch (e: any) {
       if (e.code !== "ENOENT") throw e;
     }
-    const rows = new Map(base.map((item) => [item.id, item]));
-    for (const item of this.live.get(id)?.values() ?? [])
-      rows.set(item.id, item);
-    const all = [...rows.values()];
-    const end = Math.min(before ?? all.length, all.length),
+    const live = this.live.get(id);
+    const extra = [...(live?.values() ?? [])].filter(
+      (item) => !positions.has(item.id),
+    );
+    const total = base.length + extra.length;
+    const end = Math.min(before ?? total, total),
       start = Math.max(0, end - 80);
     return {
-      items: all.slice(start, end),
-      total: all.length,
+      items: Array.from({ length: end - start }, (_, offset) => {
+        const index = start + offset;
+        return index < base.length
+          ? (live?.get(base[index].id) ?? base[index])
+          : extra[index - base.length];
+      }),
+      total,
       ...(start ? { before: start } : {}),
     };
   }

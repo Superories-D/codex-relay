@@ -13,6 +13,7 @@ import { capabilities } from "../shared/capabilities";
 import { Dialog } from "./Dialog";
 import { ModelPicker } from "./ModelPicker";
 import { RichMessage } from "./RichMessage";
+import { mergePage } from "./chat-view";
 import { TerminalPane } from "./TerminalPane";
 import { Workbench, type WorkbenchTab } from "./Workbench";
 import { ExtensionsPage, SchedulesPage } from "./FeaturePages";
@@ -96,22 +97,6 @@ const running = (j?: Job) =>
     "watching",
   ].includes(j.state);
 const basename = (p: string) => p.split(/[\\/]/).filter(Boolean).at(-1) || p;
-function mergePage(previous: ChatPage, next: ChatPage): ChatPage {
-  const old = new Map(previous.items.map((i) => [i.id, i]));
-  return {
-    ...next,
-    items: next.items.map((item) => {
-      const cached = old.get(item.id);
-      return cached &&
-        cached.text === item.text &&
-        cached.detail === item.detail &&
-        cached.status === item.status
-        ? cached
-        : item;
-    }),
-  };
-}
-
 export function AgentApp({
   management,
   approval,
@@ -1389,8 +1374,22 @@ export function AgentApp({
                         )}
                         <button
                           className="agent-send"
-                          title={running(job) ? t("排队发送") : t("发送")}
-                          aria-label={running(job) ? t("排队发送") : t("发送")}
+                          title={
+                            running(job)
+                              ? desktop.preferences?.followUp === "steer" &&
+                                job?.state === "running"
+                                ? t("立即补充到当前轮次 ↗")
+                                : t("排队发送")
+                              : t("发送")
+                          }
+                          aria-label={
+                            running(job)
+                              ? desktop.preferences?.followUp === "steer" &&
+                                job?.state === "running"
+                                ? t("立即补充到当前轮次 ↗")
+                                : t("排队发送")
+                              : t("发送")
+                          }
                           disabled={
                             pending ||
                             !draft.trim() ||
@@ -1470,7 +1469,11 @@ export function AgentApp({
                         {t("立即补充到当前轮次 ↗")}
                       </button>
                     ) : (
-                      <span>{t("Enter 发送 · Shift + Enter 换行")}</span>
+                      <span>
+                        {desktop.preferences?.enterSends === false
+                          ? t("Ctrl + Enter 发送")
+                          : t("Enter 发送 · Shift + Enter 换行")}
+                      </span>
                     )}
                   </div>
                 </div>

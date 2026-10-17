@@ -1,4 +1,5 @@
 import { t, useI18n } from "./i18n";
+import { sameChatItem } from "./chat-view";
 import React, { useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -230,12 +231,6 @@ function RichMessageView({
     </article>
   );
 }
-export const RichMessage = React.memo(
-  RichMessageView,
-  (previous, next) =>
-    previous.item === next.item ||
-    (previous.item.id === next.item.id &&
-      previous.item.text === next.item.text &&
-      previous.item.detail === next.item.detail &&
-      previous.item.status === next.item.status),
+export const RichMessage = React.memo(RichMessageView, (previous, next) =>
+  sameChatItem(previous.item, next.item),
 );

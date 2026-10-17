@@ -170,3 +170,57 @@ it("paginates old messages without log truncation and repairs only an incomplete
   expect((await reopened.read(id)).total).toBe(171);
   expect((await reopened.read(id)).items.at(-1)?.text).toBe("after crash");
 });
+it("merges live updates, completed replacements and external journal edits without moving old items", async () => {
+  const id = randomUUID();
+  await chats.user(id, "first");
+  await chats.event(id, "turn/plan/updated", {
+    turnId: "t",
+    explanation: "Plan",
+    plan: [{ step: "A", status: "pending" }],
+  });
+  await chats.read(id);
+  await chats.user(id, "second");
+  await chats.event(id, "turn/plan/updated", {
+    turnId: "t",
+    explanation: "Plan",
+    plan: [{ step: "A", status: "completed" }],
+  });
+  await chats.event(id, "item/started", {
+    turnId: "t",
+    item: { id: "live", type: "agentMessage", text: "Streaming" },
+  });
+  let page = await chats.read(id);
+  expect(page.total).toBe(4);
+  expect(page.items.map((i) => i.text)).toEqual([
+    "first",
+    "Plan",
+    "second",
+    "Streaming",
+  ]);
+  expect(page.items[1].detail).toContain("completed");
+  await chats.event(id, "item/completed", {
+    turnId: "t",
+    item: { id: "live", type: "agentMessage", text: "Finished" },
+  });
+  page = await chats.read(id);
+  expect(page.total).toBe(4);
+  expect(page.items.at(-1)?.text).toBe("Finished");
+  await fs.appendFile(
+    chats.file(id),
+    JSON.stringify({
+      id: "external",
+      role: "user",
+      kind: "message",
+      text: "external edit",
+      at: 1,
+    }) + "\n",
+  );
+  await chats.user(id, "after external edit");
+  page = await chats.read(id);
+  expect(page.total).toBe(6);
+  expect(page.items.slice(-2).map((i) => i.text)).toEqual([
+    "external edit",
+    "after external edit",
+  ]);
+  expect((await new Chats(store.root).read(id)).items).toEqual(page.items);
+});

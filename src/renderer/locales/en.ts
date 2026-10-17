@@ -1,6 +1,8 @@
 import { legacyEnglish } from "./legacy-en";
 export const english: Record<string, string> = {
   ...legacyEnglish,
+  "父会话结束后，子代理记录为只读": "Subagent history is read-only after the parent turn ends",
+  "{p0} 行 · UTF-8 · ": "{p0} lines · UTF-8 · ",
   已安装插件: "Installed plugins",
   "连接 Codex CLI": "Connecting to Codex CLI",
   创建或恢复本地会话: "Creating or resuming the local chat",

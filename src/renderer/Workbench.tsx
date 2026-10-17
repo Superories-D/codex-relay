@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 import type { AgentState, ChatItem, ChatPage, Job } from "../shared/types";
 import { MarkdownText, RichMessage } from "./RichMessage";
+import { mergePage } from "./chat-view";
 type Call = (name: string, args?: unknown) => Promise<any>;
 export type WorkbenchTab = "summary" | "files" | "changes" | "agents";
 type Entry = { name: string; path: string; directory: boolean };
@@ -475,7 +476,7 @@ function FilePreview({
           t("{p0}{p1} KB", {
             p0:
               data.kind === "text"
-                ? `${text.split("\n").length} 行 · UTF-8 · `
+                ? t("{p0} 行 · UTF-8 · ", { p0: text.split("\n").length })
                 : "",
             p1: (data.size / 1024).toFixed(1),
           })}
@@ -719,14 +720,27 @@ function Agents({
 }) {
   useI18n();
 
-  const [selected, setSelected] = useState<AgentState>(),
+  const [selectedId, setSelectedId] = useState(""),
     [chat, setChat] = useState<ChatPage>(),
     [error, setError] = useState(""),
     [message, setMessage] = useState("");
+  const selected = job?.agents?.find((agent) => agent.threadId === selectedId);
+  useEffect(() => {
+    setSelectedId("");
+    setChat(undefined);
+    setError("");
+    setMessage("");
+  }, [job?.id]);
   useEffect(() => {
     if (!job || !selected) return;
     let alive = true,
       loading = false;
+    setError("");
+    void call("chat.watch", { id: job.id, threadId: selected.threadId }).catch(
+      (e) => {
+        if (alive) setError(String(e));
+      },
+    );
     const read = async () => {
       if (loading) return;
       loading = true;
@@ -735,7 +749,10 @@ function Agents({
           id: job.id,
           threadId: selected.threadId,
         });
-        if (alive) setChat(value);
+        if (alive)
+          setChat((previous) =>
+            previous ? mergePage(previous, value) : value,
+          );
       } catch (e) {
         if (alive) setError(String(e));
       } finally {
@@ -743,10 +760,22 @@ function Agents({
       }
     };
     void read();
-    const timer = setInterval(read, 1200);
+    const offChat = window.relay.onChat?.((update) => {
+      if (alive && update.id === selected.threadId)
+        setChat((previous) =>
+          previous ? mergePage(previous, update.page) : update.page,
+        );
+    });
+    const timer = setInterval(read, window.relay.onChat ? 8000 : 1200);
     return () => {
       alive = false;
       clearInterval(timer);
+      offChat?.();
+      void call("chat.watch", {
+        id: job.id,
+        threadId: selected.threadId,
+        remove: true,
+      }).catch(() => {});
     };
   }, [job?.id, selected?.threadId]);
   const states: Record<string, string> = {
@@ -785,7 +814,7 @@ function Agents({
                 key={a.threadId}
                 className={selected?.threadId === a.threadId ? "selected" : ""}
                 onClick={() => {
-                  setSelected(a);
+                  setSelectedId(a.threadId);
                   setChat(undefined);
                 }}
               >
@@ -807,6 +836,12 @@ function Agents({
                 <span>{selected.name}</span>
                 <button
                   title={t("停止子代理")}
+                  disabled={
+                    job.state !== "running" ||
+                    !["running", "pendingInit", "waiting"].includes(
+                      selected.status,
+                    )
+                  }
                   onClick={() =>
                     void call("chat.agent.control", {
                       id: job.id,
@@ -853,11 +888,30 @@ function Agents({
               >
                 <input
                   aria-label={t("给子代理发送消息")}
-                  placeholder={t("向子代理补充要求…")}
+                  placeholder={
+                    job.state === "running"
+                      ? t("向子代理补充要求…")
+                      : t("父会话结束后，子代理记录为只读")
+                  }
+                  disabled={
+                    job.state !== "running" ||
+                    ["shutdown", "interrupted", "errored"].includes(
+                      selected.status,
+                    )
+                  }
                   value={message}
                   onChange={(e) => setMessage(e.target.value)}
                 />
-                <button disabled={!message.trim()} title={t("发送给子代理")}>
+                <button
+                  disabled={
+                    !message.trim() ||
+                    job.state !== "running" ||
+                    ["shutdown", "interrupted", "errored"].includes(
+                      selected.status,
+                    )
+                  }
+                  title={t("发送给子代理")}
+                >
                   <ChevronRight size={16} />
                 </button>
               </form>

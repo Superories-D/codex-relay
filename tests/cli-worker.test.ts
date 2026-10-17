@@ -97,6 +97,26 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 describe("CLI completion and interruption protocol", () => {
+  it("enforces read-only tools in plan mode even for a full-access chat", async () => {
+    job.sandbox = "dangerFullAccess";
+    job.planMode = true;
+    const w = worker();
+    await w.start(auth);
+    expect(rpc.call).toHaveBeenCalledWith(
+      "thread/start",
+      expect.objectContaining({ sandbox: "read-only" }),
+    );
+    expect(rpc.call).toHaveBeenCalledWith(
+      "turn/start",
+      expect.objectContaining({
+        input: expect.arrayContaining([
+          expect.objectContaining({
+            text: expect.stringContaining("不要修改文件"),
+          }),
+        ]),
+      }),
+    );
+  });
   it("sends the official kebab-case sandbox wire value", async () => {
     const w = worker();
     await w.start(auth);
