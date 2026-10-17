@@ -3469,6 +3469,7 @@
   --subtle: #777;
   --line: #ddd;
   --bg: #fff;
+  --surface: #f4f5f4;
   background: #fff;
   color: #333;
 }
@@ -3645,8 +3646,8 @@
     min-width: 280px;
     margin-right: 0;
     z-index: 18;
-    background: #1d1d1d;
-    border-left: 1px solid #333;
+    background: var(--bg);
+    border-left: 1px solid var(--line);
     box-shadow: -15px 0 40px #0004;
     padding-top: 8px;
   }
@@ -4170,6 +4171,7 @@
   color: var(--text);
 }
 .questions-pane {
+  color: var(--text);
   min-height: 0;
   overflow-y: auto;
   padding: 14px;

@@ -141,6 +141,25 @@ const root = path.resolve(__dirname, "../.."),
       await row.getByText("Smooth", { exact: true }).waitFor();
       for (const width of [1440, 900]) {
         await page.setViewportSize({ width, height: 900 });
+        await page.waitForFunction(() => {
+          const list = document.querySelector(".workbench-tab-list");
+          const selected = list?.querySelector(".selected");
+          if (!selected) return false;
+          const a = list.getBoundingClientRect(),
+            b = selected.getBoundingClientRect();
+          return b.left >= a.left - 1 && b.right <= a.right + 1;
+        });
+        if (width === 900 && language === "en") {
+          const colors = await page
+            .locator(".workbench")
+            .evaluate((panel) => ({
+              background: getComputedStyle(panel).backgroundColor,
+              text: getComputedStyle(panel.querySelector(".questions-pane"))
+                .color,
+            }));
+          assert.equal(colors.background, "rgb(255, 255, 255)");
+          assert.equal(colors.text, "rgb(51, 51, 51)");
+        }
         const geometry = await page
           .locator(".workbench-tabs")
           .evaluate((header) => {

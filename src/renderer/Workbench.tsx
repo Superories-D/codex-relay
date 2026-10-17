@@ -192,13 +192,36 @@ export function Workbench({
   draftAttachments?: ChatAttachment[];
   questions?: Approval[];
 }) {
-  useI18n();
+  const { language } = useI18n();
   const tabs = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    tabs.current
-      ?.querySelector(".selected")
-      ?.scrollIntoView({ block: "nearest", inline: "nearest" });
-  }, [tab]);
+    const list = tabs.current;
+    if (!list) return;
+    let frame = 0;
+    const reveal = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const selected = list.querySelector(".selected");
+        if (!selected || !list.clientWidth) return;
+        const bounds = list.getBoundingClientRect(),
+          button = selected.getBoundingClientRect();
+        if (button.left < bounds.left)
+          list.scrollLeft += button.left - bounds.left;
+        else if (button.right > bounds.right)
+          list.scrollLeft += button.right - bounds.right;
+      });
+    };
+    const observer = new ResizeObserver(reveal);
+    observer.observe(list);
+    list
+      .querySelectorAll("button")
+      .forEach((button) => observer.observe(button));
+    reveal();
+    return () => {
+      observer.disconnect();
+      cancelAnimationFrame(frame);
+    };
+  }, [tab, language]);
   return (
     <aside
       className={`workbench ${file ? "with-preview" : ""}`}
