@@ -91,6 +91,9 @@ export function eligible(
     !account.enabled ||
     account.status === "reauth" ||
     account.status === "offline" ||
+    Object.values(account.warmups || {}).some(
+      (w) => w.status === "running" || w.processSafe === false,
+    ) ||
     (typeof account.expiresAt === "number" && account.expiresAt <= now) ||
     (account.blockedUntil ?? 0) > now
   )

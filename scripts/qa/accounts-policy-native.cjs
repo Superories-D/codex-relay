@@ -88,6 +88,13 @@ const root = path.resolve(__dirname, "../.."),
     await launch();
     const selection = page.getByLabel("账户选择方式", { exact: true });
     assert.equal(await selection.inputValue(), "smart");
+    const warmup = page.getByRole("checkbox", {
+      name: "额度重置后自动开始计时",
+      exact: true,
+    });
+    assert.equal(await warmup.isChecked(), false);
+    await warmup.check();
+    assert.equal((await current()).settings.resetWarmupEnabled, true);
     await selection.selectOption("roundRobin");
     await page.waitForFunction(
       () =>
@@ -116,6 +123,11 @@ const root = path.resolve(__dirname, "../.."),
       new Date("2027-01-02T12:30").getTime(),
     );
     assert.equal(snapshot.settings.accountSelection, "roundRobin");
+    assert.equal(snapshot.settings.resetWarmupEnabled, true);
+    await page
+      .getByRole("checkbox", { name: "额度重置后自动开始计时", exact: true })
+      .uncheck();
+    assert.equal((await current()).settings.resetWarmupEnabled, false);
     await page.screenshot({
       path: path.join(output, "desktop-account-value.png"),
     });

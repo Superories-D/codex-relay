@@ -24,6 +24,7 @@ export interface Quota {
   unlimited?: boolean;
 }
 export interface Account {
+  warmups?: Record<string, ResetWarmup>;
   expiresAt?: number | null;
   limitMode?: "auto" | "fiveHour" | "weeklyOnly";
   id: string;
@@ -37,6 +38,24 @@ export interface Account {
   blockedUntil: number | null;
   failureCount: number;
   lastError?: string;
+}
+export interface ResetWarmup {
+  home?: string;
+  processSafe?: boolean;
+  resetAt: number;
+  status:
+    | "queued"
+    | "running"
+    | "confirmed"
+    | "sent"
+    | "failed"
+    | "uncertain"
+    | "covered"
+    | "yielded";
+  queuedAt: number;
+  finishedAt?: number;
+  nextResetAt?: number;
+  error?: string;
 }
 export interface Job {
   goal?: ThreadGoal | null;

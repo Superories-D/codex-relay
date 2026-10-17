@@ -1,6 +1,19 @@
 import { legacyEnglish } from "./legacy-en";
 import { nativeEnglish } from "./native-en";
 export const english: Record<string, string> = {
+  额度重置后自动开始计时: "Start the quota timer after a reset",
+  "服务器确认 5 小时额度重置后，在独立后台会话发送一次 hi。优先让路给任务；发送结果不确定时不会重试。会消耗少量额度。":
+    "Once the server confirms a five-hour quota reset, send one hi in a separate background chat. Tasks take priority. Uncertain sends are never retried. This uses a small amount of quota.",
+  等待空闲时开始计时: "Waiting for idle time to start the timer",
+  "正在后台开始计时…": "Starting the timer in the background…",
+  已确认下一次重置时间: "Next reset time confirmed",
+  "已发送 hi，等待计时确认": "Hi sent, waiting for timer confirmation",
+  "后台开窗未完成，不自动重试":
+    "Timer warmup did not finish; no automatic retry",
+  "后台开窗结果待核实，不重复发送":
+    "Timer warmup needs verification; no repeat send",
+  当前任务已开始计时: "An existing task started the timer",
+  "已让路给任务，不重复发送": "Yielded to a task; no repeat send",
   "自动选择可用账户，让任务保持上下文继续执行。":
     "Automatically choose an available account while preserving task context.",
   账户选择方式: "Account selection",

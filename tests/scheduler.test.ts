@@ -674,6 +674,25 @@ it("does not probe an unavailable account before dispatching a known available o
   expect(job.accountId).toBe("b");
   expect(inspect.mock.calls.every(([id]) => id === "b")).toBe(true);
 });
+it("dispatches another available account without waiting for a background warmup", async () => {
+  const a = store.data.accounts[0];
+  a.warmups = {
+    codex: {
+      resetAt: Date.now() - 1000,
+      queuedAt: Date.now(),
+      status: "running",
+    },
+  };
+  // Let recovery finish before emulating the in-memory active warmup.
+  await (scheduler as any).warmupRecovery;
+  a.warmups.codex.status = "running";
+  const yieldWarmup = vi.spyOn(scheduler.warmups, "yieldToTask");
+  const job = await scheduler.add({ ...input, cwd: root });
+  await until(() => workers[0]?.started);
+  expect(job.accountId).toBe("b");
+  expect(yieldWarmup).not.toHaveBeenCalled();
+  a.warmups.codex.status = "sent";
+});
 it("limits idle quota refresh to one account per dispatch cycle", async () => {
   const inspect = vi.mocked(scheduler.accounts.inspect);
   await (scheduler as any).tick();

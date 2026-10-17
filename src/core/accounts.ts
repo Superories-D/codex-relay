@@ -84,6 +84,11 @@ export function parseAuth(text: string): {
   };
 }
 export class Accounts {
+  quotaObserved?: (
+    account: Account,
+    previous: Record<string, Quota>,
+    fresh: Record<string, Quota>,
+  ) => void;
   private locks = new Map<string, Promise<unknown>>();
   private login?: {
     id: string;
@@ -344,6 +349,7 @@ export class Accounts {
             models.push(...(page.data ?? []));
             cursor = page.nextCursor ?? null;
           } while (cursor && models.length < 1000);
+        const previous = account.quotas;
         account.quotas = quotas;
         account.status = Object.values(quotas).some(isExhausted)
           ? "limited"
@@ -364,6 +370,7 @@ export class Accounts {
         ).auth;
         if (auth.tokens.account_id !== account.identity)
           throw new Error("凭据身份不匹配，拒绝写回");
+        this.quotaObserved?.(account, previous, quotas);
         return { auth, quotas, models };
       } catch (error) {
         processUncertain = error instanceof ProcessSafetyError;

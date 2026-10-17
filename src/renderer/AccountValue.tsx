@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { SlidersHorizontal } from "lucide-react";
 import type { Account, Snapshot } from "../shared/types";
 import { accountValue } from "../shared/account-value";
@@ -17,22 +17,39 @@ export function AccountSelection({
   useI18n();
   const [busy, setBusy] = useState(false),
     [error, setError] = useState("");
+  const [selection, setSelection] = useState(
+    snapshot.settings.accountSelection || "smart",
+  );
+  const [warmupEnabled, setWarmupEnabled] = useState(
+    snapshot.settings.resetWarmupEnabled !== false,
+  );
+  useEffect(
+    () => setSelection(snapshot.settings.accountSelection || "smart"),
+    [snapshot.settings.accountSelection],
+  );
+  useEffect(
+    () => setWarmupEnabled(snapshot.settings.resetWarmupEnabled !== false),
+    [snapshot.settings.resetWarmupEnabled],
+  );
   return (
     <div className="account-selection">
       <label>
         {t("账户选择方式")}
         <select
           aria-label={t("账户选择方式")}
-          value={snapshot.settings.accountSelection || "smart"}
+          value={selection}
           disabled={busy}
           onChange={async (e) => {
+            const next = e.target.value as "smart" | "roundRobin";
+            setSelection(next);
             setBusy(true);
             setError("");
             try {
               await call("accounts.policy", {
-                accountSelection: e.target.value,
+                accountSelection: next,
               });
             } catch (e) {
+              setSelection(snapshot.settings.accountSelection || "smart");
               setError(String(e));
             } finally {
               setBusy(false);
@@ -46,6 +63,33 @@ export function AccountSelection({
       <p>
         {t(
           "综合剩余额度、重置时间、套餐到期日与账户状态，优先使用更值得现在使用的账户。仅影响下一次调度。",
+        )}
+      </p>
+      <label className="warmup-setting">
+        <input
+          type="checkbox"
+          checked={warmupEnabled}
+          disabled={busy}
+          onChange={async (e) => {
+            const enabled = e.target.checked;
+            setWarmupEnabled(enabled);
+            setBusy(true);
+            setError("");
+            try {
+              await call("accounts.policy", { resetWarmupEnabled: enabled });
+            } catch (e) {
+              setWarmupEnabled(snapshot.settings.resetWarmupEnabled !== false);
+              setError(String(e));
+            } finally {
+              setBusy(false);
+            }
+          }}
+        />
+        <span>{t("额度重置后自动开始计时")}</span>
+      </label>
+      <p>
+        {t(
+          "服务器确认 5 小时额度重置后，在独立后台会话发送一次 hi。优先让路给任务；发送结果不确定时不会重试。会消耗少量额度。",
         )}
       </p>
       {error && (
@@ -80,6 +124,19 @@ export function AccountValueControl({
     reliability: t("近期失败"),
   };
   const unavailable = !eligible(account, "codex", now);
+  const warmup = account.warmups?.codex;
+  const warmupLabel =
+    warmup &&
+    {
+      queued: t("等待空闲时开始计时"),
+      running: t("正在后台开始计时…"),
+      confirmed: t("已确认下一次重置时间"),
+      sent: t("已发送 hi，等待计时确认"),
+      failed: t("后台开窗未完成，不自动重试"),
+      uncertain: t("后台开窗结果待核实，不重复发送"),
+      covered: t("当前任务已开始计时"),
+      yielded: t("已让路给任务，不重复发送"),
+    }[warmup.status];
   return (
     <>
       <div className="account-value-row">
@@ -95,6 +152,15 @@ export function AccountValueControl({
               ? t("套餐到期：{date}", { date: formatDate(account.expiresAt) })
               : t("套餐到期时间未设置")}
           </small>
+          {warmup && (
+            <small
+              className={`warmup-status ${warmup.status}`}
+              title={warmup.error}
+            >
+              {warmupLabel}
+              {warmup.nextResetAt ? ` · ${formatDate(warmup.nextResetAt)}` : ""}
+            </small>
+          )}
         </div>
         <button
           title={t("账户使用策略")}

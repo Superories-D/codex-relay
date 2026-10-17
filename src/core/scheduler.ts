@@ -31,6 +31,8 @@ import { capabilities } from "../shared/capabilities";
 import { Rpc } from "./rpc";
 import { prepareThread } from "./thread";
 import { ensureWindowsSandbox } from "./windows-sandbox";
+import { AccountWarmups } from "./account-warmups";
+import { WarmupRunner } from "./warmup-runner";
 export class Scheduler extends EventEmitter {
   readonly chats: Chats;
   approvals: Approval[] = [];
@@ -49,6 +51,10 @@ export class Scheduler extends EventEmitter {
   private currentRun?: Promise<void>;
   private probes = new Map<string, number>();
   private publishTimer?: NodeJS.Timeout;
+  readonly warmups: AccountWarmups;
+  private warmupRecovery: Promise<void>;
+  private backgroundProbe?: Promise<void>;
+  private lastWarmupRecovery = 0;
   constructor(
     readonly store: Store,
     readonly accounts: Accounts,
@@ -58,6 +64,60 @@ export class Scheduler extends EventEmitter {
   ) {
     super();
     this.chats = new Chats(store.root);
+    this.warmups = new AccountWarmups(
+      store,
+      () => this.changed(),
+      (account, record) =>
+        new WarmupRunner(
+          store,
+          accounts,
+          account,
+          async (home) => {
+            record.home = home;
+            record.processSafe = false;
+            await store.save();
+          },
+          record.resetAt,
+        ),
+      (account) => {
+        if (
+          this.closing ||
+          this.maintaining ||
+          accounts.busy.has(account.id) ||
+          store.data.jobs.some((j) => j.recoveryRequired)
+        )
+          return false;
+        if (
+          store.data.jobs.some(
+            (j) =>
+              j.accountId === account.id &&
+              ["preparing", "running", "pausing"].includes(j.state),
+          )
+        )
+          return false;
+        return this.active
+          ? this.active.job.accountId !== account.id
+          : !store.data.jobs.some(
+              (j) =>
+                ["queued", "preparing", "running", "pausing"].includes(
+                  j.state,
+                ) ||
+                (j.state === "waiting" && (j.nextWakeAt || 0) <= Date.now()),
+            );
+      },
+      (account) => accounts.busy.delete(account.id),
+    );
+    this.warmupRecovery = this.warmups
+      .recover()
+      .catch((error) => this.log(error, "warning"));
+    accounts.quotaObserved = (account, previous, fresh) =>
+      this.warmups.observe(
+        account,
+        previous,
+        fresh,
+        this.active?.job.accountId === account.id &&
+          this.active.job.state === "running",
+      );
   }
   snapshot(): Snapshot {
     return structuredClone({
@@ -170,6 +230,7 @@ export class Scheduler extends EventEmitter {
     return job;
   }
   start() {
+    this.warmups.start();
     if (this.timer) clearInterval(this.timer);
     this.timer = setInterval(
       () => void this.tick().catch((error) => this.log(error, "error")),
@@ -184,6 +245,9 @@ export class Scheduler extends EventEmitter {
         (typeof a.expiresAt === "number" && a.expiresAt <= now) ||
         a.status === "reauth" ||
         this.accounts.busy.has(a.id) ||
+        Object.values(a.warmups || {}).some(
+          (w) => w.status === "running" || w.processSafe === false,
+        ) ||
         this.active?.job.accountId === a.id
       )
         continue;
@@ -216,6 +280,7 @@ export class Scheduler extends EventEmitter {
     if (this.ticking || this.closing || this.maintaining) return;
     this.ticking = true;
     try {
+      await this.warmupRecovery;
       const now = Date.now();
       if (
         this.store.data.jobs.some(
@@ -227,18 +292,46 @@ export class Scheduler extends EventEmitter {
         )
       )
         return;
-      const runnable = this.store.data.jobs.find(
-        (j) =>
-          ["queued", "waiting"].includes(j.state) &&
-          pickAccount(
-            this.store.data.accounts,
-            this.store.data.cursor,
-            j.bucket,
-            now,
-            this.store.data.settings.accountSelection || "smart",
-          ),
-      );
+      const findRunnable = () =>
+        this.store.data.jobs.find(
+          (j) =>
+            ["queued", "waiting"].includes(j.state) &&
+            pickAccount(
+              this.store.data.accounts,
+              this.store.data.cursor,
+              j.bucket,
+              Date.now(),
+              this.store.data.settings.accountSelection || "smart",
+            ),
+        );
+      let runnable = findRunnable();
+      if (
+        !this.active &&
+        !runnable &&
+        this.store.data.jobs.some(
+          (j) =>
+            j.state === "queued" ||
+            (j.state === "waiting" && (j.nextWakeAt || 0) <= now),
+        )
+      ) {
+        await this.warmups.yieldToTask();
+        runnable = findRunnable();
+      }
       if (!this.active && !runnable) await this.refreshDue(now);
+      else if (this.active && !this.backgroundProbe) {
+        this.backgroundProbe = this.refreshDue(now)
+          .catch((error) => this.log(error, "warning"))
+          .finally(() => {
+            this.backgroundProbe = undefined;
+          });
+      }
+      if (now - this.lastWarmupRecovery > 30000) {
+        this.lastWarmupRecovery = now;
+        this.warmupRecovery = this.warmups
+          .recover()
+          .catch((error) => this.log(error, "warning"));
+      }
+      this.warmups.pump();
       if (
         this.active ||
         this.closing ||
@@ -299,12 +392,20 @@ export class Scheduler extends EventEmitter {
   }
   private updateQuota(account: Account, quotas: Record<string, Quota>) {
     if (!Object.keys(quotas).length) return;
+    const previous = account.quotas;
     account.quotas = { ...account.quotas, ...quotas };
     account.status = Object.values(account.quotas).some(isExhausted)
       ? "limited"
       : Object.values(account.quotas).some(hasQuotaEvidence)
         ? "ready"
         : "unknown";
+    this.warmups.observe(
+      account,
+      previous,
+      account.quotas,
+      this.active?.job.accountId === account.id &&
+        this.active.job.state === "running",
+    );
     this.changed();
   }
   private async run(job: Job, account: Account) {
@@ -1146,6 +1247,8 @@ export class Scheduler extends EventEmitter {
     this.closing = true;
     if (this.timer) clearInterval(this.timer);
     try {
+      await this.warmups.shutdown();
+      await this.backgroundProbe;
       await this.controls.catch(() => {});
       await this.tickInFlight;
       if (

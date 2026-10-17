@@ -1126,12 +1126,17 @@ async function boot() {
       }
       case "accounts.policy": {
         const a = z
-          .object({ accountSelection: z.enum(["smart", "roundRobin"]) })
+          .object({
+            accountSelection: z.enum(["smart", "roundRobin"]).optional(),
+            resetWarmupEnabled: z.boolean().optional(),
+          })
           .strict()
+          .refine((v) => Object.values(v).some((value) => value !== undefined))
           .parse(args);
-        store.data.settings.accountSelection = a.accountSelection;
+        Object.assign(store.data.settings, a);
         await store.save();
         scheduler.changed();
+        scheduler.warmups.pump();
         return;
       }
       case "accounts.reorder": {
