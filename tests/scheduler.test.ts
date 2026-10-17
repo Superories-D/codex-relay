@@ -263,6 +263,52 @@ it("refuses a child from a different parent even if the worker exposes a generic
   ).rejects.toThrow("不属于");
   expect(workers[0].agentControl).not.toHaveBeenCalled();
 });
+it("keeps a Goal budget stop unfinished without rotating accounts or draining queued messages", async () => {
+  const job = await scheduler.add({ ...input, cwd: root, interactive: true });
+  await until(() => job.state === "running");
+  job.goal = {
+    threadId: job.threadId!,
+    objective: "Evidence",
+    status: "budgetLimited",
+    tokenBudget: 100,
+    tokensUsed: 100,
+    timeUsedSeconds: 1,
+    createdAt: 1,
+    updatedAt: 2,
+  };
+  job.queuedMessages = [{ text: "Wait for user", attachments: [] }];
+  workers[0].settle({ kind: "goalStopped" });
+  await until(() => job.state === "needs_attention");
+  expect(job.rotations).toBe(0);
+  expect(job.queuedMessages).toHaveLength(1);
+  expect(job.lastError).toContain("预算");
+});
+it("pauses Goal continuation before stopping the user's task and cancels automatic quota recovery", async () => {
+  const job = await scheduler.add({ ...input, cwd: root, interactive: true });
+  await until(() => job.state === "running");
+  job.goal = {
+    threadId: job.threadId!,
+    objective: "Evidence",
+    status: "active",
+    tokenBudget: null,
+    tokensUsed: 4,
+    timeUsedSeconds: 1,
+    createdAt: 1,
+    updatedAt: 2,
+  };
+  job.goalResumeAfterQuota = true;
+  workers[0].operation.mockResolvedValue({
+    goal: { ...job.goal, status: "paused" },
+  });
+  await scheduler.control(job.id, "pause");
+  expect(workers[0].operation).toHaveBeenCalledWith("thread/goal/set", {
+    status: "paused",
+    origin: "user",
+  });
+  expect(job.goal.status).toBe("paused");
+  expect(job.goalResumeAfterQuota).toBe(false);
+  expect(job.state).toBe("paused");
+});
 it("queues inputs until normal completion and steers only a running turn", async () => {
   const job = await scheduler.add({ ...input, cwd: root, interactive: true });
   await until(() => job.state === "running");

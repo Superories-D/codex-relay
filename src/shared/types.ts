@@ -38,6 +38,7 @@ export interface Account {
 }
 export interface Job {
   goal?: ThreadGoal | null;
+  goalResumeAfterQuota?: boolean;
   runtimeHomeId?: string;
   pinned?: boolean;
   planMode?: boolean;

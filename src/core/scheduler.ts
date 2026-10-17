@@ -519,6 +519,7 @@ export class Scheduler extends EventEmitter {
       for (const agent of job.agents ?? [])
         await this.chats.flush(agent.threadId);
     }
+    if (active.reason) job.goalResumeAfterQuota = false;
     if (active.reason === "cancel" && !active.failedStop)
       job.state = "cancelled";
     else if ((active.reason === "pause" || this.closing) && !active.failedStop)
@@ -544,6 +545,18 @@ export class Scheduler extends EventEmitter {
       await this.store.save();
       this.changed();
       job.state = "queued";
+    } else if (outcome?.kind === "goalStopped") {
+      job.state = job.goal?.status === "paused" ? "paused" : "needs_attention";
+      job.lastError =
+        (
+          {
+            paused: "目标已暂停，保留原会话",
+            blocked: "目标受阻，请检查现有结果后继续",
+            budgetLimited: "已达到目标 Token 预算，尚未标记目标完成",
+            usageLimited: "目标因额度限制停止，请检查账户后继续",
+          } as Record<string, string>
+        )[job.goal?.status || ""] || "目标已停止，请检查会话状态";
+      this.log(job.lastError, "info", job.id);
     } else if (outcome?.kind === "incomplete") {
       const retries = job.completionRetries ?? 0;
       const limit = job.maxCompletionRetries ?? 3;
@@ -1078,6 +1091,23 @@ export class Scheduler extends EventEmitter {
       job.state = "pausing";
       this.changed();
       try {
+        // User pause/cancel also pauses Goal continuation. Quota-driven stops
+        // bypass this path, preserving their automatic recovery authority.
+        if (job.goal?.status === "active" && this.active.worker?.operation) {
+          try {
+            const result = (await this.active.worker.operation(
+              "thread/goal/set",
+              { status: "paused", origin: "user" },
+            )) as { goal?: Job["goal"] };
+            if (result.goal) job.goal = result.goal;
+          } catch (error) {
+            this.log(
+              `目标暂停状态暂未确认，继续安全停止任务：${redact(error)}`,
+              "warning",
+              job.id,
+            );
+          }
+        }
         await this.active.worker?.stop();
         await this.currentRun;
         if (this.active?.failedStop)

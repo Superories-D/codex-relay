@@ -8,7 +8,7 @@ class FakeRpc extends EventEmitter {
   used = 10;
   interruptEmits = true;
   calls: string[] = [];
-  call = vi.fn(async (method: string, params: any) => {
+  call = vi.fn(async (method: string, params: any): Promise<any> => {
     this.calls.push(method);
     if (method === "windowsSandbox/readiness") return { status: "ready" };
     if (method === "account/rateLimits/read")
@@ -94,6 +94,96 @@ beforeEach(() => {
     approvalPolicy: "on-request",
     sandbox: "workspaceWrite",
   };
+});
+it("holds a new native Goal turn open when the previous turn's final verification completes", async () => {
+  const w = worker(),
+    settled = vi.fn();
+  w.done.then(settled);
+  await w.start(auth);
+  endParent();
+  rpc.notify("turn/started", {
+    threadId: job.threadId,
+    turn: { id: "goal-next" },
+  });
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(settled).not.toHaveBeenCalled();
+  expect(job.turnId).toBe("goal-next");
+  // No new final answer: the previous turn's text cannot satisfy this one.
+  rpc.notify("turn/completed", {
+    threadId: job.threadId,
+    turn: { id: "goal-next", status: "completed" },
+  });
+  await vi.advanceTimersByTimeAsync(1000);
+  expect((await w.done).kind).toBe("error");
+  await w.close();
+});
+it("interrupts a late native Goal turn after a user stop was already requested", async () => {
+  const w = worker();
+  await w.start(auth);
+  rpc.interruptEmits = false;
+  const stopping = w.stop();
+  rpc.notify("turn/started", {
+    threadId: job.threadId,
+    turn: { id: "late-goal-turn" },
+  });
+  await vi.advanceTimersByTimeAsync(1);
+  expect(rpc.call).toHaveBeenCalledWith("turn/interrupt", {
+    threadId: job.threadId,
+    turnId: "late-goal-turn",
+  });
+  rpc.notify("turn/completed", {
+    threadId: job.threadId,
+    turn: { id: "late-goal-turn", status: "interrupted" },
+  });
+  await vi.advanceTimersByTimeAsync(1000);
+  await stopping;
+  expect((await w.done).kind).toBe("interrupted");
+  await w.close();
+});
+it("preserves a native Goal budget stop while waiting for children to stop", async () => {
+  const w = worker();
+  await w.start(auth);
+  rpc.notify("thread/goal/updated", {
+    threadId: job.threadId,
+    goal: { threadId: job.threadId, status: "budgetLimited" },
+  });
+  beginChild();
+  endParent();
+  await vi.advanceTimersByTimeAsync(1000);
+  expect((await w.done).kind).toBe("goalStopped");
+  expect(rpc.call).toHaveBeenCalledWith("turn/interrupt", {
+    threadId: "child",
+    turnId: "child-turn",
+  });
+  await w.close();
+});
+it("restores only status after quota rotation with automatic provenance and no objective or budget reset", async () => {
+  job.threadId = "thread-1";
+  job.goalResumeAfterQuota = true;
+  const original = rpc.call.getMockImplementation()!;
+  const goal = {
+    threadId: job.threadId,
+    objective: "Keep the existing evidence",
+    status: "usageLimited",
+    tokensUsed: 42,
+    tokenBudget: 5000,
+  };
+  rpc.call.mockImplementation(async (method, params) =>
+    method === "thread/goal/get"
+      ? { goal }
+      : method === "thread/goal/set"
+        ? { goal: { ...goal, status: params.status } }
+        : original(method, params),
+  );
+  const w = worker();
+  await w.start(auth);
+  expect(rpc.call).toHaveBeenCalledWith("thread/goal/set", {
+    threadId: job.threadId,
+    status: "active",
+    origin: "automatic",
+  });
+  expect(job.goalResumeAfterQuota).toBe(false);
+  await w.close();
 });
 it("keeps root Goal accounting updates from prior turns and isolates child Goal state", async () => {
   const w = worker();
