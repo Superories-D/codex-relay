@@ -400,6 +400,93 @@
 }
 .rich-markdown {
   overflow-wrap: anywhere;
+  min-width: 0;
+}
+.rich-markdown hr {
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin: 24px 0;
+}
+.rich-markdown .contains-task-list {
+  list-style: none;
+  padding-left: 4px;
+}
+.rich-markdown .task-list-item > input {
+  margin: 0 9px 0 0;
+  accent-color: var(--accent);
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  vertical-align: -2px;
+}
+.rich-markdown sup {
+  font-size: 0.75em;
+}
+.rich-markdown .footnotes {
+  color: var(--subtle);
+  font-size: 12px;
+  border-top: 1px solid var(--line);
+  margin-top: 24px;
+  padding-top: 12px;
+}
+.rich-markdown .footnotes > h2 {
+  font-size: 13px;
+  color: var(--subtle);
+  margin: 0;
+}
+.rich-markdown .footnotes [id] {
+  scroll-margin: 20px;
+}
+.rich-markdown .footnotes [id]:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 4px;
+  border-radius: 3px;
+}
+.math-block {
+  position: relative;
+  margin: 20px 0;
+  padding: 6px 34px 6px 0;
+}
+.math-block .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  margin: 0;
+  padding: 6px 0;
+}
+.math-block .katex-display > .katex {
+  white-space: nowrap;
+}
+.rich-markdown .katex {
+  font-size: 1.1em;
+  text-indent: 0;
+  overflow-wrap: normal;
+}
+.desktop-shell .math-block > .copy-button {
+  position: absolute;
+  right: 0;
+  top: 8px;
+  padding: 6px;
+  color: var(--subtle);
+  opacity: 0;
+  transition: opacity 150ms ease;
+}
+.math-block:hover > .copy-button,
+.math-block:focus-within > .copy-button {
+  opacity: 1;
+}
+@media (hover: none) {
+  .desktop-shell .math-block > .copy-button {
+    opacity: 1;
+  }
+}
+.copy-announcement {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 .rich-markdown p {
   margin: 0 0 14px;

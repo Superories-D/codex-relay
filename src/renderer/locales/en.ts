@@ -1,6 +1,10 @@
 import { legacyEnglish } from "./legacy-en";
 import { nativeEnglish } from "./native-en";
 export const english: Record<string, string> = {
+  注释: "Footnotes",
+  返回正文: "Back to content",
+  复制公式: "Copy equation",
+  "复制失败，点击重试": "Copy failed. Click to retry",
   额度重置后自动开始计时: "Start the quota timer after a reset",
   "服务器确认 5 小时额度重置后，在独立后台会话发送一次 hi。优先让路给任务；发送结果不确定时不会重试。会消耗少量额度。":
     "Once the server confirms a five-hour quota reset, send one hi in a separate background chat. Tasks take priority. Uncertain sends are never retried. This uses a small amount of quota.",

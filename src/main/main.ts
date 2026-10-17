@@ -261,6 +261,14 @@ async function boot() {
   const command = async (name: string, args?: unknown): Promise<unknown> => {
     if (quitting) throw new Error("正在保存并退出");
     switch (name) {
+      case "clipboard.writeText":
+        await clipboard.writeText(
+          z
+            .string()
+            .max(8 * 1024 * 1024)
+            .parse(args),
+        );
+        return;
       case "chat.watch": {
         const a = z
           .object({

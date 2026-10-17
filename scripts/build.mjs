@@ -39,6 +39,10 @@ await build({
   format: "iife",
   minify: true,
   define: { "process.env.NODE_ENV": '"production"' },
+  loader: { ".woff2": "file", ".woff": "file", ".ttf": "file" },
+  assetNames: "assets/[name]-[hash]",
 });
 await copyFile("src/renderer/index.html", "dist/renderer/index.html");
+await mkdir("dist/renderer/assets", { recursive: true });
+await copyFile("node_modules/katex/LICENSE", "dist/renderer/assets/KaTeX-LICENSE.txt");
 console.log("Built main, isolated preload, and renderer.");

@@ -1,5 +1,6 @@
 import { t, useI18n, languages, type Language, formatDate } from "./i18n";
 import React, { useEffect, useState } from "react";
+import { copyText } from "./clipboard";
 import {
   ArrowDown,
   ArrowLeft,
@@ -375,10 +376,7 @@ export function SettingsPage({
                 className="settings-deep-link"
                 onClick={() =>
                   void run(
-                    () =>
-                      navigator.clipboard.writeText(
-                        JSON.stringify(prefs, null, 2),
-                      ),
+                    () => copyText(JSON.stringify(prefs, null, 2)),
                     t("主题设置已复制"),
                   )
                 }

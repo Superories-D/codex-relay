@@ -235,5 +235,8 @@ export class AccountWarmups {
   async shutdown() {
     this.closed = true;
     await this.yieldToTask();
+    // Observe-only reconciliations also write state when no execution is active.
+    // Join the store queue so shutdown cannot return with such a write in flight.
+    await this.store.save();
   }
 }

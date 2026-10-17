@@ -1,4 +1,5 @@
 import { t, useI18n, setLanguage } from "./i18n";
+import { CopyButton } from "./CopyButton";
 import React, { useEffect, useRef, useState, useMemo } from "react";
 import type {
   Approval,
@@ -2054,13 +2055,7 @@ function Message({ item }: { item: ChatItem }) {
         <pre className="agent-message-attachments">{item.detail}</pre>
       )}
       {item.role === "assistant" && (
-        <button
-          className="agent-copy"
-          onClick={() => void navigator.clipboard.writeText(item.text)}
-          title={t("复制回答")}
-        >
-          {t("⧉ 复制")}
-        </button>
+        <CopyButton text={item.text} label={t("复制回答")} />
       )}
     </article>
   );

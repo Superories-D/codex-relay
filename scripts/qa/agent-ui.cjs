@@ -186,7 +186,7 @@ const root = path.resolve(__dirname, "../..");
             text:
               n === 79
                 ? "STREAM_UPDATE_0"
-                : `### Result ${n}\n\n${content}\n\n\`\`\`ts\nconst result = 40 + 2;\n\`\`\``,
+                : `### Result ${n}\n\n${content}\n\n\\(x^2 + y^2 \\ge 0\\)\n\n\`\`\`ts\nconst result = 40 + 2;\n\`\`\``,
             at: now,
           })),
         );
@@ -197,9 +197,11 @@ const root = path.resolve(__dirname, "../..");
         const timer = setInterval(() => {
           items[79] = {
             ...items[79],
+            status: "running",
             text:
               `STREAM_UPDATE_${++count}\n\n` +
-              "Progress remains visible. ".repeat(count),
+              "Progress remains visible. ".repeat(count) +
+              `\n\n\\(x_${count}^2 \\ge 0\\)\n\n"""ts\nconst completed = ${count};`,
           };
           window.qaPushChat(job.id, { items, total: items.length });
           if (count === 40) clearInterval(timer);
@@ -476,7 +478,7 @@ const root = path.resolve(__dirname, "../..");
       .click();
     await page.getByText("从 Desktop 导入的对话", { exact: true }).waitFor();
     await page.getByRole("button", { name: "导入全部", exact: true }).click();
-    await page.getByRole("status").waitFor();
+    await page.getByRole("status").filter({ hasText: "已导入" }).waitFor();
     await page.screenshot({
       path: path.join(root, "qa-output/agent-import.png"),
     });
