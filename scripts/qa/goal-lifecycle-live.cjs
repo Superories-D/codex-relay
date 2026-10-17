@@ -69,6 +69,10 @@ async function authorizedAccess() {
 }
 
 (async () => {
+  const scenario = process.env.RELAY_GOAL_LIVE_CASE || "lifecycle";
+  assert(["lifecycle", "budget"].includes(scenario));
+  const budgetCase = scenario === "budget",
+    maxTurns = budgetCase ? 2 : 3;
   const auth = await authorizedAccess();
   const home = await fs.mkdtemp(path.join(output, "goal-lifecycle-live-"));
   const cli = path.join(
@@ -77,6 +81,7 @@ async function authorizedAccess() {
   );
   const report = {
     home,
+    scenario,
     manualTurnStartRequests: 0,
     automaticTurns: 0,
     completedTurns: 0,
@@ -114,7 +119,7 @@ async function authorizedAccess() {
             number: report.automaticTurns,
           }),
         );
-        if (report.automaticTurns > 3) {
+        if (report.automaticTurns > maxTurns) {
           exceeded = true;
           void instance
             .call("turn/interrupt", { threadId, turnId: m.params.turn.id })
@@ -217,12 +222,13 @@ async function authorizedAccess() {
     report.threadId = threadId;
     await close();
     await open();
-    const objective =
-      "This is a three-turn Goal lifecycle acceptance test, not an open-ended task. Do not use shell, files, network, images, or subagents. Use only the native goal tools when instructed. Turn 1: if no prior answer contains GOAL_STAGE_ONE, answer exactly GOAL_STAGE_ONE, keep this Goal active, end the turn. Turn 2: if GOAL_STAGE_ONE exists but GOAL_STAGE_TWO does not, use the native goal update tool to pause this Goal, then answer exactly GOAL_STAGE_TWO, end the turn. Turn 3 after the user resumes the paused Goal: if GOAL_STAGE_TWO exists, mark this Goal complete using the native goal update tool, answer exactly GOAL_STAGE_THREE, end the turn. Never combine stages in one turn. Do not ask questions or create a new goal.";
+    const objective = budgetCase
+      ? "This is a two-turn Goal budget acceptance test. Do not use shell, files, network, images, or subagents. Do not change the goal budget or status in the first turn. First turn: if no prior answer contains GOAL_BUDGET_ONE, answer exactly GOAL_BUDGET_ONE, leave this Goal active and end the turn. The user will increase the budget and resume this same Goal. Second turn: if GOAL_BUDGET_ONE exists, use the native goal update tool to mark this Goal complete, then answer exactly GOAL_BUDGET_TWO. Never combine stages or create a new goal."
+      : "This is a three-turn Goal lifecycle acceptance test, not an open-ended task. Do not use shell, files, network, images, or subagents. Use only the native goal tools when instructed. Turn 1: if no prior answer contains GOAL_STAGE_ONE, answer exactly GOAL_STAGE_ONE, keep this Goal active, end the turn. Turn 2: if GOAL_STAGE_ONE exists but GOAL_STAGE_TWO does not, use the native goal update tool to pause this Goal, then answer exactly GOAL_STAGE_TWO, end the turn. Turn 3 after the user resumes the paused Goal: if GOAL_STAGE_TWO exists, mark this Goal complete using the native goal update tool, answer exactly GOAL_STAGE_THREE, end the turn. Never combine stages in one turn. Do not ask questions or create a new goal.";
     await rpc.call("thread/goal/set", {
       threadId,
       objective,
-      tokenBudget: 45000,
+      tokenBudget: budgetCase ? 1 : 45000,
       status: "paused",
       origin: "user",
     });
@@ -310,14 +316,31 @@ async function authorizedAccess() {
     assert.equal((await run()).kind, "goalStopped");
     assert.equal(
       report.automaticTurns,
-      2,
-      "First worker must survive the first final answer and stop on native pause",
+      budgetCase ? 1 : 2,
+      "Stop at the native Goal boundary without extra automatic rounds",
     );
     await open();
     report.pausedGoal = (await rpc.call("thread/goal/get", { threadId })).goal;
-    assert.equal(report.pausedGoal.status, "paused");
+    assert.equal(
+      report.pausedGoal.status,
+      budgetCase ? "budgetLimited" : "paused",
+    );
     assert(report.pausedGoal.tokensUsed > 0);
     assert.equal(report.pausedGoal.objective, objective);
+    if (budgetCase) {
+      const updated = await rpc.call("thread/goal/set", {
+        threadId,
+        tokenBudget: report.pausedGoal.tokensUsed + 16000,
+        origin: "user",
+      });
+      assert.equal(updated.goal.tokensUsed, report.pausedGoal.tokensUsed);
+      assert.equal(
+        updated.goal.status,
+        "budgetLimited",
+        "Changing budget must not start the Goal",
+      );
+      report.adjustedGoal = updated.goal;
+    }
     await rpc.call("thread/goal/set", {
       threadId,
       status: "active",
@@ -333,19 +356,17 @@ async function authorizedAccess() {
     assert.equal(report.finalGoal.objective, objective);
     assert.equal(report.finalGoal.createdAt, report.initialGoal.createdAt);
     assert(report.finalGoal.tokensUsed >= report.pausedGoal.tokensUsed);
-    assert.equal(report.automaticTurns, 3);
-    assert.equal(report.completedTurns, 3);
+    assert.equal(report.automaticTurns, maxTurns);
+    assert.equal(report.completedTurns, maxTurns);
     assert.equal(report.manualTurnStartRequests, 0);
     assert.equal(report.refreshTokenRequests, 0);
     assert.equal(exceeded, false);
     const answers = report.stages
       .filter((s) => s.event === "answer")
       .map((s) => s.text);
-    for (const marker of [
-      "GOAL_STAGE_ONE",
-      "GOAL_STAGE_TWO",
-      "GOAL_STAGE_THREE",
-    ])
+    for (const marker of budgetCase
+      ? ["GOAL_BUDGET_ONE", "GOAL_BUDGET_TWO"]
+      : ["GOAL_STAGE_ONE", "GOAL_STAGE_TWO", "GOAL_STAGE_THREE"])
       assert(
         answers.some((a) => a.includes(marker)),
         marker,
@@ -379,7 +400,7 @@ async function authorizedAccess() {
       process.exitCode = 1;
     }
     await fs.writeFile(
-      path.join(output, "goal-lifecycle-live-report.json"),
+      path.join(output, `goal-${scenario}-live-report.json`),
       JSON.stringify(report, null, 2),
     );
     console.log(

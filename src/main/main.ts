@@ -595,6 +595,23 @@ async function boot() {
         if (!task) throw new Error("定时任务不存在");
         return runScheduled(task);
       }
+      case "chat.goal.create": {
+        const a = newJobSchema
+          .extend({
+            mode: z.literal("cli"),
+            prompt: z.string().trim().min(1).max(20000),
+            tokenBudget: z
+              .number()
+              .int()
+              .positive()
+              .max(Number.MAX_SAFE_INTEGER)
+              .nullable(),
+            start: z.boolean(),
+          })
+          .parse(args);
+        const { tokenBudget, start, ...input } = a;
+        return scheduler.createGoal(input, tokenBudget, start);
+      }
       case "chat.goal.read": {
         const a = z.object({ id: idSchema }).strict().parse(args);
         return scheduler.goal(a.id, "thread/goal/get");

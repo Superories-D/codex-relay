@@ -191,6 +191,8 @@ function nativeGoals(initial: any = null) {
   let current = initial;
   const rpc = new EventEmitter() as any;
   rpc.call = vi.fn(async (method: string, params: any) => {
+    if (["thread/start", "thread/resume"].includes(method))
+      return { thread: { id: "new-goal-thread" } };
     if (method === "thread/goal/clear") {
       current = null;
       return { cleared: true };
@@ -214,6 +216,114 @@ function nativeGoals(initial: any = null) {
   rpc.reject = vi.fn();
   return rpc;
 }
+it("creates a paused Goal without a signed-in account, user message, or model turn", async () => {
+  store.data.accounts = [];
+  const rpc = nativeGoals(),
+    open = vi.spyOn(Rpc, "open").mockResolvedValue(rpc);
+  try {
+    const job = await scheduler.createGoal(
+      { ...input, cwd: root, prompt: "Verify the finished result" },
+      3000,
+      false,
+    );
+    expect(job.state).toBe("paused");
+    expect(job.threadId).toBe("new-goal-thread");
+    expect(job.pendingMessage).toBeUndefined();
+    expect(job.prompt).toBe("");
+    expect(job.goal).toMatchObject({
+      objective: "Verify the finished result",
+      status: "paused",
+      tokenBudget: 3000,
+      tokensUsed: 0,
+    });
+    expect((await scheduler.chats.read(job.id)).total).toBe(0);
+    expect(
+      rpc.call.mock.calls.some(([m]: [string]) =>
+        ["account/login/start", "turn/start"].includes(m),
+      ),
+    ).toBe(false);
+    expect(rpc.call).toHaveBeenCalledWith(
+      "thread/start",
+      expect.objectContaining({ config: { "features.goals": false } }),
+    );
+    const reloaded = new Store(root);
+    await reloaded.load();
+    expect(reloaded.data.jobs[0].goal).toEqual(job.goal);
+    expect(workers).toHaveLength(0);
+  } finally {
+    open.mockRestore();
+  }
+});
+it("unloads a new Goal before activating it and persists its explicit queue admission", async () => {
+  store.data.accounts = [];
+  const rpc = nativeGoals(),
+    open = vi.spyOn(Rpc, "open").mockResolvedValue(rpc);
+  let unloaded = false;
+  rpc.close.mockImplementation(async () => {
+    unloaded = true;
+  });
+  const call = rpc.call.getMockImplementation();
+  rpc.call.mockImplementation(async (method: string, params: any) => {
+    if (method === "thread/goal/set" && params.status === "active")
+      expect(unloaded).toBe(true);
+    return call(method, params);
+  });
+  try {
+    const job = await scheduler.createGoal({ ...input, cwd: root }, null, true);
+    expect(job.state).toBe("queued");
+    expect(job.goalStartRequested).toBe(true);
+    expect(job.goal?.status).toBe("active");
+    expect(open).toHaveBeenCalledTimes(2);
+    expect(rpc.close).toHaveBeenCalledTimes(2);
+    await scheduler.goal(job.id, "thread/goal/set", { status: "paused" });
+    expect(job.state).toBe("paused");
+    expect(job.goalStartRequested).toBe(false);
+  } finally {
+    open.mockRestore();
+  }
+});
+it("retains uncertain Goal creation for recovery and refuses to discard attachments", async () => {
+  store.data.accounts = [];
+  const rpc = nativeGoals(),
+    open = vi.spyOn(Rpc, "open").mockResolvedValue(rpc);
+  try {
+    await expect(
+      scheduler.createGoal(
+        {
+          ...input,
+          cwd: root,
+          attachments: [
+            {
+              type: "mention",
+              path: path.join(root, "notes.txt"),
+              name: "notes.txt",
+            },
+          ],
+        },
+        null,
+        true,
+      ),
+    ).rejects.toThrow("补充文件");
+    expect(open).not.toHaveBeenCalled();
+    rpc.close.mockRejectedValue(
+      new ProcessSafetyError("Uncertain close", Error("fixture")),
+    );
+    await expect(
+      scheduler.createGoal({ ...input, cwd: root }, null, true),
+    ).rejects.toThrow("Uncertain close");
+    expect(store.data.jobs).toHaveLength(1);
+    expect(store.data.jobs[0]).toMatchObject({
+      state: "needs_attention",
+      recoveryRequired: true,
+      threadId: "new-goal-thread",
+    });
+    expect(workers).toHaveLength(0);
+    // Fake process only; no process remains to recover in fixture teardown.
+    store.data.jobs[0].recoveryRequired = false;
+  } finally {
+    open.mockRestore();
+  }
+});
 it("persists explicit Goal admission, permits pause before dispatch, and clears admission only on a real checkpoint", async () => {
   store.data.accounts = [];
   const job = await scheduler.add({ ...input, cwd: root, interactive: true });

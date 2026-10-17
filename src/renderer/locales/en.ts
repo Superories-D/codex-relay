@@ -1,6 +1,20 @@
 import { legacyEnglish } from "./legacy-en";
 import { nativeEnglish } from "./native-en";
 export const english: Record<string, string> = {
+  持续目标: "Ongoing goal",
+  完成目标前持续推进: "Keep working toward the result",
+  退出持续目标模式: "Exit ongoing goal mode",
+  "目标最多支持 20000 个字符": "Goals support up to 20,000 characters",
+  "预算在轮次结束时核算，当前轮次可能超过设定值。":
+    "Budgets are checked after each turn. The current turn may exceed the limit.",
+  "请先创建持续目标，再在聊天中补充文件或发起审查":
+    "Create the goal first, then add files or request a review in the chat",
+  "客户端正在处理其他会话操作，请稍后再创建目标":
+    "Another chat operation is in progress. Try creating the goal again shortly",
+  "目标保存状态未确认，请检查新建会话":
+    "Goal saving was not confirmed. Check the newly created chat",
+  "目标创建进程停止尚未确认，请先处理恢复状态":
+    "The goal creation process has not been confirmed stopped. Resolve recovery first",
   "会话正在恢复或停止，请稍后再操作目标":
     "The chat is recovering or stopping. Try the goal action again afterward",
   请等待当前会话结束或暂停后再开始目标:

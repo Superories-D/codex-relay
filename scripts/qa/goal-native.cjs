@@ -268,6 +268,86 @@ async function until(fn, timeout = 20000) {
     assert.equal((await current()).goal, null);
     report.createEditPersistAndPauseQueuedGoal = true;
     report.pauseClearAndThreeLanguages = true;
+    await page.getByTitle("在此项目新建聊天", { exact: true }).click();
+    await page
+      .getByLabel("消息", { exact: true })
+      .fill("/goal 从新聊天直接创建的持续目标");
+    await page.getByLabel("消息", { exact: true }).press("Enter");
+    await page.locator(".composer-goal-mode").waitFor();
+    assert.equal(
+      await page.getByLabel("消息", { exact: true }).inputValue(),
+      "从新聊天直接创建的持续目标",
+    );
+    await page.getByLabel("目标 Token 预算", { exact: true }).fill("-1");
+    await page.getByRole("button", { name: "仅保存目标", exact: true }).click();
+    await page
+      .getByText("请输入正整数预算，留空表示不限制", { exact: true })
+      .waitFor();
+    assert.equal(
+      (await page.evaluate(() => window.relay.snapshot())).jobs.length,
+      1,
+    );
+    await page.getByLabel("目标 Token 预算", { exact: true }).fill("5000");
+    await page.screenshot({
+      path: path.join(output, "desktop-goal-composer.png"),
+    });
+    await page.getByRole("button", { name: "仅保存目标", exact: true }).click();
+    await until(
+      async () =>
+        (await page.evaluate(() => window.relay.snapshot())).jobs.length === 2,
+    );
+    const createdGoal = (
+      await page.evaluate(() => window.relay.snapshot())
+    ).jobs.find((j) => j.id !== id);
+    assert.equal(createdGoal.goal.status, "paused");
+    assert.equal(createdGoal.goal.tokenBudget, 5000);
+    assert.equal(createdGoal.pendingMessage, undefined);
+    assert.equal(
+      (await call("chat.turns", { id: createdGoal.id })).data.length,
+      0,
+    );
+    await page.getByLabel("会话目标", { exact: true }).waitFor();
+    await app.close();
+    app = undefined;
+    await launch();
+    await page
+      .getByRole("button", { name: createdGoal.title, exact: true })
+      .click();
+    await page.getByLabel("会话目标", { exact: true }).getByText(createdGoal.goal.objective, { exact: true }).waitFor();
+    assert.equal(
+      (await call("chat.goal.read", { id: createdGoal.id })).goal.createdAt,
+      createdGoal.goal.createdAt,
+    );
+    await page.getByTitle("在此项目新建聊天", { exact: true }).click();
+    await page.getByLabel("添加附件", { exact: true }).click();
+    await page.getByRole("menuitem", { name: "持续目标", exact: true }).click();
+    await page
+      .getByLabel("消息", { exact: true })
+      .fill("新目标等待账户，不发起推理");
+    await page.getByLabel("目标 Token 预算", { exact: true }).fill("");
+    await page.getByRole("button", { name: "保存并开始", exact: true }).click();
+    await until(
+      async () =>
+        (await page.evaluate(() => window.relay.snapshot())).jobs.length === 3,
+    );
+    const queuedGoal = (
+      await page.evaluate(() => window.relay.snapshot())
+    ).jobs.find((j) => j.id !== id && j.id !== createdGoal.id);
+    assert.equal(queuedGoal.goalStartRequested, true);
+    assert.equal(queuedGoal.goal.status, "active");
+    await page.getByLabel("会话目标", { exact: true }).waitFor();
+    await menu("暂停目标");
+    await until(
+      async () =>
+        (await page.evaluate(() => window.relay.snapshot())).jobs.find(
+          (j) => j.id === queuedGoal.id,
+        ).state === "paused",
+    );
+    assert.equal(
+      (await call("chat.turns", { id: queuedGoal.id })).data.length,
+      0,
+    );
+    report.newChatGoalSaveStartAndRestart = true;
     await app.close();
     app = undefined;
     await open();

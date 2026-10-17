@@ -411,16 +411,21 @@ export function GoalCard({ job, call }: { job?: Job; call: Call }) {
                   </p>
                 )}
                 {editor !== "edit" && (
-                  <label>
-                    {t("目标 Token 预算")}
-                    <input
-                      aria-label={t("目标 Token 预算")}
-                      inputMode="numeric"
-                      value={budget}
-                      onChange={(e) => setBudget(e.target.value)}
-                      placeholder={t("不限制")}
-                    />
-                  </label>
+                  <>
+                    <label>
+                      {t("目标 Token 预算")}
+                      <input
+                        aria-label={t("目标 Token 预算")}
+                        inputMode="numeric"
+                        value={budget}
+                        onChange={(e) => setBudget(e.target.value)}
+                        placeholder={t("不限制")}
+                      />
+                    </label>
+                    <p className="goal-note">
+                      {t("预算在轮次结束时核算，当前轮次可能超过设定值。")}
+                    </p>
+                  </>
                 )}
               </>
             )}

@@ -238,6 +238,118 @@ export class Scheduler extends EventEmitter {
     );
     void this.tick().catch((error) => this.log(error, "error"));
   }
+  createGoal(input: NewJob, tokenBudget: number | null, start: boolean) {
+    const task = this.controls
+      .catch(() => {})
+      .then(async () => {
+        await this.tickInFlight;
+        if (this.closing || this.maintaining)
+          throw new Error("客户端正在处理其他会话操作，请稍后再创建目标");
+        if (input.mode !== "cli" || input.attachments?.length || input.review)
+          throw new Error("请先创建持续目标，再在聊天中补充文件或发起审查");
+        if (!(await fs.stat(input.cwd)).isDirectory())
+          throw new Error("工作目录不存在");
+        this.maintaining = true;
+        const job: Job = {
+          ...input,
+          prompt: "",
+          interactive: true,
+          id: randomUUID(),
+          state: "paused",
+          rotations: 0,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        };
+        let rpc: Rpc | undefined;
+        try {
+          const home = this.store.jobHome(job.id);
+          await fs.mkdir(home, { recursive: true, mode: 0o700 });
+          rpc = await Rpc.open(this.store.data.settings.cliPath, home);
+          rpc.on("request", (m) =>
+            rpc?.reject(m.id!, "创建目标不执行模型或工具"),
+          );
+          const result = await prepareThread(rpc, undefined, {
+            cwd: input.cwd,
+            approvalPolicy: input.approvalPolicy,
+            sandbox: "read-only",
+            ...(input.model ? { model: input.model } : {}),
+            config: { "features.goals": false },
+          });
+          job.threadId = result.thread.id;
+          const saved = await rpc.call("thread/goal/set", {
+            threadId: job.threadId,
+            objective: input.prompt,
+            tokenBudget,
+            status: "paused",
+            origin: "user",
+          });
+          if (
+            saved.goal?.threadId !== job.threadId ||
+            saved.goal.status !== "paused"
+          )
+            throw new Error("目标保存状态未确认，请检查新建会话");
+          job.goal = saved.goal;
+          await rpc.close();
+          rpc = undefined;
+          if (start) {
+            // Only activate after unloading. A loaded active Goal can start its
+            // own turn before the Scheduler selects and authenticates an account.
+            rpc = await Rpc.open(this.store.data.settings.cliPath, home);
+            rpc.on("request", (m) => rpc?.reject(m.id!, "目标等待调度后执行"));
+            const activated = await rpc.call("thread/goal/set", {
+              threadId: job.threadId,
+              status: "active",
+              origin: "user",
+            });
+            if (
+              activated.goal?.threadId !== job.threadId ||
+              activated.goal.status !== "active"
+            )
+              throw new Error("目标尚未确认激活，未排队执行");
+            job.goal = activated.goal;
+            await rpc.close();
+            rpc = undefined;
+            job.goalStartRequested = true;
+            job.state = "queued";
+          }
+          this.store.data.jobs.push(job);
+          await this.store.save();
+          this.changed();
+          return job;
+        } catch (error) {
+          if (job.threadId || error instanceof ProcessSafetyError) {
+            job.state = "needs_attention";
+            if (error instanceof ProcessSafetyError)
+              job.recoveryRequired = true;
+            job.lastError = redact(
+              error instanceof Error ? error.message : String(error),
+            );
+            if (!this.store.data.jobs.some((j) => j.id === job.id))
+              this.store.data.jobs.push(job);
+            await this.store.save();
+            this.changed();
+          }
+          throw error;
+        } finally {
+          try {
+            await rpc?.close();
+          } catch (error) {
+            job.state = "needs_attention";
+            job.recoveryRequired = true;
+            job.lastError = "目标创建进程停止尚未确认，请先处理恢复状态";
+            if (!this.store.data.jobs.some((j) => j.id === job.id))
+              this.store.data.jobs.push(job);
+            await this.store.save();
+            this.changed();
+            throw error;
+          } finally {
+            this.maintaining = false;
+          }
+        }
+      });
+    this.controls = task;
+    return task;
+  }
   private async refreshDue(now: number) {
     for (const a of this.store.data.accounts) {
       if (

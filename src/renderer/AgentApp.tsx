@@ -71,6 +71,7 @@ import {
   Square,
   SquarePen,
   SquareTerminal,
+  Target,
   Undo2,
   X,
 } from "lucide-react";
@@ -143,6 +144,8 @@ export function AgentApp({
   const [threadMenu, setThreadMenu] = useState(false);
   const [palette, setPalette] = useState(false);
   const [planMode, setPlanMode] = useState(false);
+  const [goalMode, setGoalMode] = useState(false);
+  const [goalBudget, setGoalBudget] = useState("");
   const [multiAgent, setMultiAgent] = useState(true);
   const [environment, setEnvironment] = useState("local");
   const [branch, setBranch] = useState("HEAD");
@@ -215,7 +218,7 @@ export function AgentApp({
     setPending(true);
     setError("");
     void fn()
-      .catch((e) => setError(String(e).replace(/^Error: /, "")))
+      .catch((e) => setError(errorText(e)))
       .finally(() => setPending(false));
   };
   const addPastedFiles = (
@@ -448,6 +451,7 @@ export function AgentApp({
   const send = async (
     mode: "send" | "queue" | "steer" = "send",
     review = false,
+    saveGoalOnly = false,
   ) => {
     if (pasteLocks.current.has(key)) return;
     if (!draft.trim() && !review) return;
@@ -470,6 +474,13 @@ export function AgentApp({
         else if (command === "agents") {
           setWorkspaceTab("agents");
           setInspector(true);
+        } else if (command === "goal") {
+          if (job) {
+            setWorkspaceTab("summary");
+            setInspector(true);
+          } else setGoalMode(true);
+          setDrafts((d) => ({ ...d, [key]: argument }));
+          return;
         } else if (command === "terminal") setTerminal(true);
         else if (command === "resume" && job)
           await call("job.control", { id: job.id, action: "resume" });
@@ -504,6 +515,19 @@ export function AgentApp({
       }
     }
     const text = review ? t("审查当前项目中尚未提交的修改") : draft;
+    const creatingGoal = !job && goalMode && !review;
+    const tokenBudget = goalBudget.trim() ? Number(goalBudget) : null;
+    if (creatingGoal) {
+      if (text.trim().length > 20000)
+        throw new Error(t("目标最多支持 20000 个字符"));
+      if (
+        tokenBudget !== null &&
+        (!Number.isSafeInteger(tokenBudget) || tokenBudget <= 0)
+      )
+        throw new Error(t("请输入正整数预算，留空表示不限制"));
+      if (attachments.length)
+        throw new Error(t("请先创建持续目标，再在聊天中补充文件或发起审查"));
+    }
     if (!job) {
       let dir = cwd;
       if (!dir) {
@@ -522,7 +546,7 @@ export function AgentApp({
         dir = created.cwd;
         refreshDesktop();
       }
-      const added = (await call("job.add", {
+      const added = (await call(creatingGoal ? "chat.goal.create" : "job.add", {
         title: text.replace(/\s+/g, " ").slice(0, 80),
         prompt: text,
         cwd: dir,
@@ -537,8 +561,11 @@ export function AgentApp({
         review,
         planMode,
         multiAgent,
+        ...(creatingGoal ? { tokenBudget, start: !saveGoalOnly } : {}),
       })) as Job;
       setSelected(added.id);
+      localStorage.setItem("relay.lastChat", added.id);
+      setGoalMode(false);
     } else {
       if (sandbox !== job.sandbox && !running(job))
         await call("chat.update", { id: job.id, sandbox });
@@ -1241,6 +1268,7 @@ export function AgentApp({
                           ["/new", t("新建聊天")],
                           ["/model", t("选择模型和思考强度")],
                           ["/plan", t("切换规划模式")],
+                          ["/goal", t("持续目标")],
                           ["/agents", t("查看子代理")],
                           ["/review", t("审查代码")],
                           ["/skills", t("浏览技能")],
@@ -1291,6 +1319,36 @@ export function AgentApp({
                         {t("正在添加附件…")}
                       </div>
                     )}
+                    <MotionRegion open={!job && goalMode} axis="vertical">
+                      <div className="composer-goal-mode">
+                        <div>
+                          <Target size={15} />
+                          <strong>{t("持续目标")}</strong>
+                          <span>{t("完成目标前持续推进")}</span>
+                          <button
+                            aria-label={t("退出持续目标模式")}
+                            disabled={pending}
+                            onClick={() => setGoalMode(false)}
+                          >
+                            <X size={14} />
+                          </button>
+                        </div>
+                        <label>
+                          {t("目标 Token 预算")}
+                          <input
+                            aria-label={t("目标 Token 预算")}
+                            inputMode="numeric"
+                            placeholder={t("不限制")}
+                            value={goalBudget}
+                            disabled={pending}
+                            onChange={(e) => setGoalBudget(e.target.value)}
+                          />
+                        </label>
+                        <p>
+                          {t("预算在轮次结束时核算，当前轮次可能超过设定值。")}
+                        </p>
+                      </div>
+                    </MotionRegion>
                     <textarea
                       ref={messageInput}
                       aria-label={t("消息")}
@@ -1299,7 +1357,9 @@ export function AgentApp({
                           ? t("取消归档后继续对话")
                           : job
                             ? t("继续提问，或补充任务要求…")
-                            : t("描述你想完成的任务…")
+                            : goalMode
+                              ? t("描述期望的最终结果和验收标准…")
+                              : t("描述你想完成的任务…")
                       }
                       value={draft}
                       disabled={!!job?.archived || !!job?.historySource?.issue}
@@ -1404,6 +1464,20 @@ export function AgentApp({
                                 <span>{t("启用子代理")}</span>
                                 {multiAgent && <Check size={15} />}
                               </button>
+                              {!job && (
+                                <button
+                                  role="menuitem"
+                                  onClick={() => {
+                                    setGoalMode(!goalMode);
+                                    setComposerMenu(false);
+                                    messageInput.current?.focus();
+                                  }}
+                                >
+                                  <Target size={17} />
+                                  <span>{t("持续目标")}</span>
+                                  {goalMode && <Check size={15} />}
+                                </button>
+                              )}
                               <hr />
                               <button
                                 role="menuitem"
@@ -1522,6 +1596,19 @@ export function AgentApp({
                             <Square size={13} fill="currentColor" />
                           </button>
                         )}
+                        {!job && goalMode && (
+                          <button
+                            className="composer-goal-save"
+                            disabled={
+                              pending || !!pasting[key] || !draft.trim()
+                            }
+                            onClick={() =>
+                              action(() => send("send", false, true))
+                            }
+                          >
+                            {t("仅保存目标")}
+                          </button>
+                        )}
                         <button
                           className="agent-send"
                           title={
@@ -1530,7 +1617,9 @@ export function AgentApp({
                                 job?.state === "running"
                                 ? t("立即补充到当前轮次 ↗")
                                 : t("排队发送")
-                              : t("发送")
+                              : !job && goalMode
+                                ? t("保存并开始")
+                                : t("发送")
                           }
                           aria-label={
                             running(job)
@@ -1538,7 +1627,9 @@ export function AgentApp({
                                 job?.state === "running"
                                 ? t("立即补充到当前轮次 ↗")
                                 : t("排队发送")
-                              : t("发送")
+                              : !job && goalMode
+                                ? t("保存并开始")
+                                : t("发送")
                           }
                           disabled={
                             pending ||
