@@ -152,6 +152,53 @@ it("expires a pending question on stop and does not claim an unacknowledged answ
   );
   expect(() => scheduler.respond("72", { answers: {} })).toThrow("过期");
 });
+it("persists pending user input across native admission and clears it only after submission acknowledgement", async () => {
+  let admitted = false,
+    release!: () => void;
+  const ack = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const start = vi
+    .spyOn(FakeWorker.prototype, "start")
+    .mockImplementationOnce(async function (this: FakeWorker) {
+      await this.ctx.checkpoint("goal-thread", "native-goal-turn", false);
+      admitted = true;
+      await ack;
+      await this.ctx.checkpoint("goal-thread", "native-goal-turn", true);
+      this.started = true;
+    });
+  try {
+    const job = await scheduler.add({
+      ...input,
+      cwd: root,
+      interactive: true,
+      prompt: "FOLLOWUP_KEEP_42",
+      attachments: [
+        {
+          type: "mention",
+          path: path.join(root, "note.txt"),
+          name: "note.txt",
+        },
+      ],
+    });
+    await until(() => admitted);
+    expect(job.turnId).toBe("native-goal-turn");
+    expect(job.pendingMessage).toBe("FOLLOWUP_KEEP_42");
+    expect(job.attachments).toHaveLength(1);
+    const saved = JSON.parse(
+      await fs.readFile(path.join(root, "state.json"), "utf8"),
+    );
+    expect(saved.jobs[0].pendingMessage).toBe("FOLLOWUP_KEEP_42");
+    expect(saved.jobs[0].attachments).toHaveLength(1);
+    release();
+    await until(() => workers[0]?.started);
+    expect(job.pendingMessage).toBeUndefined();
+    expect(job.attachments).toBeUndefined();
+  } finally {
+    release();
+    start.mockRestore();
+  }
+});
 it("dispatches using account value, and permits an explicit switch back to ordered rotation", async () => {
   store.data.accounts[1].expiresAt = Date.now() + 3600000;
   store.data.settings.accountSelection = "smart";

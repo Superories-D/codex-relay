@@ -39,7 +39,13 @@ export interface WorkerContext {
   home: string;
   cli: string;
   resumePrompt: string;
-  checkpoint(threadId: string, turnId?: string): Promise<void>;
+  // A native automatic turn can start before pending user input is accepted.
+  // Pass false to retain that input while recording the active turn.
+  checkpoint(
+    threadId: string,
+    turnId?: string,
+    submitted?: boolean,
+  ): Promise<void>;
   shouldStart(): boolean;
   refresh(): Promise<{
     accessToken: string;

@@ -627,17 +627,19 @@ export class Scheduler extends EventEmitter {
           home,
           cli: this.store.data.settings.cliPath,
           resumePrompt: this.store.data.settings.resumePrompt,
-          checkpoint: async (threadId, turnId) => {
+          checkpoint: async (threadId, turnId, submitted = true) => {
             job.threadId = threadId;
             job.importedRollout = undefined;
             if (turnId) {
               this.syncAgentRoot(job, { turnId, status: "running" });
               job.turnId = turnId;
-              job.pendingMessage = undefined;
-              job.attachments = undefined;
-              job.review = undefined;
-              job.desktopSubmissionPending = false;
-              job.goalStartRequested = false;
+              if (submitted) {
+                job.pendingMessage = undefined;
+                job.attachments = undefined;
+                job.review = undefined;
+                job.desktopSubmissionPending = false;
+                job.goalStartRequested = false;
+              }
             }
             await this.store.save();
             this.changed();

@@ -1,6 +1,13 @@
 import { legacyEnglish } from "./legacy-en";
 import { nativeEnglish } from "./native-en";
 export const english: Record<string, string> = {
+  向目标当前轮次补充消息: "Adding your message to the current goal turn",
+  "补充消息提交结果不确定，请检查原会话后继续；不会自动重发":
+    "Message delivery is unconfirmed. Check the original chat before continuing; it will not be resent automatically.",
+  "目标轮次已停止，待发送消息保留，请检查后继续":
+    "The goal turn stopped. Your pending message is preserved; check the chat before continuing.",
+  "目标轮次尚未确认，待发送消息已保留；不会补发第二轮任务":
+    "The goal turn has not been confirmed. Your pending message is preserved; no second turn will be started.",
   聊天记录: "Chat transcript",
   回到最新消息: "Back to latest message",
   打开子代理聊天: "Open agent chat",

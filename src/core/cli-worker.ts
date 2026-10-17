@@ -46,6 +46,8 @@ export class CliWorker extends EventEmitter implements Worker {
   private completing = false;
   private stopping?: Promise<void>;
   private stopRequested = false;
+  private submissionPending = false;
+  private deferredOutcome?: Outcome;
   private interruptingAgents = new Map<string, Promise<unknown>>();
   private activeAgentTurns = new Map<string, string>();
   private finalText = "";
@@ -128,6 +130,25 @@ export class CliWorker extends EventEmitter implements Worker {
       this.finish({ kind: "interrupted" });
       return;
     }
+    const review = this.ctx.job.review;
+    const goalOwnsTurn = this.goal?.status === "active" && !review;
+    // Snapshot before resume: a native Goal can emit turn/started before the
+    // resume reply, and a turn checkpoint is not proof this message was sent.
+    const input = [
+      {
+        type: "text",
+        text_elements: [],
+        text:
+          (this.ctx.job.planMode
+            ? "当前为规划模式：只调查、分析并提出计划，允许只读工具。不要修改文件、执行写入或采取外部行动。需要用户选择时请求输入。\n\n"
+            : "") +
+          taskPrompt(this.ctx, !!this.ctx.job.desktopSubmissionPending),
+      },
+      ...(this.ctx.job.attachments ?? []).map(({ type, path, name }) =>
+        type === "localImage" ? { type, path } : { type, path, name },
+      ),
+    ];
+    this.submissionPending = !goalOnly;
     const config = this.threadConfig();
     this.emit("stage", "创建或恢复本地会话");
     const result = await prepareThread(
@@ -169,8 +190,44 @@ export class CliWorker extends EventEmitter implements Worker {
       if (!this.terminal) this.emit("stage", "Codex 正在执行目标");
       return;
     }
+    if (goalOwnsTurn) {
+      const target = await this.waitForGoalTarget();
+      if (!this.ctx.shouldStart() || this.stopRequested) {
+        this.finish({ kind: "interrupted" });
+        return;
+      }
+      if (target) {
+        this.emit("stage", "向目标当前轮次补充消息");
+        try {
+          await this.rpc.call("turn/steer", {
+            threadId: this.threadId,
+            expectedTurnId: target,
+            input,
+          });
+        } catch (error) {
+          if (errorKind(error) === "quota") {
+            this.quotaSeen = true;
+            this.lastError = error;
+            if (
+              this.goal &&
+              ["active", "usageLimited"].includes(this.goal.status)
+            )
+              this.ctx.job.goalResumeAfterQuota = true;
+          }
+          if (errorKind(error) === "transient")
+            throw new Error(
+              "补充消息提交结果不确定，请检查原会话后继续；不会自动重发",
+            );
+          throw error;
+        }
+        await this.acceptSubmission(target);
+        if (!this.terminal) this.emit("stage", "Codex 正在执行目标");
+        return;
+      }
+      // The native Goal finished before it could take the input. Its stopped
+      // state cannot auto-admit another turn; submit the user's actual request.
+    }
     this.emit("stage", "发送任务，等待执行确认");
-    const review = this.ctx.job.review;
     const turn = await this.rpc
       .call(
         review ? "review/start" : "turn/start",
@@ -182,26 +239,7 @@ export class CliWorker extends EventEmitter implements Worker {
             }
           : {
               threadId: this.threadId,
-              input: [
-                {
-                  type: "text",
-                  text_elements: [],
-                  text:
-                    (this.ctx.job.planMode
-                      ? "当前为规划模式：只调查、分析并提出计划，允许只读工具。不要修改文件、执行写入或采取外部行动。需要用户选择时请求输入。\n\n"
-                      : "") +
-                    taskPrompt(
-                      this.ctx,
-                      !!this.ctx.job.desktopSubmissionPending,
-                    ),
-                },
-                ...(this.ctx.job.attachments ?? []).map(
-                  ({ type, path, name }) =>
-                    type === "localImage"
-                      ? { type, path }
-                      : { type, path, name },
-                ),
-              ],
+              input,
               ...(this.ctx.job.effort ? { effort: this.ctx.job.effort } : {}),
               ...(this.ctx.job.serviceTier
                 ? { serviceTier: this.ctx.job.serviceTier }
@@ -209,16 +247,67 @@ export class CliWorker extends EventEmitter implements Worker {
             },
       )
       .catch((error) => {
-        if (!this.turnId && errorKind(error) === "transient")
+        if (errorKind(error) === "transient")
           throw new Error("任务启动结果不确定，请检查保存的会话后再继续");
         throw error;
       });
     // Goal resume may already have admitted a turn. Its response must not
     // rewind a newer turn/started notification's ID.
     if (!this.turnId) await this.beginTurn(turn.turn.id);
+    await this.acceptSubmission(turn.turn.id);
     if (!this.completing && !this.terminal)
       this.emit("stage", "Codex 正在执行");
     if (this.quotaSeen && !this.terminal) await this.stop();
+  }
+  private async acceptSubmission(turnId: string) {
+    this.submissionPending = false;
+    await this.ctx.checkpoint(this.threadId!, this.turnId || turnId, true);
+    if (
+      this.deferredOutcome &&
+      this.turnId &&
+      this.completedRootTurns.has(this.turnId)
+    ) {
+      const outcome = this.deferredOutcome;
+      this.deferredOutcome = undefined;
+      this.finish(outcome);
+    }
+  }
+  private waitForGoalTarget(): Promise<string | undefined> {
+    return new Promise((resolve, reject) => {
+      const clean = () => {
+        clearTimeout(timer);
+        this.off("rootTurnStarted", check);
+        this.off("rootTurnEnded", check);
+        this.off("goal", check);
+        this.off("settled", check);
+      };
+      const check = () => {
+        if (this.terminal) {
+          clean();
+          reject(
+            this.lastError ||
+              new Error("目标轮次已停止，待发送消息保留，请检查后继续"),
+          );
+        } else if (this.turnId && !this.completedRootTurns.has(this.turnId)) {
+          clean();
+          resolve(this.turnId);
+        } else if (this.goal?.status !== "active") {
+          clean();
+          resolve(undefined);
+        }
+      };
+      const timer = setTimeout(() => {
+        clean();
+        reject(
+          new Error("目标轮次尚未确认，待发送消息已保留；不会补发第二轮任务"),
+        );
+      }, 10000);
+      this.on("rootTurnStarted", check);
+      this.on("rootTurnEnded", check);
+      this.on("goal", check);
+      this.on("settled", check);
+      check();
+    });
   }
   private setGoal(goal: ThreadGoal | null) {
     if (goal && goal.threadId !== this.threadId) return;
@@ -263,6 +352,7 @@ export class CliWorker extends EventEmitter implements Worker {
     this.seenRootTurns.add(id);
     this.turnEpoch++;
     this.turnId = id;
+    this.deferredOutcome = undefined;
     this.finalText = "";
     if (!this.quotaSeen) this.lastError = undefined;
     this.completing = false;
@@ -270,7 +360,8 @@ export class CliWorker extends EventEmitter implements Worker {
     this.parentOutcome = undefined;
     this.waitingForGoal = false;
     if (!this.stopRequested) this.goalStopOutcome = undefined;
-    if (this.threadId) await this.ctx.checkpoint(this.threadId, id);
+    if (this.threadId)
+      await this.ctx.checkpoint(this.threadId, id, !this.submissionPending);
     this.emit("rootTurnStarted");
     if (this.stopRequested && this.rpc)
       await this.rpc.call("turn/interrupt", {
@@ -342,6 +433,13 @@ export class CliWorker extends EventEmitter implements Worker {
         result = { kind: "quota", error: this.lastError };
       else if (result.kind === "completed" && this.stopRequested)
         result = { kind: "interrupted" };
+      if (
+        this.submissionPending &&
+        ["completed", "goalStopped"].includes(result.kind)
+      ) {
+        this.deferredOutcome = result;
+        return;
+      }
       if (
         result.kind === "quota" &&
         this.goal &&
@@ -585,6 +683,7 @@ export class CliWorker extends EventEmitter implements Worker {
       if (this.turnId && p.turn?.id !== this.turnId) return;
       if (this.completedRootTurns.has(p.turn.id)) return;
       this.completedRootTurns.add(p.turn.id);
+      this.emit("rootTurnEnded");
       const epoch = this.turnEpoch;
       this.completing = true;
       this.parentEnded = true;

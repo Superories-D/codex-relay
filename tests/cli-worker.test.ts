@@ -77,9 +77,17 @@ function worker() {
     home: "/tmp/never-used",
     cli: "never-launched",
     resumePrompt: "resume original work",
-    checkpoint: async (t, u) => {
+    checkpoint: async (t, u, submitted = true) => {
       job.threadId = t;
-      if (u) job.turnId = u;
+      if (u) {
+        job.turnId = u;
+        if (submitted) {
+          job.pendingMessage = undefined;
+          job.attachments = undefined;
+          job.review = undefined;
+          job.goalStartRequested = false;
+        }
+      }
     },
     shouldStart: () => true,
     refresh: async () => auth,
@@ -350,6 +358,52 @@ it("uses the saved model, effort and service tier for native Goal admission with
   );
   await w.close();
 });
+it("delivers a pending user message to an automatically resumed Goal without starting a duplicate turn", async () => {
+  job.threadId = "thread-1";
+  job.goalResumeAfterQuota = true;
+  job.pendingMessage = "FOLLOWUP_KEEP_42";
+  job.attachments = [
+    { type: "localImage", path: "/tmp/question.png", name: "question.png" },
+  ];
+  const original = rpc.call.getMockImplementation()!;
+  rpc.call.mockImplementation(async (method, params) =>
+    method === "thread/goal/get"
+      ? { goal: { threadId: job.threadId, status: "active" } }
+      : method === "thread/goal/set"
+        ? { goal: { threadId: job.threadId, status: params.status } }
+        : original(method, params),
+  );
+  const w = new CliWorker({
+    job,
+    home: "/tmp/never-used",
+    cli: "never-launched",
+    resumePrompt: "resume original work",
+    checkpoint: async (threadId, turnId, submitted?: boolean) => {
+      job.threadId = threadId;
+      if (turnId) {
+        job.turnId = turnId;
+        if (submitted !== false) {
+          job.pendingMessage = undefined;
+          job.attachments = undefined;
+        }
+      }
+    },
+    shouldStart: () => true,
+    refresh: async () => auth,
+  });
+  await w.start(auth);
+  expect(rpc.call.mock.calls.some(([m]) => m === "turn/start")).toBe(false);
+  expect(rpc.call).toHaveBeenCalledWith("turn/steer", {
+    threadId: "thread-1",
+    expectedTurnId: "native-goal-turn",
+    input: [
+      { type: "text", text: "FOLLOWUP_KEEP_42", text_elements: [] },
+      { type: "localImage", path: "/tmp/question.png" },
+    ],
+  });
+  expect(job.pendingMessage).toBeUndefined();
+  await w.close();
+});
 it("does not automatically reactivate a paused Goal after quota recovery", async () => {
   job.threadId = "thread-1";
   job.goalResumeAfterQuota = true;
@@ -367,6 +421,207 @@ it("does not automatically reactivate a paused Goal after quota recovery", async
       ["thread/resume", "thread/goal/set", "turn/start"].includes(m),
     ),
   ).toBe(false);
+  await w.close();
+});
+function pendingGoal() {
+  job.threadId = "thread-1";
+  job.goalResumeAfterQuota = true;
+  job.pendingMessage = "FOLLOWUP_KEEP_42";
+  job.attachments = [
+    { type: "localImage", path: "/tmp/question.png", name: "question.png" },
+  ];
+  const original = rpc.call.getMockImplementation()!;
+  const goal = { threadId: job.threadId, status: "active" };
+  rpc.call.mockImplementation(async (method, params) => {
+    if (method === "thread/goal/get") return { goal };
+    if (method === "thread/goal/set") {
+      goal.status = params.status;
+      return { goal };
+    }
+    return original(method, params);
+  });
+  return { goal, call: rpc.call.getMockImplementation()! };
+}
+it("retains the pending text and attachments until the native Goal steer acknowledgement", async () => {
+  const { call } = pendingGoal();
+  let accept!: () => void;
+  rpc.call.mockImplementation((method, params) =>
+    method === "turn/steer"
+      ? new Promise((resolve) => {
+          accept = () => resolve({});
+        })
+      : call(method, params),
+  );
+  const w = worker(),
+    start = w.start(auth);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(job.pendingMessage).toBe("FOLLOWUP_KEEP_42");
+  expect(job.attachments).toHaveLength(1);
+  accept();
+  await start;
+  expect(job.pendingMessage).toBeUndefined();
+  expect(job.attachments).toBeUndefined();
+  await w.close();
+});
+it("preserves unconfirmed Goal input on transport failure without falling back to another turn", async () => {
+  const { call } = pendingGoal();
+  rpc.call.mockImplementation((method, params) =>
+    method === "turn/steer"
+      ? Promise.reject(Error("network timeout"))
+      : call(method, params),
+  );
+  const w = worker();
+  await expect(w.start(auth)).rejects.toThrow("不会自动重发");
+  expect(job.pendingMessage).toBe("FOLLOWUP_KEEP_42");
+  expect(job.attachments).toHaveLength(1);
+  expect(rpc.call.mock.calls.filter(([m]) => m === "turn/steer")).toHaveLength(
+    1,
+  );
+  expect(rpc.call.mock.calls.some(([m]) => m === "turn/start")).toBe(false);
+  await w.close();
+});
+it("retains Goal recovery authority and pending input when steer is explicitly rejected for quota", async () => {
+  const { goal, call } = pendingGoal();
+  rpc.call.mockImplementation((method, params) => {
+    if (method === "turn/steer") {
+      goal.status = "usageLimited";
+      rpc.notify("thread/goal/updated", { threadId: job.threadId, goal });
+      return Promise.reject({
+        codexErrorInfo: "usageLimitExceeded",
+        message: "Usage limit exceeded",
+      });
+    }
+    return call(method, params);
+  });
+  const w = worker();
+  await expect(w.start(auth)).rejects.toMatchObject({
+    codexErrorInfo: "usageLimitExceeded",
+  });
+  expect(job.goalResumeAfterQuota).toBe(true);
+  expect(job.pendingMessage).toBe("FOLLOWUP_KEEP_42");
+  expect(job.attachments).toHaveLength(1);
+  expect(rpc.call.mock.calls.some(([m]) => m === "turn/start")).toBe(false);
+  await w.close();
+});
+it("sends the actual pending request once if the Goal finishes before the delayed resume reply", async () => {
+  const { goal, call } = pendingGoal();
+  rpc.call.mockImplementation(async (method, params) => {
+    const value = await call(method, params);
+    if (method === "thread/resume") {
+      goal.status = "complete";
+      rpc.notify("thread/goal/updated", { threadId: job.threadId, goal });
+      rpc.notify("turn/completed", {
+        threadId: job.threadId,
+        turn: { id: "native-goal-turn", status: "completed" },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+    return value;
+  });
+  const w = worker(),
+    settled = vi.fn();
+  w.done.then(settled);
+  const start = w.start(auth);
+  await vi.advanceTimersByTimeAsync(800);
+  expect(settled).not.toHaveBeenCalled();
+  expect(job.pendingMessage).toBe("FOLLOWUP_KEEP_42");
+  await vi.advanceTimersByTimeAsync(200);
+  await start;
+  const starts = rpc.call.mock.calls.filter(([m]) => m === "turn/start");
+  expect(starts).toHaveLength(1);
+  expect(starts[0][1].input[0].text).toBe("FOLLOWUP_KEEP_42");
+  expect(starts[0][1].input[1]).toEqual({
+    type: "localImage",
+    path: "/tmp/question.png",
+  });
+  expect(rpc.call.mock.calls.some(([m]) => m === "turn/steer")).toBe(false);
+  endParent();
+  await vi.advanceTimersByTimeAsync(1000);
+  expect((await w.done).kind).toBe("completed");
+  await w.close();
+});
+it("waits for the next actual Goal turn when the previous one ends during resume", async () => {
+  const { call } = pendingGoal();
+  rpc.call.mockImplementation(async (method, params) => {
+    const value = await call(method, params);
+    if (method === "thread/resume") {
+      rpc.notify("turn/completed", {
+        threadId: job.threadId,
+        turn: { id: "native-goal-turn", status: "completed" },
+      });
+      setTimeout(
+        () =>
+          rpc.notify("turn/started", {
+            threadId: job.threadId,
+            turn: { id: "next-goal-turn" },
+          }),
+        500,
+      );
+    }
+    return value;
+  });
+  const w = worker(),
+    start = w.start(auth);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(
+    rpc.call.mock.calls.some(([m]) => ["turn/start", "turn/steer"].includes(m)),
+  ).toBe(false);
+  await vi.advanceTimersByTimeAsync(500);
+  await start;
+  expect(rpc.call).toHaveBeenCalledWith(
+    "turn/steer",
+    expect.objectContaining({
+      expectedTurnId: "next-goal-turn",
+      input: expect.arrayContaining([
+        expect.objectContaining({ text: "FOLLOWUP_KEEP_42" }),
+      ]),
+    }),
+  );
+  expect(rpc.call.mock.calls.some(([m]) => m === "turn/start")).toBe(false);
+  await w.close();
+});
+it("bounds missing Goal admission and retains the pending message", async () => {
+  pendingGoal();
+  rpc.autoGoalTurn = false;
+  const w = worker(),
+    start = w.start(auth);
+  const rejected = expect(start).rejects.toThrow("待发送消息已保留");
+  await vi.advanceTimersByTimeAsync(11000);
+  await rejected;
+  expect(job.pendingMessage).toBe("FOLLOWUP_KEEP_42");
+  expect(job.attachments).toHaveLength(1);
+  expect(
+    rpc.call.mock.calls.some(([m]) => ["turn/start", "turn/steer"].includes(m)),
+  ).toBe(false);
+  await w.close();
+});
+it("does not rewind a newer Goal turn when an earlier steer acknowledgement arrives", async () => {
+  const { call } = pendingGoal();
+  let accept!: () => void;
+  rpc.call.mockImplementation((method, params) =>
+    method === "turn/steer"
+      ? new Promise((resolve) => {
+          accept = () => resolve({});
+        })
+      : call(method, params),
+  );
+  const w = worker(),
+    start = w.start(auth);
+  await vi.advanceTimersByTimeAsync(0);
+  rpc.notify("turn/completed", {
+    threadId: job.threadId,
+    turn: { id: "native-goal-turn", status: "completed" },
+  });
+  rpc.notify("turn/started", {
+    threadId: job.threadId,
+    turn: { id: "newer-goal-turn" },
+  });
+  await vi.advanceTimersByTimeAsync(0);
+  expect(job.pendingMessage).toBe("FOLLOWUP_KEEP_42");
+  accept();
+  await start;
+  expect(job.turnId).toBe("newer-goal-turn");
+  expect(job.pendingMessage).toBeUndefined();
   await w.close();
 });
 it("bounds uncertain native Goal admission and never falls back to a second turn/start", async () => {
