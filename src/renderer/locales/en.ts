@@ -1,7 +1,19 @@
 import { legacyEnglish } from "./legacy-en";
 export const english: Record<string, string> = {
   ...legacyEnglish,
-  "父会话结束后，子代理记录为只读": "Subagent history is read-only after the parent turn ends",
+  会话历史: "Chat history",
+  会话历史与编辑: "History and editing",
+  "选择一个轮次继续。编辑会创建独立分支，保留原聊天；项目文件保持当前内容。":
+    "Choose a turn to continue from. Editing creates an independent branch and keeps the original chat. Project files keep their current contents.",
+  工具或审查轮次: "Tool or review turn",
+  保留本轮创建分支: "Branch after this turn",
+  编辑并创建分支: "Edit in a new branch",
+  "正在读取轮次…": "Loading turns…",
+  此会话尚无可编辑的历史轮次: "There are no editable turns in this chat yet",
+  加载更早的轮次: "Load earlier turns",
+  "正在创建独立分支，请稍候…": "Creating an independent branch…",
+  "父会话结束后，子代理记录为只读":
+    "Subagent history is read-only after the parent turn ends",
   "{p0} 行 · UTF-8 · ": "{p0} lines · UTF-8 · ",
   已安装插件: "Installed plugins",
   "连接 Codex CLI": "Connecting to Codex CLI",

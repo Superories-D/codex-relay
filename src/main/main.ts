@@ -672,34 +672,26 @@ async function boot() {
         return;
       }
       case "chat.fork": {
-        const job = store.data.jobs.find((j) => j.id === idSchema.parse(args));
-        if (
-          !job?.threadId ||
-          !["completed", "paused", "cancelled"].includes(job.state) ||
-          job.recoveryRequired
-        )
-          throw new Error("请先停止当前会话再创建分支");
-        const file = await findTranscript(
-          store.jobHome(job.id),
-          job.threadId,
-          true,
-        );
-        const fork = await history.copy(file, {
-          id: job.id,
-          threadId: job.threadId,
-          title: `${job.title.slice(0, 100)} · 分支`,
-          cwd: job.cwd,
-          source: "relay",
-          updatedAt: Date.now(),
-          archived: false,
-          issue: job.historySource?.issue,
-        });
-        fork.model = job.model;
-        fork.effort = job.effort;
-        store.data.jobs.push(fork);
-        await store.save();
-        scheduler.changed();
-        return fork;
+        return scheduler.fork(idSchema.parse(args));
+      }
+      case "chat.turns": {
+        const a = z
+          .object({ id: idSchema, cursor: z.string().max(10000).optional() })
+          .strict()
+          .parse(args);
+        return scheduler.turns(a.id, a.cursor);
+      }
+      case "chat.branchAt": {
+        const a = z
+          .object({
+            id: idSchema,
+            beforeTurnId: idSchema.optional(),
+            lastTurnId: idSchema.optional(),
+          })
+          .strict()
+          .refine((a) => !!a.beforeTurnId !== !!a.lastTurnId)
+          .parse(args);
+        return scheduler.fork(a.id, a);
       }
       case "agent.operation": {
         const a = z

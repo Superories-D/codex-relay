@@ -33,7 +33,10 @@ export async function atomicWrite(
   await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
   // MSIX hosts may redirect AppData to another volume. Resolve the directory
   // before creating either path so rename remains a same-volume atomic replace.
-  const target = path.join(await fs.realpath(path.dirname(file)), path.basename(file));
+  const target = path.join(
+    await fs.realpath(path.dirname(file)),
+    path.basename(file),
+  );
   const tmp = `${target}.${randomUUID()}.tmp`;
   const handle = await fs.open(tmp, "wx", 0o600);
   try {
@@ -124,7 +127,10 @@ export class Store {
     }
   }
   jobHome(id: string) {
-    return path.join(this.root, "runtime", "jobs", id);
+    const homeId = this.data.jobs.find((job) => job.id === id)?.runtimeHomeId;
+    if (homeId && !/^[a-f0-9-]{36}$/i.test(homeId))
+      throw new Error("会话运行目录标识无效");
+    return path.join(this.root, "runtime", "jobs", homeId || id);
   }
   profileHome(id: string) {
     return path.join(this.root, "runtime", "accounts", id);

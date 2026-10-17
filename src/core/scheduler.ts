@@ -24,7 +24,7 @@ import {
 import type { Outcome, Worker, WorkerFactory } from "./worker";
 import { redact } from "./redact";
 import { ProcessSafetyError } from "./process-safety-error";
-import { Chats } from "./chat";
+import { Chats, protocolItem } from "./chat";
 import type { ChatAttachment } from "../shared/types";
 import { capabilities } from "../shared/capabilities";
 import { Rpc } from "./rpc";
@@ -810,6 +810,129 @@ export class Scheduler extends EventEmitter {
       });
     this.controls = task;
     return task;
+  }
+  private localHistory<T>(id: string, run: (rpc: Rpc, job: Job) => Promise<T>) {
+    const task = this.controls
+      .catch(() => {})
+      .then(async () => {
+        await this.tickInFlight;
+        if (this.closing || this.active || this.maintaining)
+          throw new Error("请等待当前任务结束或暂停后再查看会话历史");
+        const job = this.store.data.jobs.find((job) => job.id === id);
+        if (
+          !job?.threadId ||
+          job.mode !== "cli" ||
+          !["completed", "paused", "cancelled", "needs_attention"].includes(
+            job.state,
+          ) ||
+          job.recoveryRequired ||
+          job.historySource?.issue ||
+          (job.existing && job.existing.phase !== "managed")
+        )
+          throw new Error("当前会话尚不可操作，请先发送一条消息或完成安全恢复");
+        this.maintaining = true;
+        let rpc: Rpc | undefined;
+        try {
+          // Metadata, paging, and forks are local operations: never log in or start a turn.
+          rpc = await Rpc.open(
+            this.store.data.settings.cliPath,
+            this.store.jobHome(id),
+          );
+          rpc.on("request", (request) =>
+            rpc?.reject(request.id, "历史操作不执行交互式工具"),
+          );
+          await prepareThread(
+            rpc,
+            job.threadId,
+            { cwd: job.cwd, excludeTurns: true },
+            job.importedRollout,
+          );
+          return await run(rpc, job);
+        } finally {
+          try {
+            await rpc?.close();
+          } finally {
+            this.maintaining = false;
+            this.changed();
+          }
+        }
+      });
+    this.controls = task;
+    return task;
+  }
+  turns(id: string, cursor?: string) {
+    return this.localHistory(id, (rpc, job) =>
+      rpc.call("thread/turns/list", {
+        threadId: job.threadId,
+        cursor,
+        limit: 20,
+        sortDirection: "desc",
+        itemsView: "full",
+      }),
+    );
+  }
+  fork(id: string, at?: { beforeTurnId?: string; lastTurnId?: string }) {
+    return this.localHistory(id, async (rpc, source) => {
+      const response = await rpc.call("thread/fork", {
+        threadId: source.threadId,
+        ...(at?.lastTurnId ? { lastTurnId: at.lastTurnId } : {}),
+        excludeTurns: true,
+      });
+      const threadId = response.thread.id;
+      if (!threadId || threadId === source.threadId)
+        throw new Error("CLI 没有创建独立会话分支");
+      if (at?.beforeTurnId)
+        await rpc.call("thread/revert", {
+          threadId,
+          beforeTurnId: at.beforeTurnId,
+        });
+      const fork: Job = {
+        id: randomUUID(),
+        runtimeHomeId: source.runtimeHomeId || source.id,
+        title: `${source.title.slice(0, 100)} · 分支`,
+        prompt: "",
+        cwd: source.cwd,
+        mode: "cli",
+        model: source.model,
+        effort: source.effort,
+        bucket: source.bucket,
+        state: "completed",
+        interactive: true,
+        threadId,
+        rotations: 0,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        approvalPolicy: source.approvalPolicy,
+        sandbox: source.sandbox,
+        planMode: source.planMode,
+        multiAgent: source.multiAgent,
+        serviceTier: source.serviceTier,
+      };
+      // Paginated CLI histories live in its local database. Keep an owned runtime
+      // for the thread family; copying a metadata-only rollout would lose context.
+      let cursor: string | undefined;
+      do {
+        const page = await rpc.call("thread/turns/list", {
+          threadId,
+          cursor,
+          limit: 20,
+          sortDirection: "asc",
+          itemsView: "full",
+        });
+        for (const turn of page.data)
+          for (const item of turn.items) {
+            const record = protocolItem(item, `${turn.id}:${item.id}`);
+            record.turnId = turn.id;
+            record.status = "completed";
+            await this.chats.append(fork.id, record);
+          }
+        cursor = page.nextCursor || undefined;
+      } while (cursor);
+      this.store.data.jobs.push(fork);
+      await this.store.save();
+      this.changed();
+      return fork;
+    });
   }
   async agentControl(
     id: string,

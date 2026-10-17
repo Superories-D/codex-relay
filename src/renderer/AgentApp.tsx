@@ -18,6 +18,7 @@ import { TerminalPane } from "./TerminalPane";
 import { Workbench, type WorkbenchTab } from "./Workbench";
 import { ExtensionsPage, SchedulesPage } from "./FeaturePages";
 import { SettingsPage } from "./SettingsPage";
+import { TurnHistory } from "./TurnHistory";
 import type { DesktopData } from "../core/desktop";
 import {
   Archive,
@@ -107,6 +108,7 @@ export function AgentApp({
   useI18n();
 
   const [snapshot, setSnapshot] = useState<Snapshot>();
+  const [turnHistory, setTurnHistory] = useState(false);
   const [selected, setSelected] = useState<string | undefined>(
     () => localStorage.getItem("relay.lastChat") || undefined,
   );
@@ -1552,6 +1554,22 @@ export function AgentApp({
                   </button>
                   <button
                     role="menuitem"
+                    disabled={
+                      pending ||
+                      running(job) ||
+                      !job.threadId ||
+                      !!job.historySource?.issue
+                    }
+                    onClick={() => {
+                      setTurnHistory(true);
+                      setThreadMenu(false);
+                    }}
+                  >
+                    <Pencil size={15} />
+                    {t("会话历史与编辑")}
+                  </button>
+                  <button
+                    role="menuitem"
                     onClick={() => {
                       action(() => call("chat.export", job.id));
                       setThreadMenu(false);
@@ -1675,6 +1693,20 @@ export function AgentApp({
             imported={(id) => {
               setSelected(id);
               setArchived(false);
+            }}
+          />
+        )}
+        {turnHistory && job && (
+          <TurnHistory
+            job={job}
+            call={call}
+            close={() => setTurnHistory(false)}
+            created={async (created, text) => {
+              setSnapshot(await window.relay.snapshot());
+              select(created);
+              if (text !== undefined)
+                setDrafts((values) => ({ ...values, [created.id]: text }));
+              requestAnimationFrame(() => messageInput.current?.focus());
             }}
           />
         )}

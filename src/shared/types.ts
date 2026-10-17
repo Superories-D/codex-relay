@@ -37,6 +37,7 @@ export interface Account {
   lastError?: string;
 }
 export interface Job {
+  runtimeHomeId?: string;
   pinned?: boolean;
   planMode?: boolean;
   multiAgent?: boolean;
@@ -220,6 +221,7 @@ export interface ChatAttachment {
   name: string;
 }
 export interface ChatItem {
+  turnId?: string;
   id: string;
   role: "user" | "assistant" | "tool" | "system";
   kind: string;

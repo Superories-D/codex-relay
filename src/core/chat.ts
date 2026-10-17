@@ -100,6 +100,7 @@ export class Chats {
       const item = p.item;
       if (!item || item.type === "userMessage") return;
       const converted = protocolItem(item, key);
+      converted.turnId = p.turnId;
       converted.status =
         method === "item/completed" ? (item.status ?? "completed") : "running";
       if (method === "item/completed") {
@@ -195,6 +196,25 @@ export class Chats {
   }
 }
 export function protocolItem(p: any, id: string): ChatItem {
+  if (p.type === "userMessage")
+    return {
+      id,
+      role: "user",
+      kind: "message",
+      at: Date.now(),
+      text: (p.content ?? [])
+        .map(
+          (part: any) =>
+            part.text ??
+            (part.type === "localImage" ? "[图片附件]" : (part.name ?? "")),
+        )
+        .join("\n"),
+      detail:
+        (p.content ?? [])
+          .map((part: any) => part.path)
+          .filter(Boolean)
+          .join("\n") || undefined,
+    };
   const text =
     p.text ??
     (p.type === "commandExecution"
