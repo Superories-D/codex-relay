@@ -25,6 +25,7 @@ import { parseAuth } from "./accounts";
 import { hasQuotaEvidence, isExhausted, parseQuotas } from "./quota";
 import { redact } from "./redact";
 import { ProcessSafetyError } from "./process-safety-error";
+import { windowsPowerShellEnv } from "./powershell";
 
 export interface ExistingDriver {
   inspect(file: string): Promise<{
@@ -74,6 +75,7 @@ export class WindowsExistingDriver implements ExistingDriver {
           windowsHide: true,
           timeout: action === "stop" ? 45_000 : 20_000,
           maxBuffer: 1024 * 1024,
+          env: windowsPowerShellEnv(),
         },
       );
       return JSON.parse(result.stdout.replace(/^\uFEFF/, ""));

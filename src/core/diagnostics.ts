@@ -3,6 +3,7 @@ import { promisify } from "node:util";
 import path from "node:path";
 import { resolveCli } from "./process";
 import { redact } from "./redact";
+import { windowsPowerShellEnv } from "./powershell";
 export interface Diagnostic {
   name: string;
   status: "ok" | "warning" | "error";
@@ -58,7 +59,7 @@ export async function checkEnvironment(
           "-Command",
           "$PSVersionTable.PSVersion.ToString()",
         ],
-        { timeout: 8000, maxBuffer: 16384, windowsHide: true },
+        { timeout: 8000, maxBuffer: 16384, windowsHide: true, env: windowsPowerShellEnv() },
       );
       checks.push({
         name: "Windows PowerShell",

@@ -18,6 +18,7 @@ import type { ImportPreview } from "../core/account-import";
 import type { Diagnostic } from "../core/diagnostics";
 import { Dialog } from "./Dialog";
 import { operationKey, operationLabel } from "./operations";
+import { AgentApp } from "./AgentApp";
 declare global {
   interface Window {
     relay: Bridge;
@@ -105,9 +106,9 @@ function QuotaBar({
     </div>
   );
 }
-function App() {
+function App({ initialTab = "dashboard" }: { initialTab?: string }) {
   const [snapshot, setSnapshot] = useState<Snapshot>();
-  const [tab, setTab] = useState("dashboard");
+  const [tab, setTab] = useState(initialTab);
   const [error, setError] = useState("");
   const [pending, setPending] = useState<
     Record<string, { name: string; at: number }>
@@ -458,7 +459,7 @@ function App() {
             className={`status-dot ${connection === "offline" ? "offline" : ""}`}
           />{" "}
           {connection === "offline" ? "后台响应较慢" : "后台已连接"} · 本机加密
-          <small>Windows companion / v0.4.0</small>
+          <small>Agent client / v0.5.0</small>
           <button className="text-button" onClick={() => act("data.open")}>
             打开数据目录 ↗
           </button>
@@ -1564,6 +1565,86 @@ function ApprovalCard({
 }) {
   const p = a.params as any;
   const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [json, setJson] = useState("{}");
+  const [inputError, setInputError] = useState("");
+  if (a.kind === "permissions")
+    return (
+      <section className="approval">
+        <h3>需要额外权限</h3>
+        <p>{p.reason}</p>
+        <pre>{JSON.stringify(p.permissions, null, 2)}</pre>
+        <div className="row gap">
+          <button onClick={() => respond({ decision: "accept" })}>
+            仅允许本轮
+          </button>
+          <button onClick={() => respond({ decision: "decline" })}>拒绝</button>
+        </div>
+      </section>
+    );
+  if (a.kind === "elicitation")
+    return (
+      <section className="approval">
+        <h3>{p.serverName} 请求输入</h3>
+        <p>{p.message}</p>
+        {p.mode === "url" ? (
+          <button
+            onClick={() =>
+              void window.relay
+                .command("link.open", p.url)
+                .catch((e) => setInputError(String(e)))
+            }
+          >
+            在浏览器中完成 ↗
+          </button>
+        ) : (
+          <>
+            <details>
+              <summary>查看表单格式</summary>
+              <pre>{JSON.stringify(p.requestedSchema, null, 2)}</pre>
+            </details>
+            <label>
+              表单内容（JSON）
+              <textarea
+                value={json}
+                onChange={(e) => setJson(e.target.value)}
+              />
+            </label>
+          </>
+        )}
+        {inputError && <p>{inputError}</p>}
+        <div className="row gap">
+          <button
+            onClick={() => {
+              try {
+                respond({
+                  action: "accept",
+                  content: p.mode === "url" ? null : JSON.parse(json),
+                  _meta: null,
+                });
+              } catch (e) {
+                setInputError(String(e));
+              }
+            }}
+          >
+            提交
+          </button>
+          <button
+            onClick={() =>
+              respond({ action: "decline", content: null, _meta: null })
+            }
+          >
+            拒绝
+          </button>
+          <button
+            onClick={() =>
+              respond({ action: "cancel", content: null, _meta: null })
+            }
+          >
+            取消
+          </button>
+        </div>
+      </section>
+    );
   return (
     <section className="approval">
       <h3>需要你的{a.kind === "input" ? "输入" : "审批"}</h3>
@@ -1872,4 +1953,9 @@ function SettingsForm({
     </form>
   );
 }
-createRoot(document.getElementById("root")!).render(<App />);
+createRoot(document.getElementById("root")!).render(
+  <AgentApp
+    management={(tab) => <App initialTab={tab} />}
+    approval={(a, respond) => <ApprovalCard approval={a} respond={respond} />}
+  />,
+);

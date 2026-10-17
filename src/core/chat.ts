@@ -1,0 +1,303 @@
+import { createReadStream, promises as fs } from "node:fs";
+import path from "node:path";
+import { randomUUID } from "node:crypto";
+import type { ChatItem, ChatPage } from "../shared/types";
+import { redact } from "./redact";
+
+// Conversations are stored separately from the bounded diagnostic log and snapshots.
+export class Chats {
+  private writes = new Map<string, Promise<void>>();
+  private live = new Map<string, Map<string, ChatItem>>();
+  private events = new Map<string, Promise<void>>();
+  private cache = new Map<string, { stamp: string; rows: ChatItem[] }>();
+  private prepared = new Set<string>();
+  constructor(private root: string) {}
+  file(id: string) {
+    return path.join(this.root, "chats", `${id}.jsonl`);
+  }
+  append(id: string, item: ChatItem) {
+    const next = (this.writes.get(id) ?? Promise.resolve()).then(async () => {
+      await fs.mkdir(path.dirname(this.file(id)), {
+        recursive: true,
+        mode: 0o700,
+      });
+      if (!this.prepared.has(id)) {
+        try {
+          const handle = await fs.open(this.file(id), "r+");
+          try {
+            let end = (await handle.stat()).size;
+            while (end > 0) {
+              const start = Math.max(0, end - 65536),
+                b = Buffer.alloc(end - start);
+              await handle.read(b, 0, b.length, start);
+              const newline = b.lastIndexOf(10);
+              if (newline >= 0) {
+                await handle.truncate(start + newline + 1);
+                break;
+              }
+              end = start;
+              if (!end) await handle.truncate(0);
+            }
+          } finally {
+            await handle.close();
+          }
+        } catch (e: any) {
+          if (e.code !== "ENOENT") throw e;
+        }
+        this.prepared.add(id);
+      }
+      await fs.appendFile(this.file(id), JSON.stringify(item) + "\n", {
+        mode: 0o600,
+      });
+    });
+    this.writes.set(id, next);
+    return next;
+  }
+  user(id: string, text: string, detail?: string) {
+    return this.append(id, {
+      id: randomUUID(),
+      role: "user",
+      kind: "message",
+      text,
+      detail,
+      at: Date.now(),
+    });
+  }
+  event(id: string, method: string, p: any) {
+    const next = (this.events.get(id) ?? Promise.resolve()).then(() =>
+      this.reduce(id, method, p),
+    );
+    this.events.set(id, next);
+    return next;
+  }
+  private async reduce(id: string, method: string, p: any) {
+    const live = this.live.get(id) ?? new Map<string, ChatItem>();
+    this.live.set(id, live);
+    const key = `${p.turnId ?? ""}:${p.item?.id ?? p.itemId ?? p.item?.type ?? method}`;
+    if (method === "item/started" || method === "item/completed") {
+      const item = p.item;
+      if (!item || item.type === "userMessage") return;
+      const converted = protocolItem(item, key);
+      converted.status =
+        method === "item/completed" ? (item.status ?? "completed") : "running";
+      if (method === "item/completed") {
+        await this.append(id, converted);
+        live.delete(key);
+      } else live.set(key, converted);
+    } else if (
+      method === "item/agentMessage/delta" ||
+      method === "item/commandExecution/outputDelta" ||
+      method === "item/reasoning/summaryTextDelta"
+    ) {
+      const item =
+        live.get(key) ??
+        ({
+          id: key,
+          role: method.includes("agentMessage") ? "assistant" : "tool",
+          kind: method.split("/")[1],
+          text: "",
+          at: Date.now(),
+          status: "running",
+        } as ChatItem);
+      item.text += String(p.delta ?? "");
+      live.set(key, item);
+    } else if (method === "turn/diff/updated") {
+      await this.append(id, {
+        id: `${p.turnId}:diff`,
+        role: "tool",
+        kind: "diff",
+        text: "文件变更",
+        detail: p.diff,
+        at: Date.now(),
+      });
+    } else if (method === "turn/plan/updated") {
+      await this.append(id, {
+        id: `${p.turnId}:plan`,
+        role: "tool",
+        kind: "plan",
+        text: p.explanation || "执行计划",
+        detail: JSON.stringify(p.plan, null, 2),
+        at: Date.now(),
+      });
+    }
+  }
+  async flush(id: string) {
+    await this.events.get(id);
+    for (const item of this.live.get(id)?.values() ?? [])
+      await this.append(id, { ...item, status: "interrupted" });
+    this.live.delete(id);
+    await this.writes.get(id);
+  }
+  async read(id: string, before?: number): Promise<ChatPage> {
+    await this.events.get(id);
+    await this.writes.get(id);
+    let base: ChatItem[] = [];
+    try {
+      const stat = await fs.stat(this.file(id)),
+        stamp = `${stat.size}:${stat.mtimeMs}`;
+      const cached = this.cache.get(id);
+      if (cached?.stamp === stamp) base = cached.rows;
+      else {
+        const rows = new Map<string, ChatItem>();
+        for await (const row of jsonLines(this.file(id))) rows.set(row.id, row);
+        base = [...rows.values()];
+        this.cache.delete(id);
+        this.cache.set(id, { stamp, rows: base });
+        while (this.cache.size > 3)
+          this.cache.delete(this.cache.keys().next().value!);
+      }
+    } catch (e: any) {
+      if (e.code !== "ENOENT") throw e;
+    }
+    const rows = new Map(base.map((item) => [item.id, item]));
+    for (const item of this.live.get(id)?.values() ?? [])
+      rows.set(item.id, item);
+    const all = [...rows.values()];
+    const end = Math.min(before ?? all.length, all.length),
+      start = Math.max(0, end - 80);
+    return {
+      items: all.slice(start, end),
+      total: all.length,
+      ...(start ? { before: start } : {}),
+    };
+  }
+}
+export function protocolItem(p: any, id: string): ChatItem {
+  const text =
+    p.text ??
+    (p.type === "commandExecution"
+      ? p.command
+      : p.type === "fileChange"
+        ? "编辑文件"
+        : p.type === "collabAgentToolCall"
+          ? (
+              {
+                spawnAgent: "派出子代理",
+                sendInput: "向子代理发送消息",
+                wait: "等待子代理",
+                closeAgent: "关闭子代理",
+                resumeAgent: "恢复子代理",
+              } as Record<string, string>
+            )[p.tool] || p.tool
+          : p.type === "subAgentActivity"
+            ? `子代理 · ${p.agentPath}`
+            : p.type === "mcpToolCall"
+              ? `${p.server} / ${p.tool}`
+              : p.type === "reasoning"
+                ? (p.summary ?? []).join("\n")
+                : p.type);
+  const detail =
+    p.type === "agentMessage"
+      ? undefined
+      : (p.aggregatedOutput ?? JSON.stringify(p, null, 2));
+  return {
+    id,
+    role: p.type === "agentMessage" ? "assistant" : "tool",
+    kind: p.type,
+    text: String(text ?? ""),
+    detail: detail ? redact(detail) : undefined,
+    at: Date.now(),
+    ...([
+      "fileChange",
+      "collabAgentToolCall",
+      "subAgentActivity",
+      "webSearch",
+      "imageGeneration",
+      "imageView",
+      "plan",
+    ].includes(p.type)
+      ? { data: p }
+      : {}),
+  };
+}
+export async function* jsonLines(file: string) {
+  const stream = createReadStream(file, { encoding: "utf8" });
+  let pending = "",
+    first = true;
+  try {
+    for await (const chunk of stream) {
+      pending += chunk;
+      let end: number;
+      while ((end = pending.indexOf("\n")) >= 0) {
+        let line = pending.slice(0, end);
+        pending = pending.slice(end + 1);
+        if (first) {
+          line = line.replace(/^\uFEFF/, "");
+          first = false;
+        }
+        if (line.length > 16 * 1024 * 1024)
+          throw new Error("单条历史记录超过 16 MiB");
+        if (line.trim()) yield JSON.parse(line);
+      }
+      if (pending.length > 16 * 1024 * 1024)
+        throw new Error("单条历史记录超过 16 MiB");
+    }
+    // A crash or concurrent writer may leave a partial final record. Only
+    // newline-terminated records belong to a committed snapshot.
+  } finally {
+    stream.destroy();
+  }
+}
+export async function* rolloutRecords(file: string) {
+  let total = 0;
+  for await (const r of jsonLines(file)) {
+    const p = r.payload;
+    if (r.type !== "response_item" || !p) continue;
+    let item: ChatItem | undefined;
+    if (p.type === "message" && ["user", "assistant"].includes(p.role)) {
+      const text = (p.content ?? [])
+        .map(
+          (x: any) => x.text ?? (x.type?.includes("image") ? "[图片附件]" : ""),
+        )
+        .join("\n");
+      item = {
+        id: `history:${total}`,
+        role: p.role,
+        kind: "message",
+        text,
+        at: Date.parse(r.timestamp) || 0,
+      };
+    } else if (
+      [
+        "function_call",
+        "custom_tool_call",
+        "function_call_output",
+        "custom_tool_call_output",
+        "web_search_call",
+      ].includes(p.type)
+    ) {
+      item = {
+        id: `history:${total}`,
+        role: "tool",
+        kind: p.type,
+        text: p.name ?? (p.type.endsWith("output") ? "工具结果" : "搜索"),
+        detail:
+          typeof p.output === "string"
+            ? redact(p.output)
+            : redact(p.arguments ?? p.input ?? JSON.stringify(p)),
+        at: Date.parse(r.timestamp) || 0,
+      };
+    }
+    if (item) {
+      total++;
+      yield item;
+    }
+  }
+}
+export async function rolloutItems(
+  file: string,
+  before?: number,
+): Promise<ChatPage> {
+  const rows: ChatItem[] = [];
+  let total = 0;
+  for await (const item of rolloutRecords(file)) {
+    total++;
+    if (before === undefined || total <= before) {
+      rows.push(item);
+      if (rows.length > 80) rows.shift();
+    }
+  }
+  const end = Math.min(before ?? total, total),
+    start = Math.max(0, end - rows.length);
+  return { items: rows, total, ...(start ? { before: start } : {}) };
+}

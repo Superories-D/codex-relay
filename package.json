@@ -1,8 +1,8 @@
 {
   "name": "codex-relay",
   "productName": "Codex Relay",
-  "version": "0.4.0",
-  "description": "Windows Codex account and resumable task supervisor",
+  "version": "0.5.0",
+  "description": "Codex CLI agent client with conversations and automatic account relay",
   "private": true,
   "license": "MIT",
   "main": "dist/main/main.cjs",
@@ -17,8 +17,14 @@
     "package:dir": "npm run build && electron-builder --win --x64 --dir"
   },
   "dependencies": {
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "lucide-react": "^1.59.0",
     "react": "19.2.4",
     "react-dom": "19.2.4",
+    "react-markdown": "^10.1.0",
+    "rehype-highlight": "^7.0.2",
+    "remark-gfm": "^4.0.1",
     "ws": "8.22.0",
     "zod": "4.3.6"
   },

@@ -31,7 +31,10 @@ export async function atomicWrite(
   value: string | Buffer,
 ): Promise<void> {
   await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
-  const tmp = `${file}.${randomUUID()}.tmp`;
+  // MSIX hosts may redirect AppData to another volume. Resolve the directory
+  // before creating either path so rename remains a same-volume atomic replace.
+  const target = path.join(await fs.realpath(path.dirname(file)), path.basename(file));
+  const tmp = `${target}.${randomUUID()}.tmp`;
   const handle = await fs.open(tmp, "wx", 0o600);
   try {
     await handle.writeFile(value);
@@ -40,7 +43,7 @@ export async function atomicWrite(
     await handle.close();
   }
   try {
-    await fs.rename(tmp, file);
+    await fs.rename(tmp, target);
   } catch (error) {
     await fs.rm(tmp, { force: true });
     throw error;

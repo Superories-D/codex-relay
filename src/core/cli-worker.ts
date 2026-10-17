@@ -15,7 +15,7 @@ import {
   type Worker,
   type WorkerContext,
 } from "./worker";
-import type { Quota } from "../shared/types";
+import type { Quota, ChatAttachment, AgentState } from "../shared/types";
 import { ensureWindowsSandbox } from "./windows-sandbox";
 export class CliWorker extends EventEmitter implements Worker {
   private rpc?: Rpc;
@@ -29,6 +29,9 @@ export class CliWorker extends EventEmitter implements Worker {
   private finalText = "";
   private quotas: Record<string, Quota> = {};
   private requests = new Map<string, number | string>();
+  private agents = new Map<string, AgentState>();
+  private parentEnded = false;
+  private parentOutcome?: Outcome;
   private settle!: (outcome: Outcome) => void;
   done = new Promise<Outcome>((resolve) => {
     this.settle = resolve;
@@ -79,6 +82,7 @@ export class CliWorker extends EventEmitter implements Worker {
         dangerFullAccess: "danger-full-access",
       }[this.ctx.job.sandbox],
       ...(this.ctx.job.model ? { model: this.ctx.job.model } : {}),
+      config: { "features.multi_agent": this.ctx.job.multiAgent !== false },
     };
     this.emit("stage", "创建或恢复本地会话");
     const result = await prepareThread(
@@ -96,18 +100,44 @@ export class CliWorker extends EventEmitter implements Worker {
       return;
     }
     this.emit("stage", "发送任务，等待执行确认");
+    const review = this.ctx.job.review;
     const turn = await this.rpc
-      .call("turn/start", {
-        threadId: this.threadId,
-        input: [
-          {
-            type: "text",
-            text_elements: [],
-            text: taskPrompt(this.ctx, !!this.ctx.job.desktopSubmissionPending),
-          },
-        ],
-        ...(this.ctx.job.effort ? { effort: this.ctx.job.effort } : {}),
-      })
+      .call(
+        review ? "review/start" : "turn/start",
+        review
+          ? {
+              threadId: this.threadId,
+              target: { type: "uncommittedChanges" },
+              delivery: "inline",
+            }
+          : {
+              threadId: this.threadId,
+              input: [
+                {
+                  type: "text",
+                  text_elements: [],
+                  text:
+                    (this.ctx.job.planMode
+                      ? "当前为规划模式：只调查、分析并提出计划，允许只读工具。不要修改文件、执行写入或采取外部行动。需要用户选择时请求输入。\n\n"
+                      : "") +
+                    taskPrompt(
+                      this.ctx,
+                      !!this.ctx.job.desktopSubmissionPending,
+                    ),
+                },
+                ...(this.ctx.job.attachments ?? []).map(
+                  ({ type, path, name }) =>
+                    type === "localImage"
+                      ? { type, path }
+                      : { type, path, name },
+                ),
+              ],
+              ...(this.ctx.job.effort ? { effort: this.ctx.job.effort } : {}),
+              ...(this.ctx.job.serviceTier
+                ? { serviceTier: this.ctx.job.serviceTier }
+                : {}),
+            },
+      )
       .catch((error) => {
         if (!this.turnId && errorKind(error) === "transient")
           throw new Error("任务启动结果不确定，请检查保存的会话后再继续");
@@ -125,6 +155,25 @@ export class CliWorker extends EventEmitter implements Worker {
       this.emit("settled", result);
     }
   }
+  private agent(id: string, patch: Partial<AgentState>) {
+    if (id === this.threadId) return;
+    const previous = this.agents.get(id);
+    const value: AgentState = {
+      threadId: id,
+      name: previous?.name || `Agent ${this.agents.size + 1}`,
+      status: "running",
+      ...previous,
+      ...patch,
+      updatedAt: Date.now(),
+    };
+    this.agents.set(id, value);
+    this.emit("agent", value);
+  }
+  private agentsRunning() {
+    return [...this.agents.values()].some((a) =>
+      ["running", "pendingInit", "pending", "waiting"].includes(a.status),
+    );
+  }
   private async notification(msg: RpcMessage) {
     const p = msg.params ?? {};
     if (msg.method === "account/rateLimits/updated") {
@@ -138,8 +187,88 @@ export class CliWorker extends EventEmitter implements Worker {
       }
       return;
     }
+    if (
+      msg.method === "thread/started" &&
+      p.thread?.source?.subAgent?.thread_spawn
+    ) {
+      const source = p.thread.source.subAgent.thread_spawn;
+      if (
+        source.parent_thread_id === this.threadId ||
+        this.agents.has(source.parent_thread_id)
+      ) {
+        this.agent(p.thread.id, {
+          parentThreadId: source.parent_thread_id,
+          name:
+            p.thread.agentNickname ||
+            source.agent_nickname ||
+            p.thread.id.slice(0, 8),
+          role: p.thread.agentRole || source.agent_role,
+        });
+      }
+    }
+    const item = p.item;
+    if (
+      item?.type === "collabAgentToolCall" &&
+      (!p.threadId ||
+        p.threadId === this.threadId ||
+        this.agents.has(p.threadId))
+    ) {
+      for (const id of item.receiverThreadIds ?? []) {
+        const state = item.agentsStates?.[id];
+        this.agent(id, {
+          parentThreadId: item.senderThreadId,
+          ...(item.prompt ? { prompt: item.prompt } : {}),
+          ...(item.model ? { model: item.model } : {}),
+          ...(item.reasoningEffort ? { effort: item.reasoningEffort } : {}),
+          ...(state ? { status: state.status, message: state.message } : {}),
+        });
+      }
+    }
+    if (
+      item?.type === "subAgentActivity" &&
+      (!p.threadId ||
+        p.threadId === this.threadId ||
+        this.agents.has(p.threadId))
+    ) {
+      this.agent(item.agentThreadId, {
+        name: item.agentPath || item.agentThreadId.slice(0, 8),
+        parentThreadId: p.threadId,
+        model: item.model,
+        effort: item.reasoningEffort,
+        status:
+          item.kind === "completed"
+            ? "completed"
+            : item.kind === "interrupted"
+              ? "interrupted"
+              : "running",
+      });
+    }
+    if (p.threadId && this.agents.has(p.threadId)) {
+      this.emit("childChat", p.threadId, msg.method, p);
+      if (msg.method === "turn/started")
+        this.agent(p.threadId, { turnId: p.turn.id, status: "running" });
+      if (msg.method === "item/completed" && p.item?.type === "agentMessage")
+        this.agent(p.threadId, { message: p.item.text });
+      if (msg.method === "turn/completed") {
+        this.agent(p.threadId, {
+          status: p.turn.status === "completed" ? "completed" : p.turn.status,
+          turnId: p.turn.id,
+        });
+        if (this.parentOutcome && !this.agentsRunning())
+          this.finish(this.parentOutcome);
+      }
+      return;
+    }
     if (p.threadId && this.threadId && p.threadId !== this.threadId) return;
     if (p.turnId && this.turnId && p.turnId !== this.turnId) return;
+    if (this.parentOutcome && !this.agentsRunning())
+      this.finish(this.parentOutcome);
+    this.emit("chat", msg.method, p);
+    if (msg.method === "thread/tokenUsage/updated" && p.tokenUsage)
+      this.emit("usage", {
+        ...p.tokenUsage.total,
+        modelContextWindow: p.tokenUsage.modelContextWindow,
+      });
     if (msg.method === "turn/started") {
       this.turnId = p.turn.id;
       if (this.threadId) await this.ctx.checkpoint(this.threadId, this.turnId);
@@ -151,6 +280,11 @@ export class CliWorker extends EventEmitter implements Worker {
         this.finalText += p.item.text ?? "";
       if (isQuotaNotice(p.item.text)) this.quotaSeen = true;
     }
+    if (msg.method === "item/completed" && p.item?.type === "exitedReviewMode")
+      this.finalText +=
+        typeof p.item.review === "string"
+          ? p.item.review
+          : JSON.stringify(p.item.review ?? "");
     if (msg.method === "item/commandExecution/outputDelta")
       this.emit("output", p.delta ?? "");
     if (msg.method === "error") {
@@ -168,6 +302,7 @@ export class CliWorker extends EventEmitter implements Worker {
     if (msg.method === "turn/completed") {
       if (this.turnId && p.turn?.id !== this.turnId) return;
       this.completing = true;
+      this.parentEnded = true;
       this.emit("stage", "收到终止事件，正在复查额度与结果");
       // Drain already queued quota notifications, then ask the server again. The final
       // turn status alone is NOT a completion signal when quota has been exhausted.
@@ -195,7 +330,13 @@ export class CliWorker extends EventEmitter implements Worker {
           kind: "error",
           error: new Error("终止原因不明确，需核查额度后继续"),
         });
-      else this.finish(completionOutcome(this.ctx.job, this.finalText));
+      else {
+        const outcome = completionOutcome(this.ctx.job, this.finalText);
+        if (outcome.kind === "completed" && this.agentsRunning()) {
+          this.parentOutcome = outcome;
+          this.emit("stage", "主轮次已结束，等待子代理完成");
+        } else this.finish(outcome);
+      }
     }
   }
   private async request(msg: RpcMessage) {
@@ -234,6 +375,65 @@ export class CliWorker extends EventEmitter implements Worker {
     this.rpc!.respond(original, value);
     this.requests.delete(id);
   }
+  async steer(text: string, attachments: ChatAttachment[]) {
+    if (
+      !this.rpc ||
+      !this.threadId ||
+      !this.turnId ||
+      this.terminal ||
+      this.completing
+    )
+      throw new Error("本轮已结束，请发送下一条消息");
+    await this.rpc.call("turn/steer", {
+      threadId: this.threadId,
+      expectedTurnId: this.turnId,
+      input: [
+        { type: "text", text, text_elements: [] },
+        ...attachments.map(({ type, path, name }) =>
+          type === "localImage" ? { type, path } : { type, path, name },
+        ),
+      ],
+    });
+  }
+  async operation(method: string, params: Record<string, unknown>) {
+    if (!this.rpc || !this.threadId || this.terminal)
+      throw new Error("会话连接已结束");
+    return this.rpc.call(method, { ...params, threadId: this.threadId });
+  }
+  async agentControl(
+    threadId: string,
+    action: "send" | "interrupt",
+    text?: string,
+  ) {
+    const agent = this.agents.get(threadId);
+    if (!agent || !this.rpc || this.terminal)
+      throw new Error("子代理会话当前不可控制，请在主会话中继续任务");
+    if (action === "interrupt") {
+      if (
+        !agent.turnId ||
+        !["running", "waiting", "pendingInit"].includes(agent.status)
+      )
+        throw new Error("子代理当前没有正在运行的轮次");
+      return this.rpc.call("turn/interrupt", {
+        threadId,
+        turnId: agent.turnId,
+      });
+    }
+    if (!text?.trim()) throw new Error("请输入给子代理的消息");
+    const input = [{ type: "text", text, text_elements: [] }];
+    if (agent.turnId && ["running", "waiting"].includes(agent.status))
+      return this.rpc.call("turn/steer", {
+        threadId,
+        expectedTurnId: agent.turnId,
+        input,
+      });
+    return this.rpc.call("turn/start", {
+      threadId,
+      input,
+      parentTurnId: this.turnId,
+      rootTurnId: this.turnId,
+    });
+  }
   async quota(): Promise<Record<string, Quota>> {
     if (!this.rpc) throw new Error("Worker not connected");
     const quotas = parseQuotas(await this.rpc.call("account/rateLimits/read"));
@@ -248,6 +448,20 @@ export class CliWorker extends EventEmitter implements Worker {
     return quotas;
   }
   async stop() {
+    if (this.parentEnded && this.parentOutcome && !this.terminal) {
+      this.parentOutcome = undefined;
+      for (const agent of this.agents.values())
+        if (
+          agent.turnId &&
+          ["running", "pendingInit", "waiting"].includes(agent.status)
+        )
+          await this.rpc!.call("turn/interrupt", {
+            threadId: agent.threadId,
+            turnId: agent.turnId,
+          });
+      this.finish({ kind: this.quotaSeen ? "quota" : "interrupted" });
+      return;
+    }
     if (
       this.terminal ||
       this.completing ||
@@ -258,6 +472,15 @@ export class CliWorker extends EventEmitter implements Worker {
       return;
     if (this.stopping) return this.stopping;
     this.stopping = (async () => {
+      for (const agent of this.agents.values())
+        if (
+          agent.turnId &&
+          ["running", "pendingInit", "waiting"].includes(agent.status)
+        )
+          await this.rpc!.call("turn/interrupt", {
+            threadId: agent.threadId,
+            turnId: agent.turnId,
+          });
       await this.rpc!.call("turn/interrupt", {
         threadId: this.threadId,
         turnId: this.turnId,
@@ -283,6 +506,9 @@ export class CliWorker extends EventEmitter implements Worker {
   }
   async close() {
     if (this.rpc) await this.rpc.close();
+    for (const agent of this.agents.values())
+      if (["running", "pendingInit", "waiting"].includes(agent.status))
+        this.agent(agent.threadId, { status: "interrupted" });
     this.rpc = undefined;
   }
 }

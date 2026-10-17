@@ -38,8 +38,8 @@ class FakeRpc extends EventEmitter {
     }
     if (method === "turn/interrupt" && this.interruptEmits)
       this.notify("turn/completed", {
-        threadId: "thread-1",
-        turn: { id: "turn-2", status: "interrupted" },
+        threadId: params.threadId,
+        turn: { id: params.turnId, status: "interrupted" },
       });
     return {};
   });
@@ -294,4 +294,107 @@ it("quota exhaustion takes priority even when the final answer contains a comple
   });
   await vi.advanceTimersByTimeAsync(1000);
   expect((await w.done).kind).toBe("quota");
+});
+it("keeps child events separate and waits for active subagents before completing the parent", async () => {
+  const w = worker(),
+    parentChat = vi.fn(),
+    childChat = vi.fn(),
+    changed = vi.fn(),
+    done = vi.fn();
+  w.on("chat", parentChat);
+  w.on("childChat", childChat);
+  w.on("agent", changed);
+  w.done.then(done);
+  await w.start(auth);
+  rpc.notify("item/completed", {
+    threadId: "thread-1",
+    turnId: "turn-2",
+    item: {
+      id: "spawn",
+      type: "collabAgentToolCall",
+      tool: "spawnAgent",
+      senderThreadId: "thread-1",
+      receiverThreadIds: ["child-1"],
+      prompt: "inspect the source",
+      model: "model-1",
+      agentsStates: { "child-1": { status: "running", message: null } },
+    },
+  });
+  rpc.notify("turn/started", {
+    threadId: "child-1",
+    turn: { id: "child-turn" },
+  });
+  rpc.notify("item/agentMessage/delta", {
+    threadId: "child-1",
+    turnId: "child-turn",
+    itemId: "answer",
+    delta: "Child progress",
+  });
+  expect(job.turnId).toBe("turn-2");
+  expect(childChat).toHaveBeenCalledWith(
+    "child-1",
+    "item/agentMessage/delta",
+    expect.objectContaining({ delta: "Child progress" }),
+  );
+  expect(
+    parentChat.mock.calls.some(
+      ([method, params]) =>
+        method === "item/agentMessage/delta" && params.threadId === "child-1",
+    ),
+  ).toBe(false);
+  rpc.notify("item/completed", {
+    threadId: "thread-1",
+    turnId: "turn-2",
+    item: {
+      type: "agentMessage",
+      phase: "final_answer",
+      text: "Parent result",
+    },
+  });
+  rpc.notify("turn/completed", {
+    threadId: "thread-1",
+    turn: { id: "turn-2", status: "completed" },
+  });
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(done).not.toHaveBeenCalled();
+  rpc.notify("turn/completed", {
+    threadId: "child-1",
+    turn: { id: "child-turn", status: "completed" },
+  });
+  expect((await w.done).kind).toBe("completed");
+  expect(changed).toHaveBeenLastCalledWith(
+    expect.objectContaining({ threadId: "child-1", status: "completed" }),
+  );
+  await w.close();
+});
+it("interrupts known child turns as well as the parent and never controls an unrelated thread", async () => {
+  const w = worker();
+  await w.start(auth);
+  rpc.notify("thread/started", {
+    thread: {
+      id: "child-2",
+      agentNickname: "Scout",
+      source: { subAgent: { thread_spawn: { parent_thread_id: "thread-1" } } },
+    },
+  });
+  rpc.notify("turn/started", {
+    threadId: "child-2",
+    turn: { id: "child-turn-2" },
+  });
+  await expect(w.agentControl("unrelated", "interrupt")).rejects.toThrow(
+    "不可控制",
+  );
+  const stop = w.stop();
+  await vi.advanceTimersByTimeAsync(1000);
+  await stop;
+  expect(rpc.call).toHaveBeenCalledWith("turn/interrupt", {
+    threadId: "child-2",
+    turnId: "child-turn-2",
+  });
+  expect(rpc.call).toHaveBeenCalledWith("turn/interrupt", {
+    threadId: "thread-1",
+    turnId: "turn-2",
+  });
+  expect((await w.done).kind).toBe("interrupted");
+  await w.close();
 });

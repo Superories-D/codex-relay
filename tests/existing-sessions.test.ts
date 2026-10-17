@@ -209,8 +209,16 @@ describe("existing session parsing", () => {
     const s = await setup();
     const outside = path.join(s.root, "outside.jsonl");
     await fs.copyFile(s.file, outside);
-    const link = path.join(s.home, "sessions", "link.jsonl");
-    await fs.symlink(outside, link);
+    let link = path.join(s.home, "sessions", "link.jsonl");
+    if (process.platform === "win32") {
+      // Directory junctions exercise realpath escapes without requiring the
+      // Windows symlink privilege or Developer Mode on the test machine.
+      const junction = path.join(s.home, "sessions", "outside");
+      await fs.symlink(s.root, junction, "junction");
+      link = path.join(junction, "outside.jsonl");
+    } else {
+      await fs.symlink(outside, link);
+    }
     await expect(readSession(s.home, link)).rejects.toThrow("路径");
     await fs.writeFile(
       s.file,

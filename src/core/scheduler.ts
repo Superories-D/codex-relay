@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
+import path from "node:path";
 import type {
   Account,
   Approval,
@@ -23,7 +24,14 @@ import {
 import type { Outcome, Worker, WorkerFactory } from "./worker";
 import { redact } from "./redact";
 import { ProcessSafetyError } from "./process-safety-error";
+import { Chats } from "./chat";
+import type { ChatAttachment } from "../shared/types";
+import { capabilities } from "../shared/capabilities";
+import { Rpc } from "./rpc";
+import { prepareThread } from "./thread";
+import { ensureWindowsSandbox } from "./windows-sandbox";
 export class Scheduler extends EventEmitter {
+  readonly chats: Chats;
   approvals: Approval[] = [];
   private active?: {
     job: Job;
@@ -36,6 +44,7 @@ export class Scheduler extends EventEmitter {
   private tickInFlight?: Promise<void>;
   private controls: Promise<unknown> = Promise.resolve();
   private closing = false;
+  private maintaining = false;
   private currentRun?: Promise<void>;
   private probes = new Map<string, number>();
   private publishTimer?: NodeJS.Timeout;
@@ -47,6 +56,7 @@ export class Scheduler extends EventEmitter {
     private beforeStart: (job: Job) => Promise<void> = async () => {},
   ) {
     super();
+    this.chats = new Chats(store.root);
   }
   snapshot(): Snapshot {
     return structuredClone({
@@ -131,6 +141,7 @@ export class Scheduler extends EventEmitter {
       throw new Error("另一任务已开始，请先暂停它再接入原会话");
     const job: Job = {
       ...input,
+      ...(input.interactive ? { pendingMessage: input.prompt } : {}),
       id: randomUUID(),
       state: existing ? "watching" : "queued",
       ...(existing
@@ -145,6 +156,12 @@ export class Scheduler extends EventEmitter {
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
+    if (input.interactive)
+      await this.chats.user(
+        job.id,
+        input.prompt,
+        input.attachments?.map((a) => a.path).join("\n"),
+      );
     this.store.data.jobs.push(job);
     await this.store.save();
     this.changed();
@@ -194,7 +211,7 @@ export class Scheduler extends EventEmitter {
     return this.tickInFlight;
   }
   private async tickOnce() {
-    if (this.ticking || this.closing) return;
+    if (this.ticking || this.closing || this.maintaining) return;
     this.ticking = true;
     try {
       const now = Date.now();
@@ -319,6 +336,38 @@ export class Scheduler extends EventEmitter {
           );
         const home = this.store.jobHome(job.id);
         await fs.mkdir(home, { recursive: true, mode: 0o700 });
+        // New chats inherit the client's configured MCP servers and installed tools.
+        // Existing chat-specific settings remain local to that chat.
+        const commonHome = path.join(this.store.root, "cli-profile");
+        try {
+          await fs.copyFile(
+            path.join(commonHome, "config.toml"),
+            path.join(home, "config.toml"),
+            fs.constants.COPYFILE_EXCL,
+          );
+        } catch (e: any) {
+          if (!["ENOENT", "EEXIST"].includes(e.code)) throw e;
+        }
+        try {
+          await fs.copyFile(
+            path.join(commonHome, "AGENTS.md"),
+            path.join(home, "AGENTS.md"),
+          );
+        } catch (e: any) {
+          if (e.code !== "ENOENT") throw e;
+        }
+        for (const directory of ["skills", "plugins"]) {
+          try {
+            const source = await fs.realpath(path.join(commonHome, directory));
+            await fs.symlink(
+              source,
+              path.join(home, directory),
+              process.platform === "win32" ? "junction" : "dir",
+            );
+          } catch (e: any) {
+            if (!["ENOENT", "EEXIST"].includes(e.code)) throw e;
+          }
+        }
         const tokens = {
           accessToken: prepared.auth.tokens.access_token,
           chatgptAccountId: account.identity,
@@ -334,6 +383,9 @@ export class Scheduler extends EventEmitter {
             job.importedRollout = undefined;
             if (turnId) {
               job.turnId = turnId;
+              job.pendingMessage = undefined;
+              job.attachments = undefined;
+              job.review = undefined;
               job.desktopSubmissionPending = false;
             }
             await this.store.save();
@@ -350,6 +402,32 @@ export class Scheduler extends EventEmitter {
           },
         });
         const worker = active.worker;
+        worker.on("chat", (method, params) => {
+          void this.chats
+            .event(job.id, method, params)
+            .then(() => this.emit("chatChanged", job.id))
+            .catch((error) => this.log(error, "error", job.id));
+        });
+        worker.on("childChat", (threadId, method, params) => {
+          void this.chats
+            .event(threadId, method, params)
+            .then(() => this.emit("chatChanged", threadId))
+            .catch((error) => this.log(error, "error", job.id));
+        });
+        worker.on("agent", (agent) => {
+          const agents = (job.agents ??= []);
+          const previous = agents.find((a) => a.threadId === agent.threadId);
+          if (previous) Object.assign(previous, agent);
+          else agents.push(agent);
+          void this.store
+            .save()
+            .catch((error) => this.log(error, "error", job.id));
+          this.changed();
+        });
+        worker.on("usage", (usage) => {
+          job.tokenUsage = usage;
+          this.changed();
+        });
         worker.on("stage", (stage: string) => {
           job.stage = stage;
           this.changed();
@@ -428,6 +506,9 @@ export class Scheduler extends EventEmitter {
         outcome = { kind: "error", error };
       }
       this.approvals = this.approvals.filter((a) => a.jobId !== job.id);
+      await this.chats.flush(job.id);
+      for (const agent of job.agents ?? [])
+        await this.chats.flush(agent.threadId);
     }
     if (active.reason === "cancel" && !active.failedStop)
       job.state = "cancelled";
@@ -469,6 +550,20 @@ export class Scheduler extends EventEmitter {
     } else if (outcome?.kind === "completed") {
       job.state = "completed";
       this.log("Codex 正常完成本轮任务，未检测到额度中断", "info", job.id);
+      const next = job.queuedMessages?.shift();
+      if (next) {
+        job.pendingMessage = next.text;
+        job.attachments = next.attachments;
+        if (next.model !== undefined) job.model = next.model;
+        if (next.effort !== undefined) job.effort = next.effort;
+        if (next.planMode !== undefined) job.planMode = next.planMode;
+        if (next.multiAgent !== undefined) job.multiAgent = next.multiAgent;
+        if (next.serviceTier !== undefined) job.serviceTier = next.serviceTier;
+        job.review = next.review;
+        job.completionMarker = undefined;
+        job.completionRetries = 0;
+        job.state = "queued";
+      }
     } else if (outcome?.kind === "error") {
       const kind = errorKind(outcome.error);
       job.lastError = redact(
@@ -501,6 +596,236 @@ export class Scheduler extends EventEmitter {
       .then(() => this.controlOnce(id, action));
     this.controls = next;
     return next;
+  }
+  send(input: {
+    id: string;
+    text: string;
+    attachments: ChatAttachment[];
+    action: "send" | "queue" | "steer";
+    model?: string;
+    effort?: string;
+    review?: boolean;
+    planMode?: boolean;
+    multiAgent?: boolean;
+    serviceTier?: string;
+  }) {
+    const next = this.controls
+      .catch(() => {})
+      .then(async () => {
+        const job = this.store.data.jobs.find((j) => j.id === input.id);
+        if (!job || job.mode !== "cli") throw new Error("请选择 CLI 会话");
+        if (
+          this.active?.job.id === job.id &&
+          ["completed", "cancelled", "paused"].includes(job.state)
+        )
+          await this.currentRun;
+        if (job.historySource?.issue) throw new Error(job.historySource.issue);
+        if (
+          job.recoveryRequired ||
+          (job.existing && job.existing.phase !== "managed")
+        )
+          throw new Error("请先在任务管理中完成安全恢复或交接");
+        if (job.archived) throw new Error("请先取消归档");
+        const active =
+          this.active?.job.id === job.id ||
+          [
+            "queued",
+            "waiting",
+            "rotating",
+            "preparing",
+            "running",
+            "pausing",
+          ].includes(job.state);
+        if (input.action === "steer") {
+          if (
+            this.active?.job.id !== job.id ||
+            !this.active.worker?.steer ||
+            job.state !== "running"
+          )
+            throw new Error("当前没有可补充指令的运行轮次");
+          await this.active.worker.steer(input.text, input.attachments);
+        } else if (active) {
+          if (input.action !== "queue")
+            throw new Error("本轮仍在运行，请选择排队发送或立即补充");
+          if ((job.queuedMessages?.length ?? 0) >= 100)
+            throw new Error("待发送消息已达上限");
+          (job.queuedMessages ??= []).push({
+            text: input.text,
+            attachments: input.attachments,
+            model: input.model,
+            effort: input.effort,
+            review: input.review,
+            planMode: input.planMode,
+            multiAgent: input.multiAgent,
+            serviceTier: input.serviceTier,
+          });
+        } else {
+          if (!(await fs.stat(job.cwd)).isDirectory())
+            throw new Error("项目目录不存在，请先重新选择目录");
+          job.pendingMessage = input.text;
+          job.attachments = input.attachments;
+          job.review = input.review;
+          if (input.planMode !== undefined) job.planMode = input.planMode;
+          if (input.multiAgent !== undefined) job.multiAgent = input.multiAgent;
+          if (input.serviceTier !== undefined)
+            job.serviceTier = input.serviceTier;
+          job.state = "queued";
+          job.lastError = undefined;
+          job.nextWakeAt = undefined;
+          job.completionRetries = 0;
+          job.completionMarker = undefined;
+          if (input.model !== undefined) job.model = input.model;
+          if (input.effort !== undefined) job.effort = input.effort;
+        }
+        job.interactive = true;
+        job.updatedAt = Date.now();
+        await this.chats.user(
+          job.id,
+          input.text,
+          input.attachments.map((a) => a.path).join("\n"),
+        );
+        await this.store.save();
+        this.changed();
+      });
+    this.controls = next;
+    return next;
+  }
+  operation(id: string, method: string, params: Record<string, unknown>) {
+    if (!capabilities.some((c) => c.method === method))
+      return Promise.reject(new Error("此操作须通过会话或账户界面执行"));
+    const task = this.controls
+      .catch(() => {})
+      .then(async () => {
+        await this.tickInFlight;
+        if (this.closing || this.active || this.maintaining)
+          throw new Error("请等待当前任务结束或暂停后再执行 CLI 操作");
+        const job = this.store.data.jobs.find((j) => j.id === id);
+        if (
+          !job ||
+          job.mode !== "cli" ||
+          !job.threadId ||
+          job.recoveryRequired ||
+          job.historySource?.issue ||
+          (job.existing && job.existing.phase !== "managed")
+        )
+          throw new Error("当前会话尚不可操作，请先发送一条消息或完成安全恢复");
+        this.maintaining = true;
+        let rpc: Rpc | undefined;
+        try {
+          const account = pickAccount(
+            this.store.data.accounts,
+            this.store.data.cursor,
+            job.bucket,
+            Date.now(),
+          )?.account;
+          if (!account) throw new Error("暂无可用账户");
+          const prepared = await this.accounts.inspect(account.id);
+          rpc = await Rpc.open(
+            this.store.data.settings.cliPath,
+            this.store.jobHome(id),
+          );
+          rpc.on("request", (m) =>
+            rpc?.reject(m.id, "请在对话中执行需要交互审批的操作"),
+          );
+          await rpc.call("account/login/start", {
+            type: "chatgptAuthTokens",
+            accessToken: prepared.auth.tokens.access_token,
+            chatgptAccountId: account.identity,
+            chatgptPlanType: account.plan,
+          });
+          await ensureWindowsSandbox(rpc, job.cwd, job.sandbox);
+          await prepareThread(
+            rpc,
+            job.threadId,
+            {
+              cwd: job.cwd,
+              approvalPolicy: job.approvalPolicy,
+              sandbox: {
+                workspaceWrite: "workspace-write",
+                readOnly: "read-only",
+                dangerFullAccess: "danger-full-access",
+              }[job.sandbox],
+            },
+            job.importedRollout,
+          );
+          const args = {
+            ...params,
+            threadId: job.threadId,
+            ...(method === "command/exec" || method === "gitDiffToRemote"
+              ? { cwd: job.cwd }
+              : {}),
+          };
+          // Commands use the same sandbox as the conversation; no arbitrary policy override.
+          if (method === "command/exec") {
+            delete (args as any).disableTimeout;
+            Object.assign(args, {
+              sandboxPolicy:
+                job.sandbox === "dangerFullAccess"
+                  ? { type: "dangerFullAccess" }
+                  : job.sandbox === "readOnly"
+                    ? { type: "readOnly", networkAccess: false }
+                    : {
+                        type: "workspaceWrite",
+                        writableRoots: [job.cwd],
+                        networkAccess: false,
+                        excludeTmpdirEnvVar: false,
+                        excludeSlashTmp: false,
+                      },
+              timeoutMs: Math.min(Number(params.timeoutMs) || 10000, 60000),
+              tty: false,
+              streamStdin: false,
+              streamStdoutStderr: false,
+            });
+          }
+          if (method === "thread/compact/start") {
+            const done = new Promise<void>((resolve, reject) => {
+              const timer = setTimeout(
+                () => reject(new Error("压缩等待超时，请检查会话后重试")),
+                60000,
+              );
+              rpc!.once("turn/completed", () => {
+                clearTimeout(timer);
+                resolve();
+              });
+              rpc!.once("disconnected", () => {
+                clearTimeout(timer);
+                reject(new Error("压缩连接断开"));
+              });
+            });
+            // Attach rejection before awaiting the RPC to avoid an unhandled timer.
+            const result = await Promise.all([rpc.call(method, args), done]);
+            return result[0];
+          }
+          return JSON.parse(
+            redact(JSON.stringify(await rpc.call(method, args))),
+          );
+        } finally {
+          try {
+            await rpc?.close();
+          } finally {
+            this.maintaining = false;
+            this.changed();
+          }
+        }
+      });
+    this.controls = task;
+    return task;
+  }
+  async agentControl(
+    id: string,
+    threadId: string,
+    action: "send" | "interrupt",
+    text?: string,
+  ) {
+    if (this.active?.job.id !== id || !this.active.worker?.agentControl)
+      throw new Error("主会话当前未运行，请在主会话中继续任务");
+    const result = await this.active.worker.agentControl(
+      threadId,
+      action,
+      text,
+    );
+    if (action === "send") await this.chats.user(threadId, text || "");
+    return result;
   }
   private async controlOnce(id: string, action: "pause" | "resume" | "cancel") {
     const job = this.store.data.jobs.find((j) => j.id === id);
@@ -564,6 +889,7 @@ export class Scheduler extends EventEmitter {
     this.closing = true;
     if (this.timer) clearInterval(this.timer);
     try {
+      await this.controls.catch(() => {});
       await this.tickInFlight;
       if (
         this.active &&

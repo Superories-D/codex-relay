@@ -8,7 +8,10 @@ import { Store } from "../src/core/store";
 import { ProcessSafetyError } from "../src/core/process-safety-error";
 import type { Worker, WorkerContext, Outcome } from "../src/core/worker";
 import type { Account, NewJob } from "../src/shared/types";
+import { taskPrompt } from "../src/core/completion";
 class FakeWorker extends EventEmitter implements Worker {
+  submitted = "";
+  steer = vi.fn(async () => {});
   settle!: (o: Outcome) => void;
   done = new Promise<Outcome>((r) => {
     this.settle = r;
@@ -19,6 +22,7 @@ class FakeWorker extends EventEmitter implements Worker {
     super();
   }
   async start() {
+    this.submitted = taskPrompt(this.ctx);
     await this.ctx.checkpoint(
       "stable-thread",
       this.ctx.job.turnId ?? "first-turn",
@@ -36,6 +40,85 @@ class FakeWorker extends EventEmitter implements Worker {
   }
   respond() {}
 }
+it("sends follow-up text on the same thread instead of replaying the recovery prompt", async () => {
+  const job = await scheduler.add({
+    ...input,
+    cwd: root,
+    interactive: true,
+    prompt: "first user request",
+  });
+  await until(() => workers[0]?.started);
+  expect(workers[0].submitted).toBe("first user request");
+  workers[0].settle({ kind: "completed" });
+  await until(() => job.state === "completed");
+  const thread = job.threadId;
+  await scheduler.send({
+    id: job.id,
+    text: "second user request",
+    attachments: [],
+    action: "send",
+  });
+  await (scheduler as any).tick();
+  await until(() => workers[1]?.started);
+  expect(workers[1].submitted).toBe("second user request");
+  expect(job.threadId).toBe(thread);
+  expect(job.pendingMessage).toBeUndefined();
+  expect((await scheduler.chats.read(job.id)).items.map((i) => i.text)).toEqual(
+    ["first user request", "second user request"],
+  );
+});
+it("queues inputs until normal completion and steers only a running turn", async () => {
+  const job = await scheduler.add({ ...input, cwd: root, interactive: true });
+  await until(() => job.state === "running");
+  await scheduler.send({
+    id: job.id,
+    text: "steering",
+    attachments: [],
+    action: "steer",
+  });
+  expect(workers[0].steer).toHaveBeenCalledWith("steering", []);
+  await scheduler.send({
+    id: job.id,
+    text: "queued question",
+    attachments: [],
+    action: "queue",
+    model: "gpt-6-astra",
+    effort: "high",
+  });
+  expect(job.queuedMessages).toHaveLength(1);
+  workers[0].settle({ kind: "completed" });
+  await until(() => job.state === "queued");
+  await until(() => !(scheduler as any).active);
+  await (scheduler as any).tick();
+  await until(() => workers[1]?.started);
+  expect(workers[1].submitted).toBe("queued question");
+  expect(job.model).toBe("gpt-6-astra");
+  expect(job.effort).toBe("high");
+});
+it("blocks follow-up for unsafe imported dependencies and stops raw lifecycle bypass", async () => {
+  store.data.accounts = [];
+  const job = await scheduler.add({ ...input, cwd: root, interactive: true });
+  job.state = "completed";
+  job.historySource = {
+    source: "vscode",
+    threadId: "source",
+    issue: "Desktop-only tools",
+  };
+  await expect(
+    scheduler.send({
+      id: job.id,
+      text: "next",
+      attachments: [],
+      action: "send",
+    }),
+  ).rejects.toThrow("Desktop-only");
+  await expect(scheduler.operation(job.id, "account/read", {})).rejects.toThrow(
+    "界面",
+  );
+  await expect(scheduler.operation(job.id, "turn/start", {})).rejects.toThrow(
+    "界面",
+  );
+});
 let root: string;
 let store: Store;
 let scheduler: Scheduler;

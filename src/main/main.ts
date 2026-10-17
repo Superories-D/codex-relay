@@ -11,6 +11,7 @@ import {
   Menu,
   nativeImage,
   powerSaveBlocker,
+  Notification,
 } from "electron";
 import path from "node:path";
 import { promises as fs } from "node:fs";
@@ -18,6 +19,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { Store } from "../core/store";
 import { checkEnvironment } from "../core/diagnostics";
+import { windowsPowerShellEnv } from "../core/powershell";
 import { AccountImport } from "../core/account-import";
 import {
   ExistingSessions,
@@ -42,12 +44,32 @@ import {
   sessionAttachSchema,
 } from "./validation";
 import { z } from "zod";
+import { History } from "../core/history";
+import { rolloutRecords } from "../core/chat";
+import { findTranscript } from "../core/transcript";
+import { chatSendSchema } from "./validation";
+import { Desktop, nextSchedule } from "../core/desktop";
+import { Terminals } from "../core/terminals";
+import { randomUUID } from "node:crypto";
+import { Rpc } from "../core/rpc";
+import { capabilities } from "../shared/capabilities";
 app.setName("Codex Relay");
-const dataRoot = path.join(app.getPath("appData"), "Codex Relay");
+const startupTrace = (stage: string) => {
+  if (process.env.CODEX_RELAY_STARTUP_TRACE === "1")
+    console.info(`[startup] ${stage}`);
+};
+startupTrace("resolve data directory");
+const customDataRoot = process.env.CODEX_RELAY_DATA_DIR;
+if (customDataRoot && !path.isAbsolute(customDataRoot))
+  throw new Error("CODEX_RELAY_DATA_DIR 必须为绝对路径");
+const dataRoot =
+  customDataRoot || path.join(app.getPath("appData"), "Codex Relay");
 app.setPath("userData", dataRoot);
+startupTrace("single instance lock");
 if (!app.requestSingleInstanceLock()) app.quit();
 else
   void boot().catch((error) => {
+    console.error("Codex Relay startup failed:", redact(error));
     dialog.showErrorBox("Codex Relay 无法启动", redact(error));
     app.exit(1);
   });
@@ -55,14 +77,25 @@ let window: BrowserWindow | undefined;
 let quitting = false;
 let tray: Tray | undefined;
 async function boot() {
+  startupTrace("wait for Electron");
   await app.whenReady();
+  startupTrace("protect data directory");
   const scripts = app.isPackaged
     ? path.join(process.resourcesPath, "windows")
     : path.join(app.getAppPath(), "scripts", "windows");
   await fs.mkdir(dataRoot, { recursive: true, mode: 0o700 });
+  startupTrace("data directory created");
+  const realDataRoot = await fs.realpath(dataRoot);
+  startupTrace("data directory resolved");
   if (process.platform === "win32")
     await promisify(execFile)(
-      "powershell.exe",
+      path.join(
+        process.env.SystemRoot ?? "C:\\Windows",
+        "System32",
+        "WindowsPowerShell",
+        "v1.0",
+        "powershell.exe",
+      ),
       [
         "-NoProfile",
         "-NonInteractive",
@@ -71,10 +104,11 @@ async function boot() {
         "-File",
         path.join(scripts, "protect-directory.ps1"),
         "-Directory",
-        dataRoot,
+        realDataRoot,
       ],
-      { windowsHide: true, timeout: 15000 },
+      { windowsHide: true, timeout: 15000, env: windowsPowerShellEnv() },
     );
+  startupTrace("initialize system credential encryption");
   if (
     !safeStorage.isEncryptionAvailable() ||
     (process.platform === "linux" &&
@@ -82,7 +116,12 @@ async function boot() {
   )
     throw new Error("系统安全凭据存储不可用；不会降级为明文账户库。");
   const store = new Store(dataRoot);
+  startupTrace("load application state");
   await store.load();
+  const desktop = new Desktop(dataRoot);
+  await desktop.load();
+  const terminals = new Terminals(dataRoot, () => store.data.settings.cliPath);
+  const notifiedStates = new Map(store.data.jobs.map((j) => [j.id, j.state]));
   let scheduler: Scheduler;
   const accounts = new Accounts(
     store,
@@ -108,6 +147,29 @@ async function boot() {
     scheduler,
     new WindowsExistingDriver(path.join(dataRoot, "session-requests"), scripts),
   );
+  const history = new History(store, scheduler.chats);
+  const dirtyChats = new Set<string>();
+  const watchedChats = new Set<string>();
+  let chatPushTimer: ReturnType<typeof setTimeout> | undefined;
+  scheduler.on("chatChanged", (id: string) => {
+    if (!watchedChats.has(id)) return;
+    dirtyChats.add(id);
+    if (chatPushTimer) return;
+    chatPushTimer = setTimeout(() => {
+      chatPushTimer = undefined;
+      const ids = [...dirtyChats];
+      dirtyChats.clear();
+      if (!window || window.isDestroyed() || !window.isVisible()) return;
+      for (const id of ids)
+        void scheduler.chats
+          .read(id)
+          .then((page) => {
+            if (window && !window.isDestroyed())
+              window.webContents.send("relay:chat", { id, page });
+          })
+          .catch((error) => scheduler.log(error, "error"));
+    }, 50);
+  });
   for (const j of store.data.jobs)
     if (j.recoveryRequired && j.accountId && j.mode === "desktop")
       accounts.busy.add(j.accountId);
@@ -115,6 +177,31 @@ async function boot() {
   scheduler.on("snapshot", (snapshot) => {
     if (window && !window.isDestroyed())
       window.webContents.send("relay:snapshot", snapshot);
+    for (const job of store.data.jobs) {
+      const previous = notifiedStates.get(job.id);
+      if (
+        desktop.data.preferences.notifications &&
+        previous &&
+        previous !== job.state &&
+        ["completed", "needs_attention"].includes(job.state) &&
+        !window?.isFocused() &&
+        Notification.isSupported()
+      ) {
+        const notice = new Notification({
+          title:
+            job.state === "completed"
+              ? "Codex 已完成本轮任务"
+              : "Codex 需要你的处理",
+          body: job.title,
+        });
+        notice.on("click", () => {
+          window?.show();
+          window?.focus();
+        });
+        notice.show();
+      }
+      notifiedStates.set(job.id, job.state);
+    }
     const running = store.data.jobs.some((j) =>
       ["preparing", "running", "pausing", "rotating", "watching"].includes(
         j.state,
@@ -127,9 +214,521 @@ async function boot() {
       sleepBlocker = undefined;
     }
   });
+  let catalogQueue: Promise<unknown> = Promise.resolve();
   const command = async (name: string, args?: unknown): Promise<unknown> => {
     if (quitting) throw new Error("正在保存并退出");
     switch (name) {
+      case "chat.watch": {
+        const a = z
+          .object({
+            id: idSchema.optional(),
+            threadId: idSchema.optional(),
+            remove: z.boolean().optional(),
+          })
+          .strict()
+          .parse(args);
+        const job = store.data.jobs.find((j) => j.id === a.id);
+        if (a.threadId) {
+          if (!job?.agents?.some((agent) => agent.threadId === a.threadId))
+            throw new Error("子代理不属于当前会话");
+          if (a.remove) watchedChats.delete(a.threadId);
+          else watchedChats.add(a.threadId);
+        } else {
+          watchedChats.clear();
+          if (job) watchedChats.add(job.id);
+        }
+        return;
+      }
+      case "catalog.operation": {
+        const a = z
+          .object({
+            method: z.string().max(100),
+            params: z.record(z.string(), z.unknown()).default({}),
+          })
+          .strict()
+          .parse(args);
+        if (
+          !capabilities.some((c) => c.method === a.method) ||
+          /^(thread\/|command\/|gitDiff)/.test(a.method)
+        )
+          throw new Error("此操作需要打开会话");
+        const task = catalogQueue
+          .catch(() => {})
+          .then(async () => {
+            if (quitting) throw new Error("正在退出");
+            const account = store.data.accounts.find(
+              (a) =>
+                a.enabled && a.status === "ready" && !accounts.busy.has(a.id),
+            );
+            if (!account) throw new Error("请先添加一个已登录且可用的账户");
+            const prepared = await accounts.inspect(account.id);
+            const rpc = await Rpc.open(
+              store.data.settings.cliPath,
+              path.join(dataRoot, "cli-profile"),
+            );
+            try {
+              rpc.on("request", (m) =>
+                rpc.reject(m.id, "请在聊天中完成交互请求"),
+              );
+              await rpc.call("account/login/start", {
+                type: "chatgptAuthTokens",
+                accessToken: prepared.auth.tokens.access_token,
+                chatgptAccountId: account.identity,
+                chatgptPlanType: account.plan,
+              });
+              return JSON.parse(
+                redact(JSON.stringify(await rpc.call(a.method, a.params))),
+              );
+            } finally {
+              await rpc.close();
+            }
+          });
+        catalogQueue = task;
+        return task;
+      }
+      case "window.menu": {
+        const menu = Menu.buildFromTemplate([
+          { label: "文件", submenu: [{ role: "close" }, { role: "quit" }] },
+          {
+            label: "编辑",
+            submenu: [
+              { role: "undo" },
+              { role: "redo" },
+              { type: "separator" },
+              { role: "cut" },
+              { role: "copy" },
+              { role: "paste" },
+              { role: "selectAll" },
+            ],
+          },
+          {
+            label: "视图",
+            submenu: [
+              { role: "resetZoom" },
+              { role: "zoomIn" },
+              { role: "zoomOut" },
+              { role: "togglefullscreen" },
+            ],
+          },
+        ]);
+        menu.popup({ window });
+        return;
+      }
+      case "desktop.read":
+        return desktop.data;
+      case "desktop.preferences": {
+        Object.assign(
+          desktop.data.preferences,
+          z
+            .object({
+              theme: z.enum(["dark", "light", "system"]).optional(),
+              notifications: z.boolean().optional(),
+              textSize: z.number().int().min(12).max(20).optional(),
+              codeSize: z.number().int().min(10).max(20).optional(),
+              accent: z
+                .string()
+                .regex(/^#[a-f0-9]{6}$/i)
+                .optional(),
+              background: z
+                .string()
+                .regex(/^#[a-f0-9]{6}$/i)
+                .optional(),
+              foreground: z
+                .string()
+                .regex(/^#[a-f0-9]{6}$/i)
+                .optional(),
+              uiFont: z.string().max(200).optional(),
+              codeFont: z.string().max(200).optional(),
+              enterSends: z.boolean().optional(),
+              followUp: z.enum(["queue", "steer"]).optional(),
+              reduceMotion: z.boolean().optional(),
+            })
+            .strict()
+            .parse(args),
+        );
+        await desktop.save();
+        return desktop.data;
+      }
+      case "project.add":
+        return desktop.project(z.string().refine(path.isAbsolute).parse(args));
+      case "client.instructions.read":
+        return fs
+          .readFile(path.join(dataRoot, "cli-profile", "AGENTS.md"), "utf8")
+          .catch((e) => {
+            if (e.code === "ENOENT") return "";
+            throw e;
+          });
+      case "client.instructions.write": {
+        const text = z.string().max(100000).parse(args);
+        await fs.mkdir(path.join(dataRoot, "cli-profile"), { recursive: true });
+        await fs.writeFile(
+          path.join(dataRoot, "cli-profile", "AGENTS.md"),
+          text,
+          { mode: 0o600 },
+        );
+        return;
+      }
+      case "project.update": {
+        const a = z
+          .object({
+            id: idSchema,
+            name: z.string().trim().min(1).max(100).optional(),
+            pinned: z.boolean().optional(),
+            remove: z.boolean().optional(),
+          })
+          .strict()
+          .parse(args);
+        const project = desktop.data.projects.find((p) => p.id === a.id);
+        if (!project) throw new Error("项目不存在");
+        if (a.remove)
+          desktop.data.projects = desktop.data.projects.filter(
+            (p) => p !== project,
+          );
+        else
+          Object.assign(project, {
+            ...(a.name ? { name: a.name } : {}),
+            ...(a.pinned !== undefined ? { pinned: a.pinned } : {}),
+          });
+        await desktop.save();
+        return desktop.data;
+      }
+      case "workspace.files":
+      case "workspace.read":
+      case "workspace.open":
+      case "workspace.diff":
+      case "workspace.write": {
+        const a = z
+          .object({
+            cwd: z.string().refine(path.isAbsolute),
+            path: z.string().max(32700).default("."),
+            staged: z.boolean().optional(),
+            text: z
+              .string()
+              .max(2 * 1024 * 1024)
+              .optional(),
+            mtime: z.number().optional(),
+          })
+          .strict()
+          .parse(args);
+        if (name === "workspace.files") return desktop.files(a.cwd, a.path);
+        if (name === "workspace.read") return desktop.read(a.cwd, a.path);
+        if (name === "workspace.diff")
+          return desktop.diff(a.cwd, a.path, a.staged);
+        if (name === "workspace.write") {
+          if (a.text === undefined || a.mtime === undefined)
+            throw new Error("缺少文件内容或版本");
+          return desktop.write(a.cwd, a.path, a.text, a.mtime);
+        }
+        return shell.openPath(await desktop.resolve(a.cwd, a.path));
+      }
+      case "workspace.changes":
+      case "workspace.branches":
+      case "workspace.worktree":
+      case "workspace.git": {
+        const a = z
+          .object({
+            cwd: z.string().refine(path.isAbsolute),
+            ref: z.string().max(200).optional(),
+            action: z
+              .enum(["stage", "unstage", "restore", "commit", "push"])
+              .optional(),
+            path: z.string().max(32700).optional(),
+            message: z.string().max(10000).optional(),
+          })
+          .strict()
+          .parse(args);
+        if (name === "workspace.changes") return desktop.changes(a.cwd);
+        if (name === "workspace.branches") return desktop.branches(a.cwd);
+        if (name === "workspace.worktree")
+          return desktop.worktree(a.cwd, a.ref);
+        if (!a.action) throw new Error("缺少 Git 操作");
+        return desktop.gitAction(a.cwd, a.action, a.path, a.message);
+      }
+      case "terminal.list":
+        return terminals.list();
+      case "terminal.open": {
+        const a = z
+          .object({
+            cwd: z.string().refine(path.isAbsolute),
+            cols: z.number().int().min(10).max(500).default(100),
+            rows: z.number().int().min(2).max(200).default(24),
+          })
+          .strict()
+          .parse(args);
+        return terminals.open(a.cwd, a.cols, a.rows);
+      }
+      case "terminal.read":
+      case "terminal.write":
+      case "terminal.resize":
+      case "terminal.close": {
+        const a = z
+          .object({
+            id: idSchema,
+            cursor: z.number().int().min(0).optional(),
+            text: z.string().max(100000).optional(),
+            cols: z.number().int().min(10).max(500).optional(),
+            rows: z.number().int().min(2).max(200).optional(),
+          })
+          .strict()
+          .parse(args);
+        if (name === "terminal.read") return terminals.read(a.id, a.cursor);
+        if (name === "terminal.close") return terminals.close(a.id);
+        if (name === "terminal.write")
+          return terminals.write(a.id, a.text ?? "");
+        return terminals.resize(a.id, a.cols ?? 100, a.rows ?? 24);
+      }
+      case "schedule.save": {
+        const a = z
+          .object({
+            id: idSchema.optional(),
+            title: z.string().trim().min(1).max(120),
+            prompt: z.string().trim().min(1).max(100000),
+            cwd: z.string().refine(path.isAbsolute),
+            enabled: z.boolean(),
+            cadence: z.enum(["interval", "daily", "weekly"]),
+            minutes: z.number().int().min(5).max(525600),
+            hour: z.number().int().min(0).max(23),
+            minute: z.number().int().min(0).max(59),
+            weekday: z.number().int().min(0).max(6),
+            worktree: z.boolean(),
+          })
+          .strict()
+          .parse(args);
+        const previous = desktop.data.schedules.find((t) => t.id === a.id);
+        const task = {
+          ...previous,
+          ...a,
+          id: a.id || randomUUID(),
+          nextRun: nextSchedule(a),
+        };
+        if (previous) Object.assign(previous, task);
+        else desktop.data.schedules.push(task);
+        await desktop.save();
+        return desktop.data;
+      }
+      case "schedule.remove": {
+        const id = idSchema.parse(args);
+        desktop.data.schedules = desktop.data.schedules.filter(
+          (t) => t.id !== id,
+        );
+        await desktop.save();
+        return desktop.data;
+      }
+      case "schedule.run": {
+        const id = idSchema.parse(args),
+          task = desktop.data.schedules.find((t) => t.id === id);
+        if (!task) throw new Error("定时任务不存在");
+        return runScheduled(task);
+      }
+      case "chat.agent.read": {
+        const a = z
+          .object({
+            id: idSchema,
+            threadId: idSchema,
+            before: z.number().int().min(0).optional(),
+          })
+          .strict()
+          .parse(args);
+        const job = store.data.jobs.find((j) => j.id === a.id);
+        if (!job?.agents?.some((agent) => agent.threadId === a.threadId))
+          throw new Error("该子代理不属于当前会话");
+        const page = await scheduler.chats.read(a.threadId, a.before);
+        if (!page.total) {
+          const file = await findTranscript(
+            store.jobHome(job.id),
+            a.threadId,
+            true,
+          ).catch(() => undefined);
+          if (file) {
+            for await (const item of rolloutRecords(file))
+              await scheduler.chats.append(a.threadId, item);
+            return scheduler.chats.read(a.threadId, a.before);
+          }
+        }
+        return page;
+      }
+      case "chat.agent.control": {
+        const a = z
+          .object({
+            id: idSchema,
+            threadId: idSchema,
+            action: z.enum(["send", "interrupt"]),
+            text: z.string().max(100000).optional(),
+          })
+          .strict()
+          .parse(args);
+        return scheduler.agentControl(a.id, a.threadId, a.action, a.text);
+      }
+      case "chat.export": {
+        const id = idSchema.parse(args),
+          job = store.data.jobs.find((j) => j.id === id);
+        if (!job) throw new Error("会话不存在");
+        const result = await dialog.showSaveDialog(window!, {
+          defaultPath: `${job.title.replace(/[<>:"/\\|?*]/g, "-")}.md`,
+          filters: [{ name: "Markdown", extensions: ["md"] }],
+        });
+        if (result.canceled || !result.filePath) return;
+        const items = [];
+        let before: number | undefined;
+        do {
+          const page = await scheduler.chats.read(id, before);
+          items.unshift(...page.items);
+          before = page.before;
+        } while (before !== undefined);
+        await fs.writeFile(
+          result.filePath,
+          `# ${job.title}\n\n` +
+            items
+              .map(
+                (i) =>
+                  `## ${i.role === "user" ? "你" : i.role === "assistant" ? "Codex" : i.kind}\n\n${i.text}\n\n${i.detail ? "```\n" + i.detail + "\n```\n" : ""}`,
+              )
+              .join("\n"),
+        );
+        return result.filePath;
+      }
+      case "history.scan": {
+        const a = z
+          .object({
+            homes: z
+              .array(z.string().refine(path.isAbsolute))
+              .max(20)
+              .optional(),
+          })
+          .strict()
+          .parse(args ?? {});
+        return history.scan(a.homes);
+      }
+      case "history.import": {
+        const a = z
+          .object({
+            ids: z.array(z.string().regex(/^[a-f0-9]{64}$/)).optional(),
+          })
+          .strict()
+          .parse(args ?? {});
+        const result = await history.import(a.ids);
+        scheduler.changed();
+        return result;
+      }
+      case "chat.read": {
+        const a = z
+          .object({ id: idSchema, before: z.number().int().min(0).optional() })
+          .strict()
+          .parse(args);
+        const job = store.data.jobs.find((j) => j.id === a.id);
+        if (!job) throw new Error("会话不存在");
+        try {
+          await fs.access(scheduler.chats.file(job.id));
+        } catch {
+          if (job.threadId) {
+            const file = await findTranscript(
+              store.jobHome(job.id),
+              job.threadId,
+              true,
+            );
+            for await (const item of rolloutRecords(file))
+              await scheduler.chats.append(job.id, item);
+          } else if (job.prompt) await scheduler.chats.user(job.id, job.prompt);
+        }
+        return scheduler.chats.read(a.id, a.before);
+      }
+      case "chat.send":
+        return scheduler.send(chatSendSchema.parse(args));
+      case "chat.update": {
+        const a = z
+          .object({
+            id: idSchema,
+            title: z.string().trim().min(1).max(120).optional(),
+            archived: z.boolean().optional(),
+            pinned: z.boolean().optional(),
+            cwd: z.string().refine(path.isAbsolute).optional(),
+            sandbox: z
+              .enum(["workspaceWrite", "readOnly", "dangerFullAccess"])
+              .optional(),
+            approvalPolicy: z.enum(["on-request", "never"]).optional(),
+          })
+          .strict()
+          .parse(args);
+        const job = store.data.jobs.find((j) => j.id === a.id);
+        if (!job) throw new Error("会话不存在");
+        if (
+          !["completed", "cancelled", "paused", "needs_attention"].includes(
+            job.state,
+          )
+        )
+          throw new Error("请先暂停当前会话");
+        if (a.cwd && !(await fs.stat(a.cwd)).isDirectory())
+          throw new Error("项目目录无效");
+        Object.assign(job, a);
+        await store.save();
+        scheduler.changed();
+        return;
+      }
+      case "chat.fork": {
+        const job = store.data.jobs.find((j) => j.id === idSchema.parse(args));
+        if (
+          !job?.threadId ||
+          !["completed", "paused", "cancelled"].includes(job.state) ||
+          job.recoveryRequired
+        )
+          throw new Error("请先停止当前会话再创建分支");
+        const file = await findTranscript(
+          store.jobHome(job.id),
+          job.threadId,
+          true,
+        );
+        const fork = await history.copy(file, {
+          id: job.id,
+          threadId: job.threadId,
+          title: `${job.title.slice(0, 100)} · 分支`,
+          cwd: job.cwd,
+          source: "relay",
+          updatedAt: Date.now(),
+          archived: false,
+          issue: job.historySource?.issue,
+        });
+        fork.model = job.model;
+        fork.effort = job.effort;
+        store.data.jobs.push(fork);
+        await store.save();
+        scheduler.changed();
+        return fork;
+      }
+      case "agent.operation": {
+        const a = z
+          .object({
+            id: idSchema,
+            method: z.string().max(100),
+            params: z.record(z.string(), z.unknown()),
+          })
+          .strict()
+          .parse(args);
+        if (JSON.stringify(a.params).length > 200000)
+          throw new Error("参数过大");
+        return scheduler.operation(a.id, a.method, a.params);
+      }
+      case "chat.attachments": {
+        const r = await dialog.showOpenDialog(window!, {
+          title: "添加图片或项目文件",
+          properties: ["openFile", "multiSelections"],
+        });
+        return r.canceled
+          ? []
+          : r.filePaths.slice(0, 20).map((p) => ({
+              type: /\.(png|jpe?g|webp|gif)$/i.test(p)
+                ? "localImage"
+                : "mention",
+              path: p,
+              name: path.basename(p),
+            }));
+      }
+      case "link.open": {
+        const url = new URL(z.string().max(10000).parse(args));
+        if (!["http:", "https:"].includes(url.protocol))
+          throw new Error("只允许打开 HTTP(S) 链接");
+        await shell.openExternal(url.toString());
+        return;
+      }
       case "session.scan": {
         const input = sessionScanSchema.parse(args ?? {});
         return existing.scan(input.home, input.threadId);
@@ -174,7 +773,12 @@ async function boot() {
             "-File",
             path.join(scripts, "desktop-detect.ps1"),
           ],
-          { windowsHide: true, timeout: 15000, maxBuffer: 1024 * 1024 },
+          {
+            windowsHide: true,
+            timeout: 15000,
+            maxBuffer: 1024 * 1024,
+            env: windowsPowerShellEnv(),
+          },
         );
         return JSON.parse(result.stdout.replace(/^\uFEFF/, ""));
       }
@@ -277,8 +881,8 @@ async function boot() {
           ids.some((id) => !store.data.accounts.some((a) => a.id === id))
         )
           throw new Error("账户顺序无效");
-        store.data.accounts = ids.map((id) =>
-          store.data.accounts.find((a) => a.id === id)!,
+        store.data.accounts = ids.map(
+          (id) => store.data.accounts.find((a) => a.id === id)!,
         );
         store.data.cursor = 0;
         await store.save();
@@ -316,6 +920,33 @@ async function boot() {
           .parse(args);
         const approval = scheduler.approvals.find((a) => a.id === r.id);
         if (!approval) throw new Error("请求已经结束");
+        if (approval.kind === "permissions") {
+          const choice = z
+            .object({ decision: z.enum(["accept", "decline"]) })
+            .strict()
+            .parse(r.value);
+          const requested = (approval.params as any).permissions ?? {};
+          const permissions =
+            choice.decision === "accept"
+              ? Object.fromEntries(
+                  Object.entries(requested).filter(([, v]) => v != null),
+                )
+              : {};
+          return scheduler.respond(r.id, { permissions, scope: "turn" });
+        }
+        if (approval.kind === "elicitation") {
+          const value = z
+            .object({
+              action: z.enum(["accept", "decline", "cancel"]),
+              content: z.unknown().nullable(),
+              _meta: z.null(),
+            })
+            .strict()
+            .parse(r.value);
+          if (JSON.stringify(value).length > 100000)
+            throw new Error("输入内容过大");
+          return scheduler.respond(r.id, value);
+        }
         const value =
           approval.kind === "input"
             ? z
@@ -330,7 +961,14 @@ async function boot() {
                 .strict()
                 .parse(r.value)
             : z
-                .object({ decision: z.enum(["accept", "decline", "cancel"]) })
+                .object({
+                  decision: z.enum([
+                    "accept",
+                    "acceptForSession",
+                    "decline",
+                    "cancel",
+                  ]),
+                })
                 .strict()
                 .parse(r.value);
         return scheduler.respond(r.id, value);
@@ -365,6 +1003,59 @@ async function boot() {
     }
   };
   const server = await startCommandServer(dataRoot, scheduler, command);
+  async function runScheduled(task: (typeof desktop.data.schedules)[number]) {
+    const working =
+      task.lastJobId && store.data.jobs.find((j) => j.id === task.lastJobId);
+    if (
+      working &&
+      !["completed", "cancelled", "paused", "needs_attention"].includes(
+        working.state,
+      )
+    )
+      throw new Error("此定时任务的上一次运行尚未结束");
+    const cwd = task.worktree
+      ? (await desktop.worktree(task.cwd)).cwd
+      : task.cwd;
+    const job = await scheduler.add({
+      title: task.title,
+      prompt: task.prompt,
+      cwd,
+      mode: "cli",
+      model: "",
+      effort: "",
+      bucket: "codex",
+      approvalPolicy: "on-request",
+      sandbox: "workspaceWrite",
+      interactive: true,
+      multiAgent: true,
+    });
+    task.lastRun = Date.now();
+    task.lastJobId = job.id;
+    task.lastError = undefined;
+    task.nextRun = nextSchedule(task);
+    await desktop.save();
+    return job;
+  }
+  let checkingSchedules = false;
+  const scheduleTimer = setInterval(() => {
+    if (checkingSchedules || quitting) return;
+    checkingSchedules = true;
+    void (async () => {
+      for (const task of desktop.data.schedules)
+        if (task.enabled && task.nextRun <= Date.now()) {
+          try {
+            await runScheduled(task);
+          } catch (e) {
+            task.lastError = redact(e);
+            task.nextRun = nextSchedule(task);
+            await desktop.save();
+          }
+        }
+    })().finally(() => {
+      checkingSchedules = false;
+    });
+  }, 15000);
+  startupTrace("create window");
   const rendererPath = path.join(__dirname, "..", "renderer", "index.html");
   const available = screen.getPrimaryDisplay().workAreaSize;
   window = new BrowserWindow({
@@ -373,7 +1064,10 @@ async function boot() {
     minWidth: Math.min(900, available.width),
     minHeight: Math.min(620, available.height),
     title: "Codex Relay",
-    backgroundColor: "#101316",
+    autoHideMenuBar: true,
+    backgroundColor: "#181818",
+    titleBarStyle: "hidden",
+    titleBarOverlay: { color: "#1f2020", symbolColor: "#b5b5b5", height: 38 },
     show: false,
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
@@ -401,6 +1095,7 @@ async function boot() {
     }
   });
   await window.loadFile(rendererPath);
+  startupTrace("renderer ready");
   window.show();
   app.on("second-instance", () => {
     window?.show();
@@ -443,8 +1138,16 @@ async function boot() {
       quitting = true;
       void existing
         .shutdown()
-        .then(() => Promise.all([importer.drain(), scheduler.shutdown()]))
+        .then(() =>
+          Promise.all([
+            importer.drain(),
+            scheduler.shutdown(),
+            terminals.shutdown(),
+            catalogQueue.catch(() => {}),
+          ]),
+        )
         .then(() => {
+          clearInterval(scheduleTimer);
           server.close();
           app.quit();
         })

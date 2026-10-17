@@ -6,6 +6,7 @@ import type { Job } from "../shared/types";
 import { Accounts, parseAuth } from "./accounts";
 import { Store } from "./store";
 import { Rpc } from "./rpc";
+import { windowsPowerShellEnv } from "./powershell";
 // A crash never authorizes a second writer. Recovery is invoked by the explicit
 // Continue / Cancel control; the entire queue stays frozen until it succeeds.
 export async function recoverJob(
@@ -66,7 +67,7 @@ export async function recoverJob(
           "-Action",
           "stop",
         ],
-        { windowsHide: true, timeout: 20_000 },
+        { windowsHide: true, timeout: 20_000, env: windowsPowerShellEnv() },
       );
     }
   }

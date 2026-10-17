@@ -37,6 +37,34 @@ export interface Account {
   lastError?: string;
 }
 export interface Job {
+  pinned?: boolean;
+  planMode?: boolean;
+  multiAgent?: boolean;
+  serviceTier?: string;
+  agents?: AgentState[];
+  tokenUsage?: {
+    totalTokens: number;
+    inputTokens: number;
+    outputTokens: number;
+    cachedInputTokens: number;
+    modelContextWindow?: number | null;
+  };
+  interactive?: boolean;
+  pendingMessage?: string;
+  attachments?: ChatAttachment[];
+  queuedMessages?: {
+    text: string;
+    attachments: ChatAttachment[];
+    model?: string;
+    effort?: string;
+    review?: boolean;
+    planMode?: boolean;
+    multiAgent?: boolean;
+    serviceTier?: string;
+  }[];
+  archived?: boolean;
+  historySource?: { threadId: string; source: string; issue?: string };
+  review?: boolean;
   id: string;
   title: string;
   prompt: string;
@@ -110,7 +138,13 @@ export interface Approval {
   jobId: string;
   method: string;
   params: unknown;
-  kind: "command" | "file" | "input" | "unsupported";
+  kind:
+    | "command"
+    | "file"
+    | "input"
+    | "permissions"
+    | "elicitation"
+    | "unsupported";
 }
 export interface Log {
   id: string;
@@ -160,9 +194,60 @@ export type NewJob = Pick<
   | "sandbox"
   | "completionMarker"
   | "maxCompletionRetries"
+  | "interactive"
+  | "attachments"
+  | "review"
+  | "planMode"
+  | "multiAgent"
+  | "serviceTier"
 >;
+export interface AgentState {
+  threadId: string;
+  parentThreadId?: string;
+  name: string;
+  role?: string;
+  status: string;
+  prompt?: string;
+  message?: string;
+  model?: string;
+  effort?: string;
+  turnId?: string;
+  updatedAt: number;
+}
+export interface ChatAttachment {
+  type: "localImage" | "mention";
+  path: string;
+  name: string;
+}
+export interface ChatItem {
+  id: string;
+  role: "user" | "assistant" | "tool" | "system";
+  kind: string;
+  text: string;
+  at: number;
+  status?: string;
+  detail?: string;
+  data?: Record<string, any>;
+}
+export interface ChatPage {
+  items: ChatItem[];
+  total: number;
+  before?: number;
+}
+export interface HistoryEntry {
+  id: string;
+  threadId: string;
+  title: string;
+  cwd: string;
+  source: string;
+  updatedAt: number;
+  archived: boolean;
+  issue?: string;
+  imported?: boolean;
+}
 export interface Bridge {
   snapshot(): Promise<Snapshot>;
   command(name: string, args?: unknown): Promise<unknown>;
   onSnapshot(fn: (snapshot: Snapshot) => void): () => void;
+  onChat?(fn: (update: { id: string; page: ChatPage }) => void): () => void;
 }

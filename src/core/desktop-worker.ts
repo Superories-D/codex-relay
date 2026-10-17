@@ -21,6 +21,7 @@ import {
 import type { Outcome, Worker, WorkerContext } from "./worker";
 import type { Quota } from "../shared/types";
 import { ensureWindowsSandbox } from "./windows-sandbox";
+import { windowsPowerShellEnv } from "./powershell";
 const exec = promisify(execFile);
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 export class DesktopWorker extends EventEmitter implements Worker {
@@ -78,7 +79,7 @@ export class DesktopWorker extends EventEmitter implements Worker {
         path.join(this.windowsScripts, script),
         ...args,
       ],
-      { windowsHide: true, timeout: 20_000, maxBuffer: 1024 * 1024 },
+      { windowsHide: true, timeout: 20_000, maxBuffer: 1024 * 1024, env: windowsPowerShellEnv() },
     );
   }
   private stage(text: string) {

@@ -107,7 +107,7 @@ select:focus {
   font-weight: 400;
   letter-spacing: 2px;
 }
-nav {
+.app-shell nav {
   margin-top: 42px;
   display: grid;
   gap: 8px;
@@ -158,12 +158,12 @@ nav {
   margin-right: 7px;
   box-shadow: 0 0 9px #9addc333;
 }
-main {
+.app-shell main {
   margin-left: 220px;
   flex: 1;
   min-width: 0;
 }
-header {
+.app-shell header {
   height: 82px;
   padding: 0 34px;
   border-bottom: 1px solid var(--line);
@@ -561,7 +561,7 @@ h3 {
 .log-row.output pre {
   color: #d6dfdc;
 }
-footer {
+.app-shell footer {
   display: flex;
   justify-content: space-between;
   padding: 10px 34px;
@@ -878,10 +878,10 @@ textarea {
 .startup p {
   color: var(--subtle);
 }
-details {
+.app-shell details {
   margin: 12px 0;
 }
-summary {
+.app-shell summary {
   cursor: pointer;
   font-size: 11px;
   color: var(--subtle);
@@ -890,7 +890,7 @@ summary {
   .sidebar {
     width: 185px;
   }
-  main {
+  .app-shell main {
     margin-left: 185px;
   }
   .content {
@@ -1086,7 +1086,7 @@ button:disabled {
     padding-left: 10px;
     padding-right: 10px;
   }
-  main {
+  .app-shell main {
     margin-left: 160px;
   }
   .content {

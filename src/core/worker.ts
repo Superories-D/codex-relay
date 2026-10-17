@@ -17,6 +17,16 @@ export interface Worker extends EventEmitter {
   respond(id: string, value: unknown): void;
   inspect?(): Promise<unknown>;
   show?(): Promise<void>;
+  steer?(
+    text: string,
+    attachments: import("../shared/types").ChatAttachment[],
+  ): Promise<void>;
+  operation?(method: string, params: Record<string, unknown>): Promise<unknown>;
+  agentControl?(
+    threadId: string,
+    action: "send" | "interrupt",
+    text?: string,
+  ): Promise<unknown>;
 }
 export interface WorkerContext {
   job: Job;
@@ -45,6 +55,10 @@ export function approvalFrom(
         ? "file"
         : method === "item/tool/requestUserInput"
           ? "input"
-          : "unsupported";
+          : method === "item/permissions/requestApproval"
+            ? "permissions"
+            : method === "mcpServer/elicitation/request"
+              ? "elicitation"
+              : "unsupported";
   return { jobId, id, method, params, kind };
 }

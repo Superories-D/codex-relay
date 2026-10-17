@@ -1,0 +1,2120 @@
+import React, { useEffect, useRef, useState } from "react";
+import type {
+  Approval,
+  ChatAttachment,
+  ChatItem,
+  ChatPage,
+  HistoryEntry,
+  Job,
+  Snapshot,
+} from "../shared/types";
+import { capabilities } from "../shared/capabilities";
+import { Dialog } from "./Dialog";
+import { ModelPicker } from "./ModelPicker";
+import { RichMessage } from "./RichMessage";
+import { TerminalPane } from "./TerminalPane";
+import { Workbench, type WorkbenchTab } from "./Workbench";
+import { ExtensionsPage, SchedulesPage } from "./FeaturePages";
+import { SettingsPage } from "./SettingsPage";
+import type { DesktopData } from "../core/desktop";
+import {
+  Archive,
+  ArrowLeft,
+  ArrowRight,
+  ArrowUp,
+  Bell,
+  Blocks,
+  BookOpen,
+  CalendarClock,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Circle,
+  CircleHelp,
+  Clipboard,
+  Command,
+  Download,
+  Ellipsis,
+  ExternalLink,
+  FileCode2,
+  FilePlus2,
+  Folder,
+  FolderOpen,
+  GitBranch,
+  GitCompareArrows,
+  Home,
+  ListTodo,
+  LoaderCircle,
+  Menu,
+  MessageSquare,
+  Network,
+  PanelLeftClose,
+  PanelLeftOpen,
+  PanelRight,
+  Paperclip,
+  Pencil,
+  Pin,
+  Plus,
+  Search,
+  Settings,
+  Shield,
+  ShieldCheck,
+  SlidersHorizontal,
+  Sparkles,
+  Square,
+  SquarePen,
+  SquareTerminal,
+  Undo2,
+  X,
+} from "lucide-react";
+import "./agent.css";
+import "./desktop.css";
+
+const names: Record<string, string> = {
+  queued: "排队中",
+  preparing: "连接中",
+  running: "正在工作",
+  pausing: "正在停止",
+  rotating: "自动切换账户",
+  waiting: "等待可用额度",
+  paused: "已暂停",
+  watching: "监控中",
+  needs_attention: "需要处理",
+  completed: "本轮完成",
+  cancelled: "已取消",
+};
+const running = (j?: Job) =>
+  !!j &&
+  [
+    "queued",
+    "preparing",
+    "running",
+    "pausing",
+    "rotating",
+    "waiting",
+    "watching",
+  ].includes(j.state);
+const basename = (p: string) => p.split(/[\\/]/).filter(Boolean).at(-1) || p;
+function mergePage(previous: ChatPage, next: ChatPage): ChatPage {
+  const old = new Map(previous.items.map((i) => [i.id, i]));
+  return {
+    ...next,
+    items: next.items.map((item) => {
+      const cached = old.get(item.id);
+      return cached &&
+        cached.text === item.text &&
+        cached.detail === item.detail &&
+        cached.status === item.status
+        ? cached
+        : item;
+    }),
+  };
+}
+
+export function AgentApp({
+  management,
+  approval,
+}: {
+  management: (tab: string) => React.ReactNode;
+  approval: (a: Approval, respond: (v: unknown) => void) => React.ReactNode;
+}) {
+  const [snapshot, setSnapshot] = useState<Snapshot>();
+  const [selected, setSelected] = useState<string | undefined>(
+    () => localStorage.getItem("relay.lastChat") || undefined,
+  );
+  const [manage, setManage] = useState("");
+  const [error, setError] = useState("");
+  const [pending, setPending] = useState(false);
+  const [search, setSearch] = useState("");
+  const [archived, setArchived] = useState(false);
+  const [inspector, setInspector] = useState(
+    () => localStorage.getItem("relay.inspector") !== "false",
+  );
+  const [workspaceTab, setWorkspaceTab] = useState<WorkbenchTab>("summary");
+  const [previewFile, setPreviewFile] = useState("");
+  const [desktop, setDesktop] = useState<DesktopData>({
+    projects: [],
+    schedules: [],
+    preferences: { theme: "dark", notifications: true },
+  });
+  const [systemDark, setSystemDark] = useState(
+    () => window.matchMedia("(prefers-color-scheme: dark)").matches,
+  );
+  const [screen, setScreen] = useState("chat");
+  const [sidebarHidden, setSidebarHidden] = useState(false);
+  const [terminal, setTerminal] = useState(false);
+  const [composerMenu, setComposerMenu] = useState(false);
+  const [threadMenu, setThreadMenu] = useState(false);
+  const [palette, setPalette] = useState(false);
+  const [planMode, setPlanMode] = useState(false);
+  const [multiAgent, setMultiAgent] = useState(true);
+  const [environment, setEnvironment] = useState("local");
+  const [branch, setBranch] = useState("HEAD");
+  const [branchList, setBranchList] = useState<string[]>([]);
+  const [history, setHistory] = useState(false);
+  const [operations, setOperations] = useState(false);
+  const [operationMethod, setOperationMethod] = useState(
+    "thread/compact/start",
+  );
+  const [rename, setRename] = useState(false);
+  const [title, setTitle] = useState("");
+  const [drafts, setDrafts] = useState<Record<string, string>>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("relay.drafts") || "{}");
+    } catch {
+      return {};
+    }
+  });
+  const [files, setFiles] = useState<Record<string, ChatAttachment[]>>({});
+  const [cwd, setCwd] = useState(
+    () => localStorage.getItem("relay.project") || "",
+  );
+  const [model, setModel] = useState("");
+  const [effort, setEffort] = useState("");
+  const [sandbox, setSandbox] = useState<Job["sandbox"]>("workspaceWrite");
+  const [modelPicker, setModelPicker] = useState(false);
+  const [page, setPage] = useState<ChatPage>({ items: [], total: 0 });
+  const [older, setOlder] = useState<ChatItem[]>([]);
+  const [olderBefore, setOlderBefore] = useState<number>();
+  const bottom = useRef<HTMLDivElement>(null);
+  const scroll = useRef<HTMLDivElement>(null);
+  const viewCache = useRef(
+    new Map<
+      string,
+      {
+        page: ChatPage;
+        older: ChatItem[];
+        before?: number;
+        top: number;
+        follow: boolean;
+      }
+    >(),
+  );
+  const following = useRef(true);
+  const selectedRef = useRef(selected);
+  const selectAction = useRef(() => {});
+  const preferencesRef = useRef(desktop.preferences);
+  preferencesRef.current = desktop.preferences;
+  const initialSelection = useRef(false);
+  const messageInput = useRef<HTMLTextAreaElement>(null);
+  const modelDirty = useRef(false);
+  selectedRef.current = selected;
+  const job = snapshot?.jobs.find((j) => j.id === selected);
+  const key = selected ?? "new";
+  const draft = drafts[key] ?? "",
+    attachments = files[key] ?? [];
+  const call = async (name: string, args?: unknown): Promise<any> => {
+    try {
+      return await window.relay.command(name, args);
+    } catch (e) {
+      setError(String(e).replace(/^Error: /, ""));
+      throw e;
+    }
+  };
+  const action = (fn: () => Promise<unknown>) => {
+    if (pending) return;
+    setPending(true);
+    setError("");
+    void fn()
+      .catch((e) => setError(String(e).replace(/^Error: /, "")))
+      .finally(() => setPending(false));
+  };
+  const refreshDesktop = () => {
+    void window.relay
+      .command("desktop.read")
+      .then((value) => setDesktop(value as DesktopData))
+      .catch((e) => setError(String(e)));
+  };
+  const openFile = (path: string) => {
+    setWorkspaceTab("files");
+    setPreviewFile(path);
+    setInspector(true);
+  };
+  useEffect(() => {
+    refreshDesktop();
+  }, []);
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const update = () => setSystemDark(media.matches);
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      const values = Object.entries(drafts)
+        .filter(([, text]) => text.trim())
+        .slice(-20);
+      try {
+        localStorage.setItem(
+          "relay.drafts",
+          JSON.stringify(Object.fromEntries(values)),
+        );
+      } catch {}
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [drafts]);
+  useEffect(() => {
+    if (messageInput.current) {
+      messageInput.current.style.height = "auto";
+      messageInput.current.style.height = `${Math.min(240, Math.max(83, messageInput.current.scrollHeight))}px`;
+    }
+  }, [draft]);
+  useEffect(() => {
+    if (modelDirty.current || !job) return;
+    setModel(job.model);
+    setEffort(job.effort || "");
+  }, [job?.model, job?.effort]);
+  useEffect(() => {
+    localStorage.setItem("relay.inspector", String(inspector));
+  }, [inspector]);
+  useEffect(() => {
+    const handle = (e: KeyboardEvent) => {
+      const mod = e.ctrlKey || e.metaKey;
+      if (mod && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setPalette((v) => !v);
+      }
+      if (mod && e.shiftKey && e.key.toLowerCase() === "o") {
+        e.preventDefault();
+        selectAction.current();
+      }
+      if (mod && e.key === "b") {
+        e.preventDefault();
+        setSidebarHidden((v) => !v);
+      }
+      if (mod && e.key === "j") {
+        e.preventDefault();
+        setTerminal((v) => !v);
+      }
+      if (mod && e.key === ",") {
+        e.preventDefault();
+        setManage("settings");
+      }
+      if (e.key === "Escape") {
+        setPalette(false);
+        setComposerMenu(false);
+        setThreadMenu(false);
+      }
+    };
+    document.addEventListener("keydown", handle);
+    return () => document.removeEventListener("keydown", handle);
+  }, []);
+  useEffect(() => {
+    let alive = true;
+    void window.relay
+      .snapshot()
+      .then((s) => {
+        if (alive) setSnapshot(s);
+      })
+      .catch((e) => setError(String(e)));
+    const off = window.relay.onSnapshot((s) => {
+      if (alive) setSnapshot(s);
+    });
+    return () => {
+      alive = false;
+      off();
+    };
+  }, []);
+  useEffect(() => {
+    const cached = selected ? viewCache.current.get(selected) : undefined;
+    setPage(cached?.page || { items: [], total: 0 });
+    setOlder(cached?.older || []);
+    setOlderBefore(cached?.before);
+    following.current = cached?.follow ?? true;
+    if (cached && !cached.follow)
+      requestAnimationFrame(() => {
+        if (scroll.current) scroll.current.scrollTop = cached.top;
+      });
+    void window.relay.command("chat.watch", { id: selected }).catch(() => {});
+    if (!selected) return;
+    let alive = true,
+      loading = false;
+    const read = async () => {
+      if (loading) return;
+      loading = true;
+      try {
+        const value = (await window.relay.command("chat.read", {
+          id: selected,
+        })) as ChatPage;
+        if (alive) setPage((previous) => mergePage(previous, value));
+      } catch (e) {
+        if (alive) setError(String(e));
+      } finally {
+        loading = false;
+      }
+    };
+    void read();
+    const offChat = window.relay.onChat?.((update) => {
+      if (alive && update.id === selected)
+        setPage((previous) => mergePage(previous, update.page));
+    });
+    const timer = setInterval(read, window.relay.onChat ? 8000 : 1200);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+      offChat?.();
+    };
+  }, [selected]);
+  useEffect(() => {
+    if (!following.current) return;
+    const frame = requestAnimationFrame(() =>
+      bottom.current?.scrollIntoView({ block: "end", behavior: "instant" }),
+    );
+    return () => cancelAnimationFrame(frame);
+  }, [page.items.map((i) => i.id + i.text.length + i.status).join("|")]);
+  const select = (j?: Job) => {
+    setManage("");
+    if (selected) {
+      viewCache.current.set(selected, {
+        page,
+        older,
+        before: olderBefore,
+        top: scroll.current?.scrollTop || 0,
+        follow: following.current,
+      });
+      while (viewCache.current.size > 5)
+        viewCache.current.delete(viewCache.current.keys().next().value!);
+    }
+    setScreen("chat");
+    setPreviewFile("");
+    setThreadMenu(false);
+    setSelected(j?.id);
+    if (j) localStorage.setItem("relay.lastChat", j.id);
+    else localStorage.removeItem("relay.lastChat");
+    modelDirty.current = false;
+    setError("");
+    if (j) {
+      setModel(j.model);
+      setEffort(j.effort || "");
+      setSandbox(j.sandbox);
+      setPlanMode(!!j.planMode);
+      setMultiAgent(j.multiAgent !== false);
+    }
+  };
+  selectAction.current = () => select();
+  useEffect(() => {
+    if (!snapshot || initialSelection.current) return;
+    initialSelection.current = true;
+    const saved = snapshot.jobs.find((j) => j.id === selected);
+    if (saved) {
+      select(saved);
+      setArchived(!!saved.archived);
+    } else if (selected) setSelected(undefined);
+  }, [snapshot]);
+  const chooseProject = async () => {
+    const dir = await call("choose.directory");
+    if (dir) {
+      setCwd(dir);
+      localStorage.setItem("relay.project", dir);
+      await call("project.add", dir);
+      refreshDesktop();
+      if (job) await call("chat.update", { id: job.id, cwd: dir });
+    }
+  };
+  const newProject = async () => {
+    const dir = await call("choose.directory");
+    if (dir) {
+      await call("project.add", dir);
+      setCwd(dir);
+      localStorage.setItem("relay.project", dir);
+      select();
+      refreshDesktop();
+    }
+  };
+  const send = async (
+    mode: "send" | "queue" | "steer" = "send",
+    review = false,
+  ) => {
+    if (!draft.trim() && !review) return;
+    const slash = draft.trim().match(/^\/([a-z]+)(?:\s+(.*))?$/s);
+    if (slash && !review) {
+      const command = slash[1],
+        argument = slash[2] ?? "";
+      if (command === "review") review = true;
+      else {
+        if (command === "new" || command === "clear") select();
+        else if (command === "model") {
+          if (argument) setModel(argument);
+          else setModelPicker(true);
+        } else if (["status", "permissions"].includes(command))
+          setInspector(true);
+        else if (command === "logout") setManage("accounts");
+        else if (["skills", "mcp", "plugins"].includes(command))
+          setScreen(command);
+        else if (command === "plan") setPlanMode(!planMode);
+        else if (command === "agents") {
+          setWorkspaceTab("agents");
+          setInspector(true);
+        } else if (command === "terminal") setTerminal(true);
+        else if (command === "resume" && job)
+          await call("job.control", { id: job.id, action: "resume" });
+        else if (command === "fork" && job)
+          select(await call("chat.fork", job.id));
+        else if (command === "archive" && job)
+          await call("chat.update", { id: job.id, archived: true });
+        else if (
+          ["help", "compact", "skills", "mcp", "config"].includes(command) &&
+          job
+        ) {
+          setOperationMethod(
+            (
+              {
+                help: "model/list",
+                compact: "thread/compact/start",
+                skills: "skills/list",
+                mcp: "mcpServerStatus/list",
+                config: "config/read",
+              } as Record<string, string>
+            )[command],
+          );
+          setOperations(true);
+        } else
+          throw new Error(
+            "可用命令：/new /model 模型名 /status /permissions /review /resume /fork /archive /compact /skills /mcp /config /help。会话操作需先选择已有聊天。",
+          );
+        setDrafts((d) => ({ ...d, [key]: "" }));
+        return;
+      }
+    }
+    const text = review ? "审查当前项目中尚未提交的修改" : draft;
+    if (!job) {
+      let dir = cwd;
+      if (!dir) {
+        dir = await call("choose.directory");
+        if (!dir) return;
+        setCwd(dir);
+        localStorage.setItem("relay.project", dir);
+      }
+      await call("project.add", dir);
+      refreshDesktop();
+      if (environment === "worktree") {
+        const created = await call("workspace.worktree", {
+          cwd: dir,
+          ref: branch,
+        });
+        dir = created.cwd;
+        refreshDesktop();
+      }
+      const added = (await call("job.add", {
+        title: text.replace(/\s+/g, " ").slice(0, 80),
+        prompt: text,
+        cwd: dir,
+        mode: "cli",
+        model,
+        effort,
+        bucket: "codex",
+        approvalPolicy: "on-request",
+        sandbox,
+        interactive: true,
+        attachments,
+        review,
+        planMode,
+        multiAgent,
+      })) as Job;
+      setSelected(added.id);
+    } else {
+      if (sandbox !== job.sandbox && !running(job))
+        await call("chat.update", { id: job.id, sandbox });
+      await call("chat.send", {
+        id: job.id,
+        text,
+        attachments,
+        action: mode,
+        model,
+        effort,
+        review,
+        planMode,
+        multiAgent,
+      });
+    }
+    setDrafts((d) => ({ ...d, [key]: "" }));
+    setFiles((f) => ({ ...f, [key]: [] }));
+    following.current = true;
+  };
+  if (manage.startsWith("advanced:"))
+    return (
+      <div className="legacy-window">
+        <div className="desktop-titlebar">
+          <span>Codex Relay · 高级管理</span>
+        </div>
+        <button className="agent-return" onClick={() => setManage("")}>
+          ← 返回对话
+        </button>
+        {management(manage.slice(9))}
+      </div>
+    );
+  const jobs = (snapshot?.jobs ?? []).filter(
+    (j) =>
+      !!j.archived === archived &&
+      `${j.title} ${j.cwd}`.toLowerCase().includes(search.toLowerCase()),
+  );
+  const groups = new Map<string, Job[]>();
+  for (const project of desktop.projects ?? []) groups.set(project.cwd, []);
+  for (const j of [...jobs].sort((a, b) => b.updatedAt - a.updatedAt))
+    groups.set(j.cwd, [...(groups.get(j.cwd) ?? []), j]);
+  const ready =
+    snapshot?.accounts.filter((a) => a.enabled && a.status === "ready")
+      .length ?? 0;
+  const allItems = [
+    ...new Map(
+      [...older, ...page.items].map((item) => [item.id, item]),
+    ).values(),
+  ];
+  const nextBefore = older.length ? olderBefore : page.before;
+  const account = snapshot?.accounts.find((a) => a.id === job?.accountId);
+  const currentCwd = job?.cwd || cwd;
+  const chrome = (
+    <div className="desktop-titlebar">
+      <div className="desktop-history">
+        <button
+          title="返回新聊天"
+          aria-label="返回新聊天"
+          onClick={() => select()}
+        >
+          <ArrowLeft size={17} />
+        </button>
+        <button
+          title="回到最近会话"
+          onClick={() => {
+            const last = snapshot?.jobs[0];
+            if (last) select(last);
+          }}
+        >
+          <ArrowRight size={17} />
+        </button>
+        <button
+          title={sidebarHidden ? "展开侧栏" : "收起侧栏"}
+          aria-label="切换侧栏"
+          onClick={() => setSidebarHidden(!sidebarHidden)}
+        >
+          {sidebarHidden ? (
+            <PanelLeftOpen size={17} />
+          ) : (
+            <PanelLeftClose size={17} />
+          )}
+        </button>
+      </div>
+      <div className="desktop-menu">
+        <button onClick={() => void call("window.menu")}>文件</button>
+        <button onClick={() => void call("window.menu")}>编辑</button>
+        <button onClick={() => void call("window.menu")}>视图</button>
+        <button
+          onClick={() =>
+            void call("link.open", "https://learn.chatgpt.com/docs/app")
+          }
+        >
+          帮助
+        </button>
+      </div>
+      <span className="desktop-window-title">Codex Relay</span>
+    </div>
+  );
+  return (
+    <div
+      className={`desktop-shell ${sidebarHidden ? "sidebar-hidden" : ""} ${desktop.preferences?.reduceMotion ? "reduce-motion" : ""}`}
+      data-theme={desktop.preferences?.theme || "dark"}
+      data-color-scheme={
+        desktop.preferences?.theme === "light" ||
+        (desktop.preferences?.theme === "system" && !systemDark)
+          ? "light"
+          : "dark"
+      }
+      style={
+        {
+          "--chat-size": `${desktop.preferences?.textSize || 15}px`,
+          "--code-size": `${desktop.preferences?.codeSize || 12}px`,
+          "--desktop-accent": desktop.preferences?.accent || "#4386f5",
+          fontFamily: desktop.preferences?.uiFont || undefined,
+          "--code-font":
+            desktop.preferences?.codeFont ||
+            '"Cascadia Code", Consolas, monospace',
+        } as React.CSSProperties
+      }
+    >
+      {chrome}
+      <div className="agent-shell">
+        <nav className="agent-rail" aria-label="主导航">
+          <button
+            className={`agent-logo ${screen === "chat" ? "active" : ""}`}
+            title="对话"
+            onClick={() => select()}
+          >
+            <Home size={23} strokeWidth={1.7} />
+          </button>
+          <button
+            title="导入历史对话"
+            aria-label="导入历史对话"
+            onClick={() => setHistory(true)}
+          >
+            <Download size={21} />
+          </button>
+          <button
+            title="账户轮换"
+            aria-label="账户轮换"
+            onClick={() => setManage("accounts")}
+          >
+            <Circle size={21} />
+          </button>
+          <button
+            title="任务队列"
+            aria-label="任务队列"
+            onClick={() => setManage("advanced:tasks")}
+          >
+            <ListTodo size={21} />
+          </button>
+          <button
+            aria-label="定时任务"
+            title="定时任务"
+            className={screen === "schedules" ? "active" : ""}
+            onClick={() => {
+              setManage("");
+              setScreen("schedules");
+              refreshDesktop();
+            }}
+          >
+            <CalendarClock size={21} />
+          </button>
+          <button
+            aria-label="插件与 Skills"
+            title="插件与 Skills"
+            className={screen === "plugins" ? "active" : ""}
+            onClick={() => {
+              setManage("");
+              setScreen("plugins");
+            }}
+          >
+            <Blocks size={21} />
+          </button>
+          <div className="agent-rail-spacer" />
+          <button
+            title="设置"
+            aria-label="设置"
+            onClick={() => setManage("settings")}
+          >
+            <Settings size={21} />
+          </button>
+          <span
+            className={`agent-dot ${ready ? "online" : ""}`}
+            title={`${ready} 个可用账户`}
+          />
+        </nav>
+        <aside className="agent-sidebar">
+          <div className="agent-brand">
+            <button
+              className="desktop-product"
+              title="Codex Relay"
+              onClick={() => setThreadMenu(!threadMenu)}
+            >
+              Codex <ChevronDown size={15} />
+            </button>
+            <div>
+              <button
+                title="运行与通知"
+                aria-label="运行与通知"
+                onClick={() => setManage("notifications")}
+              >
+                <Bell size={17} />
+              </button>
+              <button
+                title="搜索会话 · Ctrl+K"
+                aria-label="搜索全部会话"
+                onClick={() => setPalette(true)}
+              >
+                <Search size={18} />
+              </button>
+            </div>
+          </div>
+          <button className="agent-new" onClick={() => select()}>
+            <SquarePen size={18} /> 新聊天
+          </button>
+          <input
+            className="agent-search"
+            aria-label="搜索会话"
+            placeholder="搜索会话或项目…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+          <div className="agent-section-label">
+            <span>{archived ? "归档" : "项目"}</span>
+            <button
+              title="新建项目会话"
+              onClick={() => {
+                action(newProject);
+              }}
+            >
+              <Plus size={17} />
+            </button>
+          </div>
+          <div className="agent-projects">
+            {jobs.some((j) => j.pinned) && (
+              <section className="pinned-chats">
+                <div className="agent-section-label">置顶</div>
+                {jobs
+                  .filter((j) => j.pinned)
+                  .map((j) => (
+                    <button
+                      className={`agent-thread ${j.id === selected ? "selected" : ""}`}
+                      key={j.id}
+                      onClick={() => select(j)}
+                    >
+                      <Pin size={13} />
+                      <span>{j.title}</span>
+                    </button>
+                  ))}
+              </section>
+            )}
+            {[...groups].map(([dir, group]) => (
+              <details key={dir} open className="agent-project">
+                <summary title={dir}>
+                  <Folder size={17} />{" "}
+                  {desktop.projects?.find((p) => p.cwd === dir)?.name ||
+                    basename(dir) ||
+                    "未关联项目"}
+                  <button
+                    className="project-new-chat"
+                    title="在此项目新建聊天"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      setCwd(dir);
+                      select();
+                    }}
+                  >
+                    <Plus size={14} />
+                  </button>
+                </summary>
+                {group.map((j) => (
+                  <button
+                    key={j.id}
+                    className={`agent-thread ${j.id === selected ? "selected" : ""}`}
+                    onClick={() => select(j)}
+                    title={j.title}
+                  >
+                    <span className={running(j) ? "agent-pulse" : ""}>
+                      {running(j) ? (
+                        <span className="thread-running-dot" />
+                      ) : j.pinned ? (
+                        <Pin size={12} />
+                      ) : null}
+                    </span>
+                    <span>{j.title}</span>
+                    {j.state === "needs_attention" && <b>!</b>}
+                  </button>
+                ))}
+              </details>
+            ))}
+            {!groups.size && (
+              <p className="agent-sidebar-empty">
+                {search
+                  ? "没有匹配的会话"
+                  : "创建一个聊天，或导入 CLI / Desktop 的历史。"}
+              </p>
+            )}
+          </div>
+          <button
+            className="agent-sidebar-link"
+            onClick={() => setHistory(true)}
+          >
+            <Download size={15} /> 导入 CLI / Desktop 对话
+          </button>
+          <button
+            className="agent-sidebar-link"
+            onClick={() => setArchived(!archived)}
+          >
+            <Archive size={15} /> {archived ? "返回进行中的会话" : "已归档会话"}
+          </button>
+          <div
+            className="agent-account"
+            onClick={() => setManage("accounts")}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") setManage("accounts");
+            }}
+          >
+            <span className="agent-avatar">
+              <Network size={17} />
+            </span>
+            <div>
+              自动账户接力
+              <small>
+                <span
+                  className={`account-status-dot ${ready ? "online" : ""}`}
+                />
+                {ready} 个账户可用
+              </small>
+            </div>
+          </div>
+        </aside>
+        {manage && snapshot ? (
+          <SettingsPage
+            initial={manage}
+            snapshot={snapshot}
+            desktop={desktop}
+            call={call}
+            refresh={refreshDesktop}
+            close={() => setManage("")}
+            advanced={(tab) => setManage(`advanced:${tab}`)}
+          />
+        ) : screen === "plugins" || screen === "skills" || screen === "mcp" ? (
+          <ExtensionsPage
+            initial={screen}
+            cwd={currentCwd}
+            call={call}
+            close={() => setScreen("chat")}
+          />
+        ) : screen === "schedules" ? (
+          <SchedulesPage
+            desktop={desktop}
+            cwd={currentCwd}
+            call={call}
+            refresh={refreshDesktop}
+            close={() => setScreen("chat")}
+            select={(id) => {
+              const j = snapshot?.jobs.find((j) => j.id === id);
+              if (j) select(j);
+              else {
+                setSelected(id);
+                setScreen("chat");
+              }
+            }}
+          />
+        ) : (
+          <main className="agent-main">
+            <header className="agent-header">
+              <div>
+                <Folder size={17} />
+                <strong>{job?.title || "新聊天"}</strong>
+                {job && (
+                  <small className={running(job) ? "working" : ""}>
+                    {names[job.state]}
+                  </small>
+                )}
+              </div>
+              <div>
+                {job && (
+                  <>
+                    <button
+                      title="重命名会话"
+                      aria-label="重命名会话"
+                      onClick={() => {
+                        setTitle(job.title);
+                        setRename(true);
+                      }}
+                    >
+                      <Pencil size={16} />
+                    </button>
+                    <button
+                      title="CLI 能力"
+                      onClick={() => setOperations(true)}
+                    >
+                      <Command size={16} />
+                    </button>
+                    <button
+                      aria-label="会话菜单"
+                      title="更多操作"
+                      onClick={() => setThreadMenu(!threadMenu)}
+                    >
+                      <Ellipsis size={19} />
+                    </button>
+                  </>
+                )}
+                <button
+                  title="会话信息"
+                  aria-label="会话信息"
+                  onClick={() => setInspector(!inspector)}
+                >
+                  <PanelRight size={18} />
+                </button>
+                <button
+                  title="项目文件"
+                  aria-label="项目文件"
+                  onClick={() => {
+                    setWorkspaceTab("files");
+                    setPreviewFile("");
+                    setInspector(true);
+                  }}
+                >
+                  <FolderOpen size={18} />
+                </button>
+                <button
+                  title="Git 更改"
+                  aria-label="Git 更改"
+                  onClick={() => {
+                    setWorkspaceTab("changes");
+                    setPreviewFile("");
+                    setInspector(true);
+                  }}
+                >
+                  <GitCompareArrows size={18} />
+                </button>
+                <button
+                  title="集成终端 · Ctrl+J"
+                  aria-label="集成终端"
+                  className={terminal ? "selected" : ""}
+                  onClick={() => setTerminal(!terminal)}
+                >
+                  <SquareTerminal size={18} />
+                </button>
+              </div>
+            </header>
+            {error && (
+              <div className="agent-error" role="alert">
+                <span>{error}</span>
+                <button aria-label="关闭错误提示" onClick={() => setError("")}>
+                  ×
+                </button>
+              </div>
+            )}
+            <div className="agent-body">
+              <div className="agent-conversation">
+                <div
+                  className="agent-scroll"
+                  ref={scroll}
+                  onScroll={(e) => {
+                    const el = e.currentTarget;
+                    following.current =
+                      el.scrollHeight - el.scrollTop - el.clientHeight < 100;
+                  }}
+                >
+                  <div className="agent-transcript">
+                    {!job && (
+                      <div className="agent-welcome">
+                        <span className="agent-welcome-mark">
+                          <Command size={38} strokeWidth={1.1} />
+                        </span>
+                        <h1>今天想做些什么？</h1>
+                        <p>从一个问题、一个想法，或一行待完成的代码开始。</p>
+                        <div className="agent-suggestions">
+                          {[
+                            "了解这个项目的结构",
+                            "查找并修复一个问题",
+                            "为项目补充测试",
+                          ].map((t) => (
+                            <button
+                              key={t}
+                              onClick={() =>
+                                setDrafts((d) => ({ ...d, new: t }))
+                              }
+                            >
+                              <span>{t}</span>
+                              <ArrowUp size={14} />
+                            </button>
+                          ))}
+                        </div>
+                        <button
+                          className="agent-project-picker"
+                          onClick={() => action(chooseProject)}
+                        >
+                          <Folder size={15} />{" "}
+                          {cwd ? basename(cwd) : "选择项目目录"}
+                          <ChevronDown size={13} />
+                        </button>
+                      </div>
+                    )}
+                    {job?.historySource && (
+                      <div className="agent-history-note">
+                        已从{" "}
+                        {job.historySource.source === "cli"
+                          ? "CLI"
+                          : job.historySource.source}{" "}
+                        导入独立副本
+                        {job.historySource.issue && (
+                          <p>{job.historySource.issue}</p>
+                        )}
+                      </div>
+                    )}
+                    {nextBefore !== undefined && (
+                      <button
+                        className="agent-load-more"
+                        disabled={pending}
+                        onClick={() =>
+                          action(async () => {
+                            const id = selected;
+                            const p = (await call("chat.read", {
+                              id,
+                              before: nextBefore,
+                            })) as ChatPage;
+                            if (selectedRef.current !== id) return;
+                            setOlder((v) => [...p.items, ...v]);
+                            setOlderBefore(p.before);
+                            following.current = false;
+                          })
+                        }
+                      >
+                        加载更早的消息
+                      </button>
+                    )}
+                    {allItems.map((item) => (
+                      <RichMessage
+                        key={item.id}
+                        item={item}
+                        onOpen={openFile}
+                        onAgents={() => {
+                          setWorkspaceTab("agents");
+                          setInspector(true);
+                          setPreviewFile("");
+                        }}
+                        onChanges={() => {
+                          setWorkspaceTab("changes");
+                          setInspector(true);
+                          setPreviewFile("");
+                        }}
+                      />
+                    ))}
+                    {job && !allItems.length && (
+                      <p className="agent-muted">
+                        {running(job)
+                          ? "正在连接 CLI，准备会话…"
+                          : "暂无消息，发送一条消息开始。"}
+                      </p>
+                    )}
+                    {snapshot?.approvals
+                      .filter((a) => a.jobId === selected)
+                      .map((a) => (
+                        <React.Fragment key={a.id}>
+                          {approval(a, (value) =>
+                            action(() =>
+                              call("approval.respond", { id: a.id, value }),
+                            ),
+                          )}
+                        </React.Fragment>
+                      ))}
+                    {job?.lastError && (
+                      <div className="agent-history-note">{job.lastError}</div>
+                    )}
+                    {running(job) && (
+                      <div className="agent-activity">
+                        <span className="agent-pulse">●</span>{" "}
+                        {job?.stage || names[job!.state]}
+                      </div>
+                    )}
+                    {!!job?.queuedMessages?.length && (
+                      <div className="agent-history-note">
+                        已排队 {job.queuedMessages.length}{" "}
+                        条消息，将在本轮结束后发送。
+                      </div>
+                    )}
+                    <div ref={bottom} />
+                  </div>
+                </div>
+                <div className="agent-composer-wrap">
+                  <div className="agent-composer">
+                    {draft.startsWith("/") && !draft.includes(" ") && (
+                      <div
+                        className="slash-commands"
+                        role="listbox"
+                        aria-label="斜杠命令"
+                      >
+                        {[
+                          ["/new", "新建聊天"],
+                          ["/model", "选择模型和思考强度"],
+                          ["/plan", "切换规划模式"],
+                          ["/agents", "查看子代理"],
+                          ["/review", "审查代码"],
+                          ["/skills", "浏览技能"],
+                          ["/plugins", "浏览插件"],
+                          ["/mcp", "MCP 服务器"],
+                          ["/terminal", "打开终端"],
+                          ["/compact", "压缩上下文"],
+                          ["/fork", "创建会话分支"],
+                        ]
+                          .filter(([command]) => command.startsWith(draft))
+                          .map(([command, description]) => (
+                            <button
+                              key={command}
+                              role="option"
+                              aria-selected={false}
+                              onClick={() => {
+                                setDrafts((d) => ({ ...d, [key]: command }));
+                              }}
+                            >
+                              <Command size={14} />
+                              <strong>{command}</strong>
+                              <span>{description}</span>
+                            </button>
+                          ))}
+                      </div>
+                    )}
+                    {!!attachments.length && (
+                      <div className="agent-attachments">
+                        {attachments.map((a, i) => (
+                          <button
+                            key={a.path}
+                            title={a.path}
+                            onClick={() =>
+                              setFiles((f) => ({
+                                ...f,
+                                [key]: attachments.filter((_, n) => n !== i),
+                              }))
+                            }
+                          >
+                            {a.type === "localImage" ? "▧" : "▤"} {a.name} ×
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    <textarea
+                      ref={messageInput}
+                      aria-label="消息"
+                      placeholder={
+                        job?.archived
+                          ? "取消归档后继续对话"
+                          : job
+                            ? "继续提问，或补充任务要求…"
+                            : "描述你想完成的任务…"
+                      }
+                      value={draft}
+                      disabled={!!job?.archived || !!job?.historySource?.issue}
+                      onChange={(e) =>
+                        setDrafts((d) => ({ ...d, [key]: e.target.value }))
+                      }
+                      onKeyDown={(e) => {
+                        if (
+                          e.key === "Enter" &&
+                          !e.shiftKey &&
+                          (desktop.preferences?.enterSends !== false ||
+                            e.ctrlKey ||
+                            e.metaKey) &&
+                          !e.nativeEvent.isComposing
+                        ) {
+                          e.preventDefault();
+                          action(() =>
+                            send(
+                              running(job)
+                                ? desktop.preferences?.followUp === "steer" &&
+                                  job?.state === "running"
+                                  ? "steer"
+                                  : "queue"
+                                : "send",
+                            ),
+                          );
+                        }
+                      }}
+                    />
+                    <div className="agent-composer-toolbar">
+                      <div>
+                        <button
+                          title="添加附件"
+                          aria-label="添加附件"
+                          onClick={() => setComposerMenu(!composerMenu)}
+                        >
+                          <Plus size={21} />
+                        </button>
+                        {composerMenu && (
+                          <>
+                            <button
+                              className="popover-scrim"
+                              aria-label="关闭添加菜单"
+                              onClick={() => setComposerMenu(false)}
+                            />
+                            <div
+                              className="composer-add-menu"
+                              role="menu"
+                              aria-label="添加到聊天"
+                            >
+                              <button
+                                role="menuitem"
+                                onClick={() => {
+                                  setComposerMenu(false);
+                                  action(async () => {
+                                    const added =
+                                      await call("chat.attachments");
+                                    setFiles((f) => ({
+                                      ...f,
+                                      [key]: [...attachments, ...added].slice(
+                                        0,
+                                        20,
+                                      ),
+                                    }));
+                                  });
+                                }}
+                              >
+                                <Paperclip size={17} />
+                                <span>文件和图片</span>
+                              </button>
+                              <button
+                                role="menuitem"
+                                onClick={() => {
+                                  setPlanMode(!planMode);
+                                  setComposerMenu(false);
+                                }}
+                              >
+                                <ListTodo size={17} />
+                                <span>规划模式</span>
+                                {planMode && <Check size={15} />}
+                              </button>
+                              <button
+                                role="menuitem"
+                                onClick={() => {
+                                  setMultiAgent(!multiAgent);
+                                  setComposerMenu(false);
+                                }}
+                              >
+                                <Network size={17} />
+                                <span>启用子代理</span>
+                                {multiAgent && <Check size={15} />}
+                              </button>
+                              <hr />
+                              <button
+                                role="menuitem"
+                                onClick={() => {
+                                  setScreen("skills");
+                                  setComposerMenu(false);
+                                }}
+                              >
+                                <Sparkles size={17} />
+                                <span>Skills</span>
+                                <ChevronRight size={14} />
+                              </button>
+                              <button
+                                role="menuitem"
+                                onClick={() => {
+                                  setScreen("plugins");
+                                  setComposerMenu(false);
+                                }}
+                              >
+                                <Blocks size={17} />
+                                <span>插件</span>
+                                <ChevronRight size={14} />
+                              </button>
+                              <button
+                                role="menuitem"
+                                onClick={() => {
+                                  setScreen("mcp");
+                                  setComposerMenu(false);
+                                }}
+                              >
+                                <Network size={17} />
+                                <span>MCP 服务器</span>
+                                <ChevronRight size={14} />
+                              </button>
+                              {job && (
+                                <>
+                                  <hr />
+                                  <button
+                                    role="menuitem"
+                                    disabled={running(job)}
+                                    onClick={() => {
+                                      setComposerMenu(false);
+                                      action(() => send("send", true));
+                                    }}
+                                  >
+                                    <GitCompareArrows size={17} />
+                                    <span>审查代码</span>
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </>
+                        )}
+                        <ShieldCheck size={15} className="composer-shield" />
+                        <select
+                          aria-label="执行权限"
+                          title="执行权限"
+                          value={sandbox}
+                          disabled={running(job)}
+                          onChange={(e) =>
+                            setSandbox(e.target.value as Job["sandbox"])
+                          }
+                        >
+                          <option value="workspaceWrite">请求审批</option>
+                          <option value="readOnly">只读</option>
+                          <option value="dangerFullAccess">完全访问</option>
+                        </select>
+                        {planMode && (
+                          <button
+                            className="composer-mode-badge"
+                            title="退出规划模式"
+                            onClick={() => setPlanMode(false)}
+                          >
+                            <ListTodo size={13} />
+                            规划
+                            <X size={11} />
+                          </button>
+                        )}
+                      </div>
+                      <div>
+                        <ModelPicker
+                          model={model}
+                          effort={effort}
+                          accountId={
+                            snapshot?.accounts.find(
+                              (a) => a.enabled && a.status === "ready",
+                            )?.id
+                          }
+                          open={modelPicker}
+                          setOpen={setModelPicker}
+                          onChange={(m, e) => {
+                            modelDirty.current = true;
+                            setModel(m);
+                            setEffort(e);
+                          }}
+                        />
+                        {running(job) && (
+                          <button
+                            className="agent-stop"
+                            title="停止本轮"
+                            aria-label="停止本轮"
+                            disabled={pending}
+                            onClick={() =>
+                              action(() =>
+                                call("job.control", {
+                                  id: job!.id,
+                                  action: "pause",
+                                }),
+                              )
+                            }
+                          >
+                            <Square size={13} fill="currentColor" />
+                          </button>
+                        )}
+                        <button
+                          className="agent-send"
+                          title={running(job) ? "排队发送" : "发送"}
+                          aria-label={running(job) ? "排队发送" : "发送"}
+                          disabled={
+                            pending ||
+                            !draft.trim() ||
+                            !!job?.archived ||
+                            !!job?.historySource?.issue
+                          }
+                          onClick={() =>
+                            action(() =>
+                              send(
+                                running(job)
+                                  ? desktop.preferences?.followUp === "steer" &&
+                                    job?.state === "running"
+                                    ? "steer"
+                                    : "queue"
+                                  : "send",
+                              ),
+                            )
+                          }
+                        >
+                          {pending ? (
+                            <LoaderCircle size={17} className="spin" />
+                          ) : (
+                            <ArrowUp size={20} />
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="agent-composer-caption">
+                    <div className="composer-environment">
+                      <Folder size={13} />
+                      <select
+                        aria-label="工作环境"
+                        value={job ? "local" : environment}
+                        disabled={!!job}
+                        onChange={(e) => {
+                          setEnvironment(e.target.value);
+                          if (currentCwd)
+                            void call("workspace.branches", { cwd: currentCwd })
+                              .then(setBranchList)
+                              .catch(() => {});
+                        }}
+                      >
+                        <option value="local">本地</option>
+                        <option value="worktree">Worktree</option>
+                      </select>
+                      <span className="caption-divider" />
+                      <GitBranch size={13} />
+                      {!job && environment === "worktree" ? (
+                        <select
+                          aria-label="Worktree 起始分支"
+                          value={branch}
+                          onChange={(e) => setBranch(e.target.value)}
+                        >
+                          <option value="HEAD">当前分支</option>
+                          {branchList.map((value) => (
+                            <option value={value} key={value}>
+                              {value}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <button
+                          title={currentCwd}
+                          onClick={() => action(chooseProject)}
+                        >
+                          {currentCwd ? basename(currentCwd) : "选择项目"}
+                          <ChevronDown size={11} />
+                        </button>
+                      )}
+                    </div>
+                    {running(job) && draft.trim() ? (
+                      <button
+                        disabled={pending || job?.state !== "running"}
+                        onClick={() => action(() => send("steer"))}
+                      >
+                        立即补充到当前轮次 ↗
+                      </button>
+                    ) : (
+                      <span>Enter 发送 · Shift + Enter 换行</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+              {inspector && (
+                <Workbench
+                  tab={workspaceTab}
+                  setTab={setWorkspaceTab}
+                  cwd={currentCwd}
+                  job={job}
+                  items={allItems}
+                  call={call}
+                  close={() => setInspector(false)}
+                  file={previewFile}
+                  setFile={setPreviewFile}
+                  setDraft={(text) => {
+                    setDrafts((d) => ({ ...d, [key]: text }));
+                  }}
+                />
+              )}
+            </div>
+            {terminal && (
+              <TerminalPane
+                cwd={currentCwd}
+                call={call}
+                close={() => setTerminal(false)}
+              />
+            )}
+          </main>
+        )}
+        {threadMenu && (
+          <>
+            <button
+              className="popover-scrim"
+              aria-label="关闭会话菜单"
+              onClick={() => setThreadMenu(false)}
+            />
+            <div className="thread-menu" role="menu" aria-label="会话操作">
+              {job ? (
+                <>
+                  <div className="thread-menu-info">
+                    <strong>{job.title}</strong>
+                    <small>
+                      {names[job.state]} · {account?.label || "自动账户接力"}
+                    </small>
+                  </div>
+                  <button
+                    role="menuitem"
+                    disabled={running(job)}
+                    onClick={() => {
+                      action(() =>
+                        call("chat.update", {
+                          id: job.id,
+                          pinned: !job.pinned,
+                        }),
+                      );
+                      setThreadMenu(false);
+                    }}
+                  >
+                    <Pin size={15} />
+                    {job.pinned ? "取消置顶" : "置顶会话"}
+                  </button>
+                  <button
+                    role="menuitem"
+                    disabled={pending || running(job)}
+                    onClick={() => {
+                      action(async () =>
+                        select(await call("chat.fork", job.id)),
+                      );
+                      setThreadMenu(false);
+                    }}
+                  >
+                    <GitBranch size={15} />
+                    创建会话分支
+                  </button>
+                  <button
+                    role="menuitem"
+                    onClick={() => {
+                      action(() => call("chat.export", job.id));
+                      setThreadMenu(false);
+                    }}
+                  >
+                    <Download size={15} />
+                    导出 Markdown
+                  </button>
+                  <button
+                    role="menuitem"
+                    disabled={running(job)}
+                    onClick={() => {
+                      action(() =>
+                        call("chat.update", {
+                          id: job.id,
+                          archived: !job.archived,
+                        }),
+                      );
+                      setThreadMenu(false);
+                    }}
+                  >
+                    <Archive size={15} />
+                    {job.archived ? "取消归档" : "归档会话"}
+                  </button>
+                  {["paused", "needs_attention"].includes(job.state) && (
+                    <button
+                      role="menuitem"
+                      onClick={() => {
+                        action(() =>
+                          call("job.control", { id: job.id, action: "resume" }),
+                        );
+                        setThreadMenu(false);
+                      }}
+                    >
+                      <Undo2 size={15} />
+                      继续未完成任务
+                    </button>
+                  )}
+                  <hr />
+                  <button
+                    role="menuitem"
+                    onClick={() => {
+                      action(() => call("job.directory", job.id));
+                      setThreadMenu(false);
+                    }}
+                  >
+                    <FolderOpen size={15} />
+                    打开项目目录
+                  </button>
+                  <button
+                    role="menuitem"
+                    disabled={running(job)}
+                    onClick={() => {
+                      setOperations(true);
+                      setThreadMenu(false);
+                    }}
+                  >
+                    <SlidersHorizontal size={15} />
+                    高级 CLI 操作
+                  </button>
+                  <small className="thread-menu-id">
+                    {job.threadId || "等待创建会话"}
+                  </small>
+                </>
+              ) : (
+                <>
+                  <button
+                    role="menuitem"
+                    onClick={() => {
+                      setScreen("plugins");
+                      setThreadMenu(false);
+                    }}
+                  >
+                    <Blocks size={15} />
+                    插件与 Skills
+                  </button>
+                  <button
+                    role="menuitem"
+                    onClick={() => {
+                      setScreen("schedules");
+                      setThreadMenu(false);
+                    }}
+                  >
+                    <CalendarClock size={15} />
+                    定时任务
+                  </button>
+                  <button
+                    role="menuitem"
+                    onClick={() => {
+                      setManage("settings");
+                      setThreadMenu(false);
+                    }}
+                  >
+                    <Settings size={15} />
+                    设置
+                  </button>
+                </>
+              )}
+            </div>
+          </>
+        )}
+        {palette && (
+          <SearchPalette
+            jobs={snapshot?.jobs || []}
+            close={() => setPalette(false)}
+            choose={(j) => {
+              select(j);
+              setArchived(!!j.archived);
+              setPalette(false);
+            }}
+            newChat={() => {
+              select();
+              setPalette(false);
+            }}
+          />
+        )}
+        {history && (
+          <HistoryDialog
+            call={call}
+            close={() => setHistory(false)}
+            imported={(id) => {
+              setSelected(id);
+              setArchived(false);
+            }}
+          />
+        )}
+        {operations && job && (
+          <Operations
+            job={job}
+            initialMethod={operationMethod}
+            call={call}
+            close={() => setOperations(false)}
+          />
+        )}
+        {rename && job && (
+          <Dialog title="重命名会话" onClose={() => setRename(false)}>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                action(async () => {
+                  await call("chat.update", { id: job.id, title });
+                  setRename(false);
+                });
+              }}
+            >
+              <label>
+                会话名称
+                <input
+                  autoFocus
+                  value={title}
+                  maxLength={120}
+                  onChange={(e) => setTitle(e.target.value)}
+                />
+              </label>
+              <button className="primary" disabled={pending || !title.trim()}>
+                保存
+              </button>
+            </form>
+          </Dialog>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SearchPalette({
+  jobs,
+  choose,
+  close,
+  newChat,
+}: {
+  jobs: Job[];
+  choose: (job: Job) => void;
+  close: () => void;
+  newChat: () => void;
+}) {
+  const [query, setQuery] = useState(""),
+    [index, setIndex] = useState(0);
+  const results = jobs
+    .filter((j) =>
+      `${j.title} ${j.cwd}`.toLowerCase().includes(query.toLowerCase()),
+    )
+    .sort(
+      (a, b) =>
+        Number(!!b.pinned) - Number(!!a.pinned) || b.updatedAt - a.updatedAt,
+    )
+    .slice(0, 30);
+  return (
+    <div
+      className="search-backdrop"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) close();
+      }}
+    >
+      <section
+        className="search-palette"
+        role="dialog"
+        aria-label="搜索全部聊天"
+      >
+        <div className="search-palette-input">
+          <Search size={19} />
+          <input
+            autoFocus
+            aria-label="查找聊天或项目"
+            placeholder="搜索聊天和项目…"
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setIndex(0);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "ArrowDown") {
+                e.preventDefault();
+                setIndex((v) => Math.min(results.length - 1, v + 1));
+              }
+              if (e.key === "ArrowUp") {
+                e.preventDefault();
+                setIndex((v) => Math.max(0, v - 1));
+              }
+              if (e.key === "Enter" && results[index]) {
+                e.preventDefault();
+                choose(results[index]);
+              }
+            }}
+          />
+          <kbd>Esc</kbd>
+        </div>
+        <div className="search-palette-results">
+          <span>{query ? `${results.length} 个匹配的聊天` : "最近的聊天"}</span>
+          {results.map((j, i) => (
+            <button
+              className={i === index ? "selected" : ""}
+              key={j.id}
+              onClick={() => choose(j)}
+              onMouseEnter={() => setIndex(i)}
+            >
+              <MessageSquare size={17} />
+              <span>
+                <strong>{j.title}</strong>
+                <small>
+                  {basename(j.cwd)} · {names[j.state]}
+                  {j.archived ? " · 已归档" : ""}
+                </small>
+              </span>
+              {j.pinned && <Pin size={13} />}
+              <ChevronRight size={15} />
+            </button>
+          ))}
+          {!results.length && <p>没有匹配的聊天</p>}
+        </div>
+        <footer>
+          <button onClick={newChat}>
+            <SquarePen size={15} />
+            新聊天
+          </button>
+          <span>↑↓ 选择 · Enter 打开</span>
+        </footer>
+      </section>
+    </div>
+  );
+}
+function Message({ item }: { item: ChatItem }) {
+  if (item.role === "tool")
+    return (
+      <details className="agent-tool">
+        <summary>
+          <span>
+            {item.kind === "diff" || item.kind === "fileChange" ? "✎" : "⌘"}
+          </span>
+          <span>{item.text.slice(0, 150)}</span>
+          <small>{item.status === "running" ? "执行中" : ""}</small>
+        </summary>
+        <pre>{item.detail || item.text}</pre>
+      </details>
+    );
+  return (
+    <article className={`agent-message ${item.role}`}>
+      <small>
+        {item.role === "user"
+          ? "你"
+          : item.role === "assistant"
+            ? "Codex"
+            : "系统"}
+      </small>
+      <MessageText text={item.text} />
+      {item.detail && (
+        <pre className="agent-message-attachments">{item.detail}</pre>
+      )}
+      {item.role === "assistant" && (
+        <button
+          className="agent-copy"
+          onClick={() => void navigator.clipboard.writeText(item.text)}
+          title="复制回答"
+        >
+          ⧉ 复制
+        </button>
+      )}
+    </article>
+  );
+}
+// Text-only Markdown: never execute raw HTML or renderer-supplied URLs.
+function MessageText({ text }: { text: string }) {
+  return (
+    <div className="agent-markdown">
+      {text.split(/(```[\s\S]*?(?:```|$))/g).map((block, i) =>
+        block.startsWith("```") ? (
+          <pre key={i}>
+            <code>
+              {block.replace(/^```[^\n]*\n?/, "").replace(/```$/, "")}
+            </code>
+          </pre>
+        ) : (
+          <div key={i}>
+            {block.split("\n").map((line, n) => {
+              const inline = line
+                .replace(/^#{1,6} /, "")
+                .split(/(\*\*[^*]+\*\*|`[^`]+`)/g)
+                .map((v, k) =>
+                  v.startsWith("**") ? (
+                    <strong key={k}>{v.slice(2, -2)}</strong>
+                  ) : v.startsWith("`") ? (
+                    <code key={k}>{v.slice(1, -1)}</code>
+                  ) : (
+                    v
+                  ),
+                );
+              return /^#{1,6} /.test(line) ? (
+                <h3 key={n}>{inline}</h3>
+              ) : (
+                <div
+                  className={
+                    /^[-*] /.test(line) ? "agent-list-line" : "agent-text-line"
+                  }
+                  key={n}
+                >
+                  {inline.length ? inline : <br />}
+                </div>
+              );
+            })}
+          </div>
+        ),
+      )}
+    </div>
+  );
+}
+function HistoryDialog({
+  call,
+  close,
+  imported,
+}: {
+  call: (n: string, a?: unknown) => Promise<any>;
+  close: () => void;
+  imported: (id: string) => void;
+}) {
+  const [entries, setEntries] = useState<HistoryEntry[]>([]),
+    [warnings, setWarnings] = useState<string[]>([]),
+    [roots, setRoots] = useState<string[]>([]);
+  const [busy, setBusy] = useState(false),
+    [error, setError] = useState(""),
+    [filter, setFilter] = useState("");
+  const [checked, setChecked] = useState<Set<string>>(new Set());
+  const [report, setReport] = useState("");
+  const scan = async (homes?: string[]) => {
+    setBusy(true);
+    setError("");
+    try {
+      const r = await call("history.scan", homes ? { homes } : {});
+      setEntries(r.entries);
+      setRoots(r.roots);
+      setWarnings(r.warnings);
+      setChecked(new Set());
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  useEffect(() => {
+    void scan();
+  }, []);
+  const runImport = async (all: boolean) => {
+    setBusy(true);
+    setError("");
+    try {
+      const r = await call("history.import", all ? {} : { ids: [...checked] });
+      setReport(
+        `已导入 ${r.imported.length} 个，已存在 ${r.skipped.length} 个，失败 ${r.errors.length} 个。`,
+      );
+      setWarnings(r.errors);
+      if (r.imported[0]) imported(r.imported[0]);
+      setEntries((e) =>
+        e.map((x) => ({
+          ...x,
+          imported:
+            all || checked.has(x.id)
+              ? !r.errors.some((s: string) => s.startsWith(x.title + "："))
+              : x.imported,
+        })),
+      );
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const filtered = entries.filter((e) =>
+    `${e.title} ${e.cwd} ${e.source}`
+      .toLowerCase()
+      .includes(filter.toLowerCase()),
+  );
+  return (
+    <Dialog title="导入 CLI / Desktop 对话" onClose={busy ? () => {} : close}>
+      <div className="agent-import">
+        <p>
+          扫描本机 Codex
+          目录中的全部会话与归档。历史保存为独立副本；原客户端会话保持原样。
+        </p>
+        <small className="agent-path">
+          {roots.join(" · ") || "默认：CODEX_HOME 和用户 .codex 目录"}
+        </small>
+        <div className="agent-import-toolbar">
+          <button disabled={busy} onClick={() => void scan()}>
+            扫描默认目录
+          </button>
+          <button
+            disabled={busy}
+            onClick={() =>
+              void call("choose.directory").then(
+                (p) => p && scan([...roots, p]),
+              )
+            }
+          >
+            添加 Codex 目录
+          </button>
+          <input
+            aria-label="搜索导入历史"
+            placeholder="搜索标题、项目、来源…"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+          />
+        </div>
+        <div className="agent-history-list">
+          {filtered.map((e) => (
+            <label key={e.id}>
+              <input
+                type="checkbox"
+                checked={checked.has(e.id)}
+                disabled={busy || e.imported}
+                onChange={(ev) =>
+                  setChecked((old) => {
+                    const next = new Set(old);
+                    ev.target.checked ? next.add(e.id) : next.delete(e.id);
+                    return next;
+                  })
+                }
+              />
+              <span>
+                <strong>{e.title}</strong>
+                <small>
+                  {basename(e.cwd)} · {e.source} {e.archived ? "· 归档" : ""}{" "}
+                  {e.imported ? "· 已导入" : ""}
+                </small>
+                {e.issue && (
+                  <small className="agent-import-warning">{e.issue}</small>
+                )}
+              </span>
+            </label>
+          ))}
+          {!entries.length && (
+            <p>
+              {busy
+                ? "正在扫描本地历史…"
+                : "未发现会话。可添加其他 CLI / Desktop 使用的 Codex 数据目录。"}
+            </p>
+          )}
+        </div>
+        {error && <p role="alert">{error}</p>}
+        {report && <p role="status">{report}</p>}
+        {warnings.length > 0 && (
+          <details>
+            <summary>{warnings.length} 条导入提示</summary>
+            <pre>{warnings.join("\n")}</pre>
+          </details>
+        )}
+        <div className="agent-import-footer">
+          <span>找到 {entries.length} 个会话</span>
+          <button
+            disabled={busy || !checked.size}
+            onClick={() => void runImport(false)}
+          >
+            导入选中 ({checked.size})
+          </button>
+          <button
+            className="primary"
+            disabled={busy || !entries.length}
+            onClick={() => void runImport(true)}
+          >
+            {busy ? "处理中…" : "导入全部"}
+          </button>
+        </div>
+      </div>
+    </Dialog>
+  );
+}
+function Operations({
+  job,
+  initialMethod,
+  call,
+  close,
+}: {
+  job: Job;
+  initialMethod: string;
+  call: (n: string, a?: unknown) => Promise<any>;
+  close: () => void;
+}) {
+  const [method, setMethod] = useState<string>(initialMethod),
+    [params, setParams] = useState(
+      JSON.stringify(
+        capabilities.find((c) => c.method === initialMethod)?.params ?? {},
+        null,
+        2,
+      ),
+    ),
+    [result, setResult] = useState(""),
+    [busy, setBusy] = useState(false);
+  return (
+    <Dialog title="CLI 能力与配置" onClose={busy ? () => {} : close}>
+      <div className="agent-operations">
+        <p>
+          直接调用当前 CLI 的 app-server 协议。配置保存在此会话的隔离目录。不同
+          CLI 版本可用的操作和参数会有差异。
+        </p>
+        <label>
+          操作
+          <select
+            value={method}
+            onChange={(e) => {
+              setMethod(e.target.value);
+              setParams(
+                JSON.stringify(
+                  capabilities.find((c) => c.method === e.target.value)?.params,
+                  null,
+                  2,
+                ),
+              );
+            }}
+          >
+            {capabilities.map((c) => (
+              <option key={c.method} value={c.method}>
+                {c.label} · {c.method}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          参数（JSON）
+          <textarea
+            spellCheck={false}
+            value={params}
+            rows={8}
+            onChange={(e) => setParams(e.target.value)}
+          />
+        </label>
+        <button
+          className="primary"
+          disabled={busy || running(job)}
+          onClick={() => {
+            setBusy(true);
+            setResult("");
+            void Promise.resolve()
+              .then(() =>
+                call("agent.operation", {
+                  id: job.id,
+                  method,
+                  params: JSON.parse(params),
+                }),
+              )
+              .then((r) => setResult(JSON.stringify(r, null, 2)))
+              .catch((e) => setResult(String(e)))
+              .finally(() => setBusy(false));
+          }}
+        >
+          {busy ? "执行中…" : "执行操作"}
+        </button>
+        {result && <pre aria-label="CLI 操作结果">{result}</pre>}
+      </div>
+    </Dialog>
+  );
+}

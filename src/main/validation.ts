@@ -1,11 +1,41 @@
 import path from "node:path";
 import { z } from "zod";
 const text = z.string().max(10000);
+// Current CLI catalogs define reasoning effort as a string, including model-specific levels.
+const effort = z
+  .string()
+  .max(20)
+  .regex(/^(?:[a-z][a-z0-9_-]*)?$/);
 const absolute = z
   .string()
   .min(1)
   .max(32700)
   .refine((p) => path.isAbsolute(p), "必须使用绝对路径");
+export const attachmentsSchema = z
+  .array(
+    z
+      .object({
+        type: z.enum(["localImage", "mention"]),
+        path: absolute,
+        name: z.string().max(300),
+      })
+      .strict(),
+  )
+  .max(20);
+export const chatSendSchema = z
+  .object({
+    id: z.string().uuid(),
+    text: z.string().trim().min(1).max(100000),
+    attachments: attachmentsSchema.default([]),
+    action: z.enum(["send", "queue", "steer"]).default("send"),
+    model: z.string().max(200).optional(),
+    effort: effort.optional(),
+    review: z.boolean().optional(),
+    planMode: z.boolean().optional(),
+    multiAgent: z.boolean().optional(),
+    serviceTier: z.string().max(50).optional(),
+  })
+  .strict();
 export const newJobSchema = z
   .object({
     title: z.string().trim().min(1).max(120),
@@ -13,16 +43,7 @@ export const newJobSchema = z
     cwd: absolute,
     mode: z.enum(["cli", "desktop"]),
     model: z.string().max(200),
-    effort: z.enum([
-      "",
-      "minimal",
-      "low",
-      "medium",
-      "high",
-      "xhigh",
-      "max",
-      "ultra",
-    ]),
+    effort,
     bucket: z.string().min(1).max(100),
     approvalPolicy: z.enum(["on-request", "never"]),
     sandbox: z.enum(["workspaceWrite", "readOnly", "dangerFullAccess"]),
@@ -33,6 +54,12 @@ export const newJobSchema = z
       .refine((v) => !/[\r\n\x00-\x1f]/.test(v), "完成标记必须为单行文本")
       .optional(),
     maxCompletionRetries: z.number().int().min(0).max(10).optional(),
+    interactive: z.boolean().optional(),
+    attachments: attachmentsSchema.optional(),
+    review: z.boolean().optional(),
+    planMode: z.boolean().optional(),
+    multiAgent: z.boolean().optional(),
+    serviceTier: z.string().max(50).optional(),
   })
   .strict();
 export const settingsSchema = z

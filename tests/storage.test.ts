@@ -4,10 +4,25 @@ import os from "node:os";
 import path from "node:path";
 import { parseAuth } from "../src/core/accounts";
 import { TranscriptTail } from "../src/core/transcript";
-import { Store } from "../src/core/store";
+import { Store, atomicWrite } from "../src/core/store";
 import { redact } from "../src/core/redact";
 import { newJobSchema, settingsSchema } from "../src/main/validation";
 describe("credential and transcript boundaries", () => {
+  it("atomically creates and replaces files in the host's application data directory", async () => {
+    const base = process.platform === "win32" ? process.env.APPDATA! : os.tmpdir();
+    const dir = await fs.mkdtemp(path.join(base, "relay-atomic-test-"));
+    const actual = await fs.realpath(dir);
+    try {
+      const file = path.join(dir, "state.json");
+      await atomicWrite(file, '{"revision":1}');
+      expect(await fs.readFile(file, "utf8")).toBe('{"revision":1}');
+      await atomicWrite(file, '{"revision":2}');
+      expect(await fs.readFile(file, "utf8")).toBe('{"revision":2}');
+      expect(await fs.readdir(actual)).toEqual(["state.json"]);
+    } finally {
+      await fs.rm(actual, { recursive: true, force: true });
+    }
+  });
   it("rejects API-key credentials instead of billing a different provider", () => {
     expect(() =>
       parseAuth(JSON.stringify({ OPENAI_API_KEY: "synthetic" })),
