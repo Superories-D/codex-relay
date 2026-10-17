@@ -871,6 +871,17 @@ async function boot() {
       }
       case "chat.send":
         return scheduler.send(chatSendSchema.parse(args));
+      case "chat.model": {
+        const a = z
+          .object({
+            id: idSchema,
+            model: z.string().max(160),
+            effort: z.string().max(32),
+          })
+          .strict()
+          .parse(args);
+        return scheduler.model(a.id, a.model, a.effort);
+      }
       case "chat.assets.list": {
         const a = z.object({ id: idSchema }).strict().parse(args);
         if (!store.data.jobs.some((job) => job.id === a.id))

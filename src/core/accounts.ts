@@ -1,7 +1,8 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import type { Account, Quota } from "../shared/types";
+import type { Account, Quota, ModelAccess } from "../shared/types";
+import { modelAccess } from "../shared/model-access";
 import { Store, atomicWrite } from "./store";
 import { Rpc } from "./rpc";
 import { errorKind, hasQuotaEvidence, isExhausted, parseQuotas } from "./quota";
@@ -209,6 +210,10 @@ export class Accounts {
         )
           throw new Error("刷新后账户身份不匹配");
         await this.put(id, fresh);
+        this.store.data.accounts.find((a) => a.id === id)!.modelAccess =
+          undefined;
+        this.store.data.accounts.find((a) => a.id === id)!.modelDenials =
+          undefined;
         await fs.rm(path.join(home, "auth.json"), { force: true });
         return fresh;
       } finally {
@@ -265,6 +270,8 @@ export class Accounts {
         quotas: {},
         blockedUntil: null,
         failureCount: 0,
+        modelAccess: undefined,
+        modelDenials: undefined,
       };
       await this.put(account.id, parsed.auth);
       this.store.data.accounts.push(account);
@@ -296,6 +303,8 @@ export class Accounts {
         blockedUntil: null,
         failureCount: 0,
         lastError: undefined,
+        modelAccess: undefined,
+        modelDenials: undefined,
       });
       if (label) account.label = label;
     }
@@ -311,6 +320,7 @@ export class Accounts {
     auth: AuthCache;
     quotas: Record<string, Quota>;
     models: any[];
+    modelAccess?: ModelAccess;
   }> {
     this.assertExternalRefreshIdle();
     if (this.busy.has(id))
@@ -333,6 +343,10 @@ export class Accounts {
         if (read.account?.type !== "chatgpt")
           throw new Error("Please sign in: ChatGPT account unavailable");
         account.email = read.account.email ?? account.email;
+        if (read.account.planType && read.account.planType !== account.plan) {
+          account.modelAccess = undefined;
+          account.modelDenials = undefined;
+        }
         account.plan = read.account.planType ?? account.plan;
         const raw = await rpc.call("account/rateLimits/read");
         const quotas = parseQuotas(raw);
@@ -340,14 +354,21 @@ export class Accounts {
           throw new Error("服务器没有返回订阅额度，保持未知状态");
         const models: any[] = [];
         let cursor: string | null = null;
+        const cursors = new Set<string>();
+        let complete = false;
         if (forceRefresh)
           do {
             const page: any = await rpc.call("model/list", {
               limit: 100,
               ...(cursor ? { cursor } : {}),
             });
-            models.push(...(page.data ?? []));
+            if (!Array.isArray(page.data))
+              throw Error("模型目录格式无效，请稍后重试");
+            models.push(...page.data);
             cursor = page.nextCursor ?? null;
+            complete = !cursor;
+            if (cursor && cursors.has(cursor)) break;
+            if (cursor) cursors.add(cursor);
           } while (cursor && models.length < 1000);
         const previous = account.quotas;
         account.quotas = quotas;
@@ -370,8 +391,10 @@ export class Accounts {
         ).auth;
         if (auth.tokens.account_id !== account.identity)
           throw new Error("凭据身份不匹配，拒绝写回");
+        if (forceRefresh)
+          account.modelAccess = modelAccess(models, Date.now(), complete);
         this.quotaObserved?.(account, previous, quotas);
-        return { auth, quotas, models };
+        return { auth, quotas, models, modelAccess: account.modelAccess };
       } catch (error) {
         processUncertain = error instanceof ProcessSafetyError;
         const kind = errorKind(error);

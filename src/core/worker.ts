@@ -7,7 +7,9 @@ export interface Outcome {
     | "interrupted"
     | "error"
     | "incomplete"
-    | "goalStopped";
+    | "goalStopped"
+    | "modelUnavailable"
+    | "modelRoute";
   error?: unknown;
 }
 export interface Worker extends EventEmitter {

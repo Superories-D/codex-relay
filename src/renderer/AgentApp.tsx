@@ -107,6 +107,10 @@ const running = (j?: Job) =>
     "waiting",
     "watching",
   ].includes(j.state);
+const jobLabel = (j: Job) =>
+  j.state === "waiting" && j.waitingFor === "model"
+    ? "等待模型账户"
+    : names[j.state];
 const basename = (p: string) => p.split(/[\\/]/).filter(Boolean).at(-1) || p;
 export function AgentApp({
   management,
@@ -1071,7 +1075,7 @@ export function AgentApp({
                 <strong>{job?.title || t("新聊天")}</strong>
                 {job && (
                   <small className={running(job) ? "working" : ""}>
-                    {t(names[job.state])}
+                    {t(jobLabel(job))}
                   </small>
                 )}
               </div>
@@ -1323,7 +1327,7 @@ export function AgentApp({
                     {running(job) && (
                       <div className="agent-activity">
                         <span className="agent-pulse">●</span>{" "}
-                        {t(job?.stage || names[job!.state])}
+                        {t(job?.stage || jobLabel(job!))}
                       </div>
                     )}
                     {!!job?.queuedMessages?.length && (
@@ -1336,6 +1340,29 @@ export function AgentApp({
                   </div>
                 </div>
                 <div className="agent-composer-wrap">
+                  {job?.state === "waiting" && job.waitingFor === "model" && (
+                    <div className="model-wait-note" role="status">
+                      <span>
+                        {t(
+                          "暂时没有匹配的模型账户。会自动复查，切换模型可继续原任务。",
+                        )}
+                      </span>
+                      <button
+                        disabled={pending}
+                        onClick={() =>
+                          action(async () => {
+                            await call("chat.model", {
+                              id: job.id,
+                              model: job.model,
+                              effort: job.effort,
+                            });
+                          })
+                        }
+                      >
+                        {t("检查模型目录")}
+                      </button>
+                    </div>
+                  )}
                   <button
                     className="chat-follow-latest"
                     aria-label={t("回到最新消息")}
@@ -1703,9 +1730,26 @@ export function AgentApp({
                           open={modelPicker}
                           setOpen={setModelPicker}
                           onChange={(m, e) => {
+                            if (
+                              job?.state === "waiting" &&
+                              job.waitingFor === "model" &&
+                              pending
+                            )
+                              return;
                             modelDirty.current = true;
                             setModel(m);
                             setEffort(e);
+                            if (
+                              job?.state === "waiting" &&
+                              job.waitingFor === "model"
+                            )
+                              action(async () => {
+                                await call("chat.model", {
+                                  id: job.id,
+                                  model: m,
+                                  effort: e,
+                                });
+                              });
                           }}
                         />
                         {running(job) && (
@@ -1908,8 +1952,7 @@ export function AgentApp({
                   <div className="thread-menu-info">
                     <strong>{job.title}</strong>
                     <small>
-                      {t(names[job.state])} ·{" "}
-                      {account?.label || t("自动账户接力")}
+                      {t(jobLabel(job))} · {account?.label || t("自动账户接力")}
                     </small>
                   </div>
                   <button
@@ -2234,7 +2277,7 @@ function SearchPalette({
               <span>
                 <strong>{j.title}</strong>
                 <small>
-                  {basename(j.cwd)} · {t(names[j.state])}
+                  {basename(j.cwd)} · {t(jobLabel(j))}
                   {j.archived ? t(" · 已归档") : ""}
                 </small>
               </span>

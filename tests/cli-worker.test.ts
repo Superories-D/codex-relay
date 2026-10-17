@@ -358,6 +358,85 @@ it("uses the saved model, effort and service tier for native Goal admission with
   );
   await w.close();
 });
+it("recovers a Goal blocked by a verified model rejection without resetting its budget or adding a manual turn", async () => {
+  job.threadId = "thread-1";
+  job.goalResumeAfterModelChange = true;
+  const original = rpc.call.getMockImplementation()!;
+  const goal = {
+    threadId: job.threadId,
+    status: "blocked",
+    objective: "Keep evidence",
+    tokensUsed: 42,
+    tokenBudget: 5000,
+  };
+  rpc.call.mockImplementation(async (method, params) =>
+    method === "thread/goal/get"
+      ? { goal }
+      : method === "thread/goal/set"
+        ? { goal: { ...goal, status: params.status } }
+        : original(method, params),
+  );
+  const w = worker();
+  await w.start(auth);
+  expect(rpc.call).toHaveBeenCalledWith("thread/goal/set", {
+    threadId: job.threadId,
+    status: "active",
+    origin: "automatic",
+  });
+  expect(job.goalResumeAfterModelChange).toBe(false);
+  expect(rpc.call.mock.calls.some(([m]) => m === "turn/start")).toBe(false);
+  await w.close();
+});
+it.each(["paused", "budgetLimited", "complete"])(
+  "does not reactivate a %s Goal because of a model recovery flag",
+  async (status) => {
+    job.threadId = "thread-1";
+    job.goalResumeAfterModelChange = true;
+    const original = rpc.call.getMockImplementation()!;
+    rpc.call.mockImplementation(async (method, params) =>
+      method === "thread/goal/get"
+        ? { goal: { threadId: job.threadId, status } }
+        : original(method, params),
+    );
+    const w = worker();
+    await w.start(auth);
+    expect(
+      rpc.call.mock.calls.some(
+        ([m]) => m === "thread/goal/set" || m === "turn/start",
+      ),
+    ).toBe(false);
+    expect((await w.done).kind).toBe(
+      status === "complete" ? "completed" : "goalStopped",
+    );
+    await w.close();
+  },
+);
+it("classifies a root backend model rejection without classifying assistant content", async () => {
+  job.model = "wanted";
+  const w = worker();
+  await w.start(auth);
+  rpc.notify("turn/completed", {
+    threadId: job.threadId,
+    turn: {
+      id: job.turnId,
+      status: "failed",
+      error: {
+        message: JSON.stringify({
+          status: 400,
+          error: {
+            type: "invalid_request_error",
+            message:
+              "The 'wanted' model is not supported when using Codex with a ChatGPT account.",
+          },
+        }),
+        codexErrorInfo: "other",
+      },
+    },
+  });
+  await vi.advanceTimersByTimeAsync(1000);
+  expect((await w.done).kind).toBe("modelUnavailable");
+  await w.close();
+});
 it("delivers a pending user message to an automatically resumed Goal without starting a duplicate turn", async () => {
   job.threadId = "thread-1";
   job.goalResumeAfterQuota = true;

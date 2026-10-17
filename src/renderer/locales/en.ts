@@ -1,6 +1,20 @@
 import { legacyEnglish } from "./legacy-en";
 import { nativeEnglish } from "./native-en";
 export const english: Record<string, string> = {
+  等待模型账户: "Waiting for a matching model account",
+  等待支持所选模型的账户: "Waiting for an account with the selected model",
+  等待可用账户: "Waiting for an available account",
+  检查模型目录: "Check model availability",
+  "暂时没有匹配的模型账户。会自动复查，切换模型可继续原任务。":
+    "No account currently matches this model. Availability will be checked automatically; choosing another model continues this task.",
+  "暂时没有参与轮换的账户支持所选模型。会自动复查，也可以切换模型继续原任务。":
+    "The selected model is not currently available in the participating accounts. Availability will be checked again automatically; you can also choose another model to continue this task.",
+  "该账户不支持所选模型，正在自动选择其他账户":
+    "The server rejected this model for this account. Selecting another account automatically.",
+  优先使用目录中列有所选模型的账户:
+    "Preferring an account whose directory lists the selected model",
+  "模型目录格式无效，请稍后重试":
+    "The model directory is invalid. Please try again later.",
   向目标当前轮次补充消息: "Adding your message to the current goal turn",
   "补充消息提交结果不确定，请检查原会话后继续；不会自动重发":
     "Message delivery is unconfirmed. Check the original chat before continuing; it will not be resent automatically.",

@@ -24,6 +24,8 @@ export interface Quota {
   unlimited?: boolean;
 }
 export interface Account {
+  modelAccess?: ModelAccess;
+  modelDenials?: Record<string, number>;
   resetWindows?: Record<
     string,
     {
@@ -46,6 +48,11 @@ export interface Account {
   blockedUntil: number | null;
   failureCount: number;
   lastError?: string;
+}
+export interface ModelAccess {
+  ids: string[];
+  observedAt: number;
+  complete: boolean;
 }
 export interface ResetWarmup {
   home?: string;
@@ -70,6 +77,7 @@ export interface Job {
   preserveNativePermissions?: boolean;
   goal?: ThreadGoal | null;
   goalResumeAfterQuota?: boolean;
+  goalResumeAfterModelChange?: boolean;
   goalStartRequested?: boolean;
   runtimeHomeId?: string;
   pinned?: boolean;
@@ -109,6 +117,7 @@ export interface Job {
   effort: string;
   bucket: string;
   state: JobState;
+  waitingFor?: "model";
   stage?: string;
   lastActivityAt?: number;
   lastHeartbeatAt?: number;

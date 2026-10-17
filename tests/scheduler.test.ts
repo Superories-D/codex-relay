@@ -217,6 +217,235 @@ it("dispatches using account value, and permits an explicit switch back to order
   await until(() => workers[1]?.started);
   expect(second.accountId).toBe("a");
 });
+it("automatically skips an account without the requested model while preserving the pending task", async () => {
+  store.data.accounts[0].expiresAt = Date.now() + 3600000;
+  const inspected: string[] = [];
+  vi.spyOn(scheduler.accounts, "inspect").mockImplementation(
+    async (id: string) => {
+      inspected.push(id);
+      const a = store.data.accounts.find((a) => a.id === id)!;
+      const models = [
+        {
+          id: id === "a" ? "other" : "wanted-alias",
+          model: id === "a" ? "other-model" : "wanted-model",
+        },
+      ];
+      Object.assign(a, {
+        modelAccess: {
+          ids: models.flatMap((m) => [m.id, m.model]),
+          complete: true,
+          observedAt: Date.now(),
+        },
+      });
+      a.quotas.codex.observedAt = Date.now();
+      return {
+        auth: { tokens: { access_token: "synthetic" } },
+        quotas: a.quotas,
+        models,
+        modelAccess: (a as any).modelAccess,
+      } as any;
+    },
+  );
+  const job = await scheduler.add({
+    ...input,
+    cwd: root,
+    interactive: true,
+    prompt: "KEEP_TASK_42",
+    model: "wanted-model",
+  });
+  scheduler.start();
+  await until(
+    () =>
+      !!workers[0]?.started ||
+      ["needs_attention", "waiting"].includes(job.state),
+  );
+  expect(workers[0]?.ctx.job.accountId).toBe("b");
+  expect(workers[0].submitted).toBe("KEEP_TASK_42");
+  expect(job.model).toBe("wanted-model");
+  expect(job.rotations).toBe(0);
+  expect(inspected).toEqual(["a", "b"]);
+  expect(store.data.accounts[0].status).toBe("ready");
+});
+it("uses cached model permissions before value scoring and preserves alias support", async () => {
+  store.data.accounts[0].expiresAt = Date.now() + 3600000;
+  Object.assign(store.data.accounts[0], {
+    modelAccess: { ids: ["other"], complete: true, observedAt: Date.now() },
+  });
+  Object.assign(store.data.accounts[1], {
+    modelAccess: {
+      ids: ["wanted-model", "wanted-alias"],
+      complete: true,
+      observedAt: Date.now(),
+    },
+  });
+  const job = await scheduler.add({
+    ...input,
+    cwd: root,
+    interactive: true,
+    model: "wanted-alias",
+  });
+  await until(() => !!workers[0]?.started);
+  expect(job.accountId).toBe("b");
+  expect(scheduler.accounts.inspect).toHaveBeenCalledWith("b", true);
+  expect(scheduler.accounts.inspect).not.toHaveBeenCalledWith("a", true);
+});
+it("waits with pending input intact when every enabled account has an actual model rejection", async () => {
+  for (const a of store.data.accounts)
+    Object.assign(a, {
+      modelAccess: { ids: ["other"], complete: true, observedAt: Date.now() },
+      modelDenials: { wanted: Date.now(), "wanted-model": Date.now() },
+    });
+  const job = await scheduler.add({
+    ...input,
+    cwd: root,
+    interactive: true,
+    prompt: "KEEP_TASK_42",
+    model: "wanted-model",
+  });
+  scheduler.start();
+  await until(() =>
+    ["waiting", "running", "needs_attention"].includes(job.state),
+  );
+  expect(job.state).toBe("waiting");
+  expect((job as any).waitingFor).toBe("model");
+  expect(job.pendingMessage).toBe("KEEP_TASK_42");
+  expect(workers).toHaveLength(0);
+});
+it("wakes a model-waiting task when a matching account becomes known before the retry deadline", async () => {
+  for (const a of store.data.accounts)
+    Object.assign(a, {
+      modelAccess: { ids: ["other"], complete: true, observedAt: Date.now() },
+      modelDenials: { wanted: Date.now(), "wanted-model": Date.now() },
+    });
+  const job = await scheduler.add({
+    ...input,
+    cwd: root,
+    interactive: true,
+    prompt: "KEEP_TASK_42",
+    model: "wanted",
+  });
+  scheduler.start();
+  await until(() => job.state === "waiting");
+  const deadline = job.nextWakeAt!;
+  Object.assign(store.data.accounts[1], {
+    modelAccess: { ids: ["wanted"], complete: true, observedAt: Date.now() },
+    modelDenials: undefined,
+  });
+  await until(() => !!workers[0]?.started);
+  expect(job.accountId).toBe("b");
+  expect(workers[0].submitted).toBe("KEEP_TASK_42");
+  expect(Date.now()).toBeLessThan(deadline);
+});
+it("waits for quota rather than model permissions when a compatible account is exhausted", async () => {
+  const [a, b] = store.data.accounts;
+  Object.assign(a, {
+    modelAccess: { ids: ["other"], complete: true, observedAt: Date.now() },
+    modelDenials: { wanted: Date.now(), "wanted-model": Date.now() },
+  });
+  Object.assign(b, {
+    modelAccess: { ids: ["wanted"], complete: true, observedAt: Date.now() },
+  });
+  b.quotas.codex.primary!.usedPercent = 100;
+  b.quotas.codex.primary!.resetsAt = Date.now() + 300000;
+  const job = await scheduler.add({
+    ...input,
+    cwd: root,
+    interactive: true,
+    model: "wanted",
+  });
+  scheduler.start();
+  await until(() => job.state === "waiting");
+  expect(job.waitingFor).toBeUndefined();
+  expect(workers).toHaveLength(0);
+  b.quotas.codex.primary!.usedPercent = 0;
+  b.quotas.codex.observedAt = Date.now();
+  await until(() => !!workers[0]?.started);
+  expect(job.accountId).toBe("b");
+});
+it("switches a model-waiting task without losing its thread, pending input, or attachment", async () => {
+  for (const a of store.data.accounts)
+    Object.assign(a, {
+      modelAccess: { ids: ["other"], complete: true, observedAt: Date.now() },
+      modelDenials: { wanted: Date.now(), "wanted-model": Date.now() },
+    });
+  const job = await scheduler.add({
+    ...input,
+    cwd: root,
+    interactive: true,
+    prompt: "KEEP_TASK_42",
+    model: "wanted",
+    attachments: [
+      { type: "mention", path: path.join(root, "note.txt"), name: "note.txt" },
+    ],
+  });
+  scheduler.start();
+  await until(() => job.state === "waiting");
+  job.threadId = "saved-thread";
+  await store.save();
+  const restored = new Store(root);
+  await restored.load();
+  expect(restored.data.jobs[0].waitingFor).toBe("model");
+  expect(restored.data.jobs[0].pendingMessage).toBe("KEEP_TASK_42");
+  expect(await scheduler.model(job.id, "other", "low")).toEqual({
+    applied: true,
+  });
+  await until(() => !!workers[0]?.started);
+  expect(job.threadId).toBe("saved-thread");
+  expect(job.model).toBe("other");
+  expect(job.effort).toBe("low");
+  expect(workers[0].submitted).toBe("KEEP_TASK_42");
+  expect(job.waitingFor).toBeUndefined();
+});
+it("does not let a model retry bypass an explicit user pause", async () => {
+  for (const a of store.data.accounts) a.modelDenials = { wanted: Date.now() };
+  const job = await scheduler.add({
+    ...input,
+    cwd: root,
+    interactive: true,
+    model: "wanted",
+  });
+  await until(() => job.state === "waiting");
+  job.goalResumeAfterModelChange = true;
+  await scheduler.control(job.id, "pause");
+  expect(job.goalResumeAfterModelChange).toBe(false);
+  expect(await scheduler.model(job.id, "other", "low")).toEqual({
+    applied: false,
+  });
+  expect(job.state).toBe("paused");
+  expect(workers).toHaveLength(0);
+});
+it("leaves an already running task unchanged when a model selection races its start", async () => {
+  const job = await scheduler.add({ ...input, cwd: root, interactive: true });
+  await until(() => !!workers[0]?.started);
+  expect(await scheduler.model(job.id, "other", "high")).toEqual({
+    applied: false,
+  });
+  expect(job.model).toBe("");
+  expect(workers).toHaveLength(1);
+});
+it("routes an actual model rejection to another account on the same thread without exhausting the first account", async () => {
+  const job = await scheduler.add({
+    ...input,
+    cwd: root,
+    interactive: true,
+    model: "wanted",
+  });
+  await until(() => !!workers[0]?.started);
+  const first = store.data.accounts.find((a) => a.id === job.accountId)!;
+  job.goal = { threadId: job.threadId!, status: "blocked" } as any;
+  workers[0].settle({ kind: "modelUnavailable" });
+  await (scheduler as any).currentRun;
+  expect(first.modelDenials?.wanted).toBeGreaterThan(0);
+  expect(first.status).toBe("ready");
+  expect(first.blockedUntil).toBeNull();
+  expect(job.goalResumeAfterModelChange).toBe(true);
+  await (scheduler as any).tick();
+  await until(() => !!workers[1]?.started);
+  expect(job.accountId).not.toBe(first.id);
+  expect(job.threadId).toBe("stable-thread");
+  expect(job.rotations).toBe(0);
+  expect(job.pendingMessage).toBeUndefined();
+});
 it("sends follow-up text on the same thread instead of replaying the recovery prompt", async () => {
   const job = await scheduler.add({
     ...input,

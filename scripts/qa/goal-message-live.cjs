@@ -19,6 +19,7 @@ async function nativeMain(config) {
     CliWorker,
     Rpc,
     Attachments,
+    prepareThread,
     redact,
   } = require(config.helper);
   app.setName("Codex Relay");
@@ -29,11 +30,12 @@ async function nativeMain(config) {
   }
   await app.whenReady();
   const report = {
+    mode: process.env.RELAY_GOAL_METADATA_ONLY || "live",
     status: "starting",
     profile: config.profile,
     sourceProfileReadOnly: true,
     refreshTokenCopied: false,
-    simulatedQuotaRecoveryFlag: true,
+    simulatedQuotaRecoveryFlag: !process.env.RELAY_GOAL_METADATA_ONLY,
     automaticTurns: 0,
     manualTurnStartRequests: 0,
     steerRequests: 0,
@@ -169,7 +171,69 @@ async function nativeMain(config) {
       return rpc;
     };
     const prepared = await accounts.inspect(account.id, true);
+    if (process.env.RELAY_GOAL_METADATA_ONLY === "models") {
+      report.status = "passed";
+      report.models = prepared.models.map((m) => ({
+        id: m.id,
+        model: m.model,
+        availability: m.availability ?? null,
+        availabilityNux: m.availabilityNux,
+        accessPrograms: m.availableAccessPrograms,
+        hidden: m.hidden,
+        keys: Object.keys(m),
+      }));
+      report.modelAccess = prepared.modelAccess;
+      report.checks = ["actual authenticated model directory; no inference"];
+      return;
+    }
     report.before = prepared.quotas.codex;
+    if (process.env.RELAY_GOAL_METADATA_ONLY === "reject") {
+      const home = store.jobHome("model-rejection-probe");
+      await fs.mkdir(home, { recursive: true });
+      metadata = await open(config.cli, home);
+      await metadata.call("account/login/start", {
+        type: "chatgptAuthTokens",
+        accessToken: auth.tokens.access_token,
+        chatgptAccountId: auth.tokens.account_id,
+        chatgptPlanType: account.plan,
+      });
+      const model = "__relay_no_such_model_20261018__";
+      const started = await prepareThread(metadata, undefined, {
+        cwd: config.profile,
+        model,
+        approvalPolicy: "never",
+        sandbox: "read-only",
+        config: { "features.goals": false },
+      });
+      report.probeThreadId = started.thread.id;
+      report.probeRootTurns = 0;
+      let completed;
+      metadata.on("notification", (m) => {
+        if (m.params?.threadId !== report.probeThreadId) return;
+        if (m.method === "turn/started") report.probeRootTurns++;
+        if (m.method === "error") report.probeError = m.params.error;
+        if (m.method === "turn/completed") completed = m.params.turn;
+        if (m.method === "thread/tokenUsage/updated")
+          report.probeTokens = m.params.tokenUsage;
+      });
+      try {
+        await metadata.call("turn/start", {
+          threadId: report.probeThreadId,
+          model,
+          input: [{ type: "text", text: "Reply exactly OK. No tools." }],
+        });
+        await until(() => completed, 25000);
+        report.probeStatus = completed.status;
+        report.probeError = completed.error || report.probeError;
+      } catch (error) {
+        report.probeError = error.detail || { message: error.message };
+      }
+      report.status = "passed";
+      report.checks = [
+        "one bounded invalid-model backend probe; no tools or Goal",
+      ];
+      return;
+    }
     const windows = [report.before?.primary, report.before?.secondary].filter(
       Boolean,
     );
@@ -199,6 +263,100 @@ async function nativeMain(config) {
     report.effort = effort;
     const cwd = path.join(config.profile, "project");
     await fs.mkdir(cwd);
+    if (process.env.RELAY_GOAL_METADATA_ONLY === "recover") {
+      report.simulatedQuotaRecoveryFlag = false;
+      report.rootTurns = 0;
+      report.turnStartRequests = 0;
+      Rpc.open = async (...args) => {
+        const rpc = await open(...args);
+        active.add(rpc);
+        const call = rpc.call.bind(rpc);
+        rpc.call = async (method, params, ...rest) => {
+          if (method === "turn/start" && ++report.turnStartRequests > 2)
+            throw Error(
+              "Only two bounded model-recovery attempts are authorized",
+            );
+          return call(method, params, ...rest);
+        };
+        rpc.on("notification", (m) => {
+          if (m.params?.threadId !== job?.threadId) return;
+          if (m.method === "turn/started") report.rootTurns++;
+          if (m.method === "thread/tokenUsage/updated")
+            report.tokenUsage = m.params.tokenUsage;
+        });
+        return rpc;
+      };
+      scheduler = new Scheduler(store, accounts, {
+        cli: (ctx) =>
+          new CliWorker({
+            ...ctx,
+            refresh: async () => {
+              throw Error("Access-only test cannot refresh credentials");
+            },
+          }),
+        desktop: () => {
+          throw Error("CLI mode only");
+        },
+      });
+      job = await scheduler.add({
+        title: "Model recovery live",
+        prompt:
+          "Reply exactly MODEL_RECOVERY_LIVE_OK. Do not use any tools, network, subagents or goals.",
+        cwd,
+        mode: "cli",
+        model: "__relay_no_such_model_20261018__",
+        effort: "low",
+        bucket: "codex",
+        sandbox: "readOnly",
+        approvalPolicy: "never",
+        interactive: true,
+        multiAgent: false,
+      });
+      report.jobId = job.id;
+      scheduler.start();
+      await until(() => {
+        if (["needs_attention", "completed"].includes(job.state))
+          throw Error(
+            "Expected model wait, got " + job.state + ": " + job.lastError,
+          );
+        return job.state === "waiting" && job.waitingFor === "model";
+      }, 45000);
+      report.waitingThreadId = job.threadId;
+      report.accountStatusDuringWait = account.status;
+      assert.equal(account.status, "ready");
+      assert(account.modelDenials?.[job.model]);
+      assert.equal(report.turnStartRequests, 1);
+      assert.deepEqual(await scheduler.model(job.id, model.model, effort), {
+        applied: true,
+      });
+      await until(() => {
+        if (["needs_attention", "paused", "cancelled"].includes(job.state))
+          throw Error("Recovery stopped: " + job.lastError);
+        return job.state === "completed";
+      }, 60000);
+      report.finalThreadId = job.threadId;
+      report.finalState = job.state;
+      report.rotations = job.rotations;
+      const journal = await scheduler.chats.read(job.id);
+      report.answer = journal.items
+        .filter((i) => i.role === "assistant")
+        .map((i) => i.text)
+        .join("\n")
+        .slice(-500);
+      assert.match(report.answer, /MODEL_RECOVERY_LIVE_OK/);
+      assert.equal(job.threadId, report.waitingThreadId);
+      assert.equal(report.turnStartRequests, 2);
+      assert.equal(job.rotations, 0);
+      report.after = (await accounts.inspect(account.id, true)).quotas.codex;
+      report.checks = [
+        "actual backend model rejection enters model wait",
+        "account remains usable; quota not falsified",
+        "model change continues the same job and native thread",
+        "one failed attempt plus one successful bounded response",
+      ];
+      report.status = "passed";
+      return;
+    }
     await fs.writeFile(path.join(cwd, "seed.txt"), "SEED=9\n");
     const note = path.join(cwd, "note.txt"),
       image = path.join(cwd, "visual.png");
@@ -389,7 +547,7 @@ async function nativeMain(config) {
   buildSync({
     stdin: {
       contents:
-        'export { Store } from "./src/core/store";export { Accounts } from "./src/core/accounts";export { Scheduler } from "./src/core/scheduler";export { CliWorker } from "./src/core/cli-worker";export { Rpc } from "./src/core/rpc";export { Attachments } from "./src/core/attachments";export { redact } from "./src/core/redact";',
+        'export { Store } from "./src/core/store";export { Accounts } from "./src/core/accounts";export { Scheduler } from "./src/core/scheduler";export { CliWorker } from "./src/core/cli-worker";export { Rpc } from "./src/core/rpc";export { Attachments } from "./src/core/attachments";export { redact } from "./src/core/redact";export { prepareThread } from "./src/core/thread";',
       loader: "ts",
       resolveDir: root,
     },
@@ -430,7 +588,14 @@ async function nativeMain(config) {
       pid: child.pid,
       profile,
       reportFile,
-      maximumGoalTurns: 1,
+      mode: process.env.RELAY_GOAL_METADATA_ONLY || "live",
+      maximumGoalTurns: process.env.RELAY_GOAL_METADATA_ONLY ? 0 : 1,
+      maximumTurnStartRequests:
+        process.env.RELAY_GOAL_METADATA_ONLY === "recover"
+          ? 2
+          : process.env.RELAY_GOAL_METADATA_ONLY === "reject"
+            ? 1
+            : 0,
     }),
   );
   const code = await new Promise((resolve, reject) => {
@@ -453,7 +618,18 @@ async function nativeMain(config) {
   );
   if (report.profile !== profile) throw Error("Unexpected report owner");
   await fs.writeFile(
-    path.join(output, "goal-message-live-report.json"),
+    path.join(
+      output,
+      process.env.RELAY_GOAL_METADATA_ONLY === "recover"
+        ? "model-recovery-live-report.json"
+        : process.env.RELAY_GOAL_METADATA_ONLY === "reject"
+          ? "model-rejection-live-report.json"
+          : process.env.RELAY_GOAL_METADATA_ONLY === "models"
+            ? "model-directory-live-report.json"
+            : process.env.RELAY_GOAL_METADATA_ONLY === "1"
+              ? "goal-access-metadata-report.json"
+              : "goal-message-live-report.json",
+    ),
     JSON.stringify(report, null, 2),
   );
   console.log(JSON.stringify(report));

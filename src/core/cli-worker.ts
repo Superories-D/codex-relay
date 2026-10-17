@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import { taskPrompt, completionOutcome } from "./completion";
 import { prepareThread } from "./thread";
+import { isModelRejection } from "./model-error";
 import { Rpc, type RpcMessage } from "./rpc";
 import {
   errorKind,
@@ -96,7 +97,9 @@ export class CliWorker extends EventEmitter implements Worker {
       throw new Error("Usage limit exceeded before turn start");
     const goalOnly =
       !!(
-        this.ctx.job.goalStartRequested || this.ctx.job.goalResumeAfterQuota
+        this.ctx.job.goalStartRequested ||
+        this.ctx.job.goalResumeAfterQuota ||
+        this.ctx.job.goalResumeAfterModelChange
       ) &&
       !this.ctx.job.pendingMessage &&
       !this.ctx.job.review;
@@ -104,9 +107,11 @@ export class CliWorker extends EventEmitter implements Worker {
     if (this.threadId) {
       await this.readGoal();
       if (
-        this.ctx.job.goalResumeAfterQuota &&
         this.goal &&
-        ["active", "usageLimited"].includes(this.goal.status)
+        ((this.ctx.job.goalResumeAfterQuota &&
+          ["active", "usageLimited"].includes(this.goal.status)) ||
+          (this.ctx.job.goalResumeAfterModelChange &&
+            ["active", "blocked"].includes(this.goal.status)))
       ) {
         // Recover an already-authorized Goal, retaining its original accounting.
         const response = await this.rpc.call("thread/goal/set", {
@@ -117,6 +122,7 @@ export class CliWorker extends EventEmitter implements Worker {
         this.setGoal(response.goal);
       }
       this.ctx.job.goalResumeAfterQuota = false;
+      this.ctx.job.goalResumeAfterModelChange = false;
     }
     if (goalOnly && this.goal?.status !== "active") {
       this.ctx.job.goalStartRequested = false;
@@ -433,6 +439,14 @@ export class CliWorker extends EventEmitter implements Worker {
         result = { kind: "quota", error: this.lastError };
       else if (result.kind === "completed" && this.stopRequested)
         result = { kind: "interrupted" };
+      if (
+        result.kind === "error" &&
+        !this.quotaSeen &&
+        !this.stopRequested &&
+        errorKind(result.error) !== "quota" &&
+        isModelRejection(result.error, this.ctx.job.model)
+      )
+        result = { kind: "modelUnavailable", error: result.error };
       if (
         this.submissionPending &&
         ["completed", "goalStopped"].includes(result.kind)

@@ -1,5 +1,6 @@
 import type { Account, Quota, WindowQuota } from "../shared/types";
 import { accountValue } from "../shared/account-value";
+import { supportsModel, modelRank } from "../shared/model-access";
 const finite = (x: unknown): x is number =>
   typeof x === "number" && Number.isFinite(x);
 function windowOf(raw: any): WindowQuota | null {
@@ -113,15 +114,30 @@ export function pickAccount(
   bucket: string,
   now: number,
   policy: "smart" | "roundRobin" = "roundRobin",
+  model?: string,
 ): { account: Account; cursor: number } | null {
-  let best: { account: Account; cursor: number; score: number } | null = null;
+  let best: {
+    account: Account;
+    cursor: number;
+    score: number;
+    rank: number;
+  } | null = null;
   for (let step = 0; step < accounts.length; step++) {
     const i = (cursor + step) % accounts.length;
-    if (eligible(accounts[i], bucket, now)) {
+    if (
+      eligible(accounts[i], bucket, now) &&
+      supportsModel(accounts[i], model, now) !== false
+    ) {
       const value = { account: accounts[i], cursor: (i + 1) % accounts.length };
-      if (policy === "roundRobin") return value;
-      const score = accountValue(accounts[i], bucket, now).score;
-      if (!best || score > best.score) best = { ...value, score };
+      const rank = modelRank(accounts[i], model, now);
+      const score =
+        policy === "smart" ? accountValue(accounts[i], bucket, now).score : 0;
+      if (
+        !best ||
+        rank > best.rank ||
+        (rank === best.rank && score > best.score)
+      )
+        best = { ...value, score, rank };
     }
   }
   return best ? { account: best.account, cursor: best.cursor } : null;
@@ -131,12 +147,14 @@ export function nextWake(
   bucket: string,
   now: number,
   retryMs: number,
+  model?: string,
 ): number {
   const times = accounts
     .filter(
       (a) =>
         a.enabled &&
         a.status !== "reauth" &&
+        supportsModel(a, model, now) !== false &&
         !(typeof a.expiresAt === "number" && a.expiresAt <= now),
     )
     .map((a) =>

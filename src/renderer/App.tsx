@@ -643,7 +643,7 @@ function App({ initialTab = "dashboard" }: { initialTab?: string }) {
                   <div>
                     <span className="status-dot" /> {t("当前任务")}
                   </div>
-                  {live && <Badge state={live.state} />}
+                  {live && <Badge state={live.state} job={live} />}
                 </div>
                 {live ? (
                   <>
@@ -687,7 +687,7 @@ function App({ initialTab = "dashboard" }: { initialTab?: string }) {
                             <i />
                           </div>
                         ) : (
-                          <Badge state={live.state} />
+                          <Badge state={live.state} job={live} />
                         )}
                       </div>
                     </div>
@@ -924,7 +924,7 @@ function App({ initialTab = "dashboard" }: { initialTab?: string }) {
                         >
                           <div className="row">
                             <b>{j.title}</b>
-                            <Badge state={j.state} />
+                            <Badge state={j.state} job={j} />
                           </div>
                           <p>{j.cwd}</p>
                           <small>
@@ -949,7 +949,7 @@ function App({ initialTab = "dashboard" }: { initialTab?: string }) {
                   <section className="task-detail">
                     <div className="section-heading">
                       <h2>{focus.title}</h2>
-                      <Badge state={focus.state} />
+                      <Badge state={focus.state} job={focus} />
                     </div>
                     <p className="prompt">{focus.prompt}</p>
                     <dl>
@@ -1208,7 +1208,10 @@ function JobStatus({ job }: { job: Job }) {
       "原窗口 / 终端继续运行，审批在那里处理。额度中断后自动交接，保留原会话。",
     ),
     queued: t("等待可用账户，系统会自动启动。"),
-    waiting: t("任务尚未完成。到点会重新核实服务器额度，再接着原会话执行。"),
+    waiting:
+      job.waitingFor === "model"
+        ? t("暂时没有匹配的模型账户。会自动复查，切换模型可继续原任务。")
+        : t("任务尚未完成。到点会重新核实服务器额度，再接着原会话执行。"),
     paused:
       job.existing && job.existing.phase !== "managed"
         ? t("接入监控已暂停；原窗口可能仍在运行。可以继续监控或立即交接。")
@@ -1232,7 +1235,9 @@ function JobStatus({ job }: { job: Job }) {
       <b>
         {["preparing", "running", "rotating", "watching"].includes(job.state)
           ? t(job.stage ?? states[job.state])
-          : t(states[job.state])}
+          : job.state === "waiting" && job.waitingFor === "model"
+            ? t("等待模型账户")
+            : t(states[job.state])}
       </b>
       <p>
         {explanation[job.state] ??
@@ -1274,10 +1279,16 @@ function Stat({
     </div>
   );
 }
-function Badge({ state }: { state: string }) {
+function Badge({ state, job }: { state: string; job?: Job }) {
   useI18n();
 
-  return <span className={`badge ${state}`}>{t(states[state] ?? state)}</span>;
+  return (
+    <span className={`badge ${state}`}>
+      {state === "waiting" && job?.waitingFor === "model"
+        ? t("等待模型账户")
+        : t(states[state] ?? state)}
+    </span>
+  );
 }
 function AccountCard({
   account: a,

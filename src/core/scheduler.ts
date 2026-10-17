@@ -31,10 +31,19 @@ import type { ChatAttachment } from "../shared/types";
 import { capabilities } from "../shared/capabilities";
 import { Rpc } from "./rpc";
 import { prepareThread } from "./thread";
+import { isModelRejection } from "./model-error";
 import { ensureWindowsSandbox } from "./windows-sandbox";
 import { AccountWarmups } from "./account-warmups";
 import { WarmupRunner } from "./warmup-runner";
 import { validateQuestionAnswers } from "../shared/user-questions";
+import {
+  MODEL_ACCESS_TTL,
+  freshModelAccess,
+  supportsModel,
+  modelRank,
+  denyModel,
+} from "../shared/model-access";
+class ModelRoutingError extends Error {}
 export class Scheduler extends EventEmitter {
   readonly chats: Chats;
   approvals: Approval[] = [];
@@ -401,7 +410,13 @@ export class Scheduler extends EventEmitter {
         continue;
       this.probes.set(a.id, now);
       await this.accounts
-        .inspect(a.id)
+        .inspect(
+          a.id,
+          !freshModelAccess(a, now) &&
+            this.store.data.jobs.some(
+              (j) => ["queued", "waiting"].includes(j.state) && !!j.model,
+            ),
+        )
         .catch((error) =>
           this.log(
             `${a.label}: ${redact(error instanceof Error ? error.message : error)}`,
@@ -444,6 +459,7 @@ export class Scheduler extends EventEmitter {
               j.bucket,
               Date.now(),
               this.store.data.settings.accountSelection || "smart",
+              j.model,
             ),
         );
       let runnable = findRunnable();
@@ -491,6 +507,7 @@ export class Scheduler extends EventEmitter {
                 j.bucket,
                 Date.now(),
                 this.store.data.settings.accountSelection || "smart",
+                j.model,
               ) !== null)),
       );
       if (!job) return;
@@ -500,17 +517,45 @@ export class Scheduler extends EventEmitter {
         job.bucket,
         Date.now(),
         this.store.data.settings.accountSelection || "smart",
+        job.model,
       );
       if (!selection) {
-        job.state = "waiting";
-        job.nextWakeAt = nextWake(
-          this.store.data.accounts,
-          job.bucket,
-          Date.now(),
-          this.store.data.settings.retrySeconds * 1000,
+        const pool = this.store.data.accounts.filter(
+          (a) =>
+            a.enabled &&
+            a.status !== "reauth" &&
+            !(a.expiresAt && a.expiresAt <= now),
         );
+        const modelWait =
+          !!job.model &&
+          pool.length > 0 &&
+          pool.every((a) => supportsModel(a, job.model, now) === false);
+        job.state = "waiting";
+        job.waitingFor = modelWait ? "model" : undefined;
+        job.stage = modelWait ? "等待支持所选模型的账户" : "等待可用账户";
+        job.lastError = modelWait
+          ? "暂时没有参与轮换的账户支持所选模型。会自动复查，也可以切换模型继续原任务。"
+          : undefined;
+        job.nextWakeAt = modelWait
+          ? Math.max(
+              now + 1000,
+              Math.min(
+                ...pool.map(
+                  (a) => a.modelDenials![job.model!] + MODEL_ACCESS_TTL,
+                ),
+              ),
+            )
+          : nextWake(
+              this.store.data.accounts,
+              job.bucket,
+              Date.now(),
+              this.store.data.settings.retrySeconds * 1000,
+              job.model,
+            );
         this.log(
-          `暂无可用账户，等待到 ${new Date(job.nextWakeAt).toLocaleString()} 后重新向服务器核实额度`,
+          modelWait
+            ? "暂时没有参与轮换的账户支持所选模型。会自动复查，也可以切换模型继续原任务。"
+            : `暂无可用账户，等待到 ${new Date(job.nextWakeAt).toLocaleString()} 后重新向服务器核实额度`,
           "info",
           job.id,
         );
@@ -556,8 +601,8 @@ export class Scheduler extends EventEmitter {
     let outcome: Outcome | undefined;
     try {
       job.state = "preparing";
+      job.waitingFor = undefined;
       this.syncAgentRoot(job, { status: "pendingInit" });
-      await this.beforeStart(job);
       job.accountId = account.id;
       job.nextWakeAt = undefined;
       job.lastError = undefined;
@@ -573,16 +618,26 @@ export class Scheduler extends EventEmitter {
             codexErrorInfo: "usageLimitExceeded",
             message: "额度在准备会话时已用尽",
           };
+        const preferred = pickAccount(
+          this.store.data.accounts,
+          this.store.data.cursor,
+          job.bucket,
+          Date.now(),
+          this.store.data.settings.accountSelection || "smart",
+          job.model,
+        );
         if (
           job.model &&
-          prepared.models.length &&
-          !prepared.models.some(
-            (m) => m.model === job.model || m.id === job.model,
-          )
+          (supportsModel(account, job.model) === false ||
+            (preferred &&
+              modelRank(preferred.account, job.model) >
+                modelRank(account, job.model)))
         )
-          throw new Error(
-            `该账户没有模型 ${job.model} 的权限；请选择所有轮换账户都可用的模型`,
-          );
+          throw new ModelRoutingError("优先使用目录中列有所选模型的账户");
+        await this.beforeStart(job);
+        if (active.reason || this.closing) {
+          throw Error("任务准备已取消");
+        }
         const home = this.store.jobHome(job.id);
         await fs.mkdir(home, { recursive: true, mode: 0o700 });
         // New chats inherit the client's configured MCP servers and installed tools.
@@ -796,7 +851,14 @@ export class Scheduler extends EventEmitter {
     } catch (error) {
       if (error instanceof ProcessSafetyError) active.failedStop = true;
       outcome = {
-        kind: errorKind(error) === "quota" ? "quota" : "error",
+        kind:
+          error instanceof ModelRoutingError
+            ? "modelRoute"
+            : errorKind(error) === "quota"
+              ? "quota"
+              : isModelRejection(error, job.model)
+                ? "modelUnavailable"
+                : "error",
         error,
       };
     } finally {
@@ -822,7 +884,10 @@ export class Scheduler extends EventEmitter {
       for (const agent of job.agents ?? [])
         await this.chats.flush(agent.threadId);
     }
-    if (active.reason) job.goalResumeAfterQuota = false;
+    if (active.reason) {
+      job.goalResumeAfterQuota = false;
+      job.goalResumeAfterModelChange = false;
+    }
     if (active.reason === "cancel" && !active.failedStop)
       job.state = "cancelled";
     else if ((active.reason === "pause" || this.closing) && !active.failedStop)
@@ -848,6 +913,24 @@ export class Scheduler extends EventEmitter {
       await this.store.save();
       this.changed();
       job.state = "queued";
+    } else if (
+      outcome?.kind === "modelUnavailable" ||
+      outcome?.kind === "modelRoute"
+    ) {
+      if (outcome.kind === "modelUnavailable" && job.model)
+        denyModel(account, job.model);
+      if (
+        outcome.kind === "modelUnavailable" &&
+        job.goal &&
+        ["active", "blocked"].includes(job.goal.status)
+      )
+        job.goalResumeAfterModelChange = true;
+      job.state = "queued";
+      job.lastError =
+        outcome.kind === "modelUnavailable"
+          ? "该账户不支持所选模型，正在自动选择其他账户"
+          : "优先使用目录中列有所选模型的账户";
+      this.log(`${account.label}: ${job.lastError}`, "info", job.id);
     } else if (outcome?.kind === "goalStopped") {
       job.state = job.goal?.status === "paused" ? "paused" : "needs_attention";
       job.lastError =
@@ -930,6 +1013,44 @@ export class Scheduler extends EventEmitter {
     const next = this.controls
       .catch(() => {})
       .then(() => this.controlOnce(id, action));
+    this.controls = next;
+    return next;
+  }
+  model(id: string, model: string, effort: string) {
+    const next = this.controls
+      .catch(() => {})
+      .then(async () => {
+        const job = this.store.data.jobs.find((j) => j.id === id);
+        if (!job) throw Error("会话不存在");
+        if (
+          this.active?.job.id === id ||
+          job.state !== "waiting" ||
+          job.waitingFor !== "model"
+        )
+          return { applied: false };
+        if (model === job.model) {
+          for (const account of this.store.data.accounts) {
+            if (account.modelAccess && supportsModel(account, model) === false)
+              account.modelAccess.observedAt = 0;
+            if (
+              account.modelDenials &&
+              Object.hasOwn(account.modelDenials, model)
+            )
+              delete account.modelDenials[model];
+          }
+        }
+        job.model = model;
+        job.effort = effort;
+        job.waitingFor = undefined;
+        job.state = "queued";
+        job.nextWakeAt = undefined;
+        job.lastError = undefined;
+        job.updatedAt = Date.now();
+        await this.store.save();
+        this.changed();
+        void this.tick().catch((error) => this.log(error, "error", id));
+        return { applied: true };
+      });
     this.controls = next;
     return next;
   }
@@ -1341,7 +1462,9 @@ export class Scheduler extends EventEmitter {
         (method === "thread/goal/set" && goal?.status === "paused")
       ) {
         if (
-          job.goalStartRequested &&
+          (job.goalStartRequested ||
+            job.goalResumeAfterQuota ||
+            job.goalResumeAfterModelChange) &&
           ["queued", "waiting"].includes(job.state)
         ) {
           job.state = "paused";
@@ -1349,6 +1472,7 @@ export class Scheduler extends EventEmitter {
         }
         job.goalStartRequested = false;
         job.goalResumeAfterQuota = false;
+        job.goalResumeAfterModelChange = false;
       }
       if (activate) {
         if (goal?.status !== "active") {
@@ -1357,6 +1481,7 @@ export class Scheduler extends EventEmitter {
           throw new Error("目标尚未确认激活，未排队执行");
         }
         job.goalResumeAfterQuota = false;
+        job.goalResumeAfterModelChange = false;
         if (!live) {
           job.goalStartRequested = true;
           job.review = undefined;
@@ -1732,7 +1857,12 @@ export class Scheduler extends EventEmitter {
         if (this.active) this.active.failedStop = true;
         throw error;
       }
-    } else job.state = action === "pause" ? "paused" : "cancelled";
+    } else {
+      job.state = action === "pause" ? "paused" : "cancelled";
+      job.goalStartRequested = false;
+      job.goalResumeAfterQuota = false;
+      job.goalResumeAfterModelChange = false;
+    }
     await this.store.save();
     this.changed();
   }

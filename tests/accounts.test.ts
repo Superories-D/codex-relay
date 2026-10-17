@@ -42,6 +42,60 @@ class FakeRpc extends EventEmitter {
   close = vi.fn(async () => {});
 }
 let root: string, store: Store, accounts: Accounts, rpc: FakeRpc;
+it("persists all model pages and aliases without treating a model introduction as denial", async () => {
+  const a = await accounts.import(JSON.stringify(auth()));
+  const original = rpc.call.getMockImplementation()!;
+  let page = 0;
+  rpc.call.mockImplementation(async (method) =>
+    method === "model/list"
+      ? ++page === 1
+        ? {
+            data: [
+              {
+                id: "alias",
+                model: "engine",
+                availabilityNux: { message: "Try it" },
+              },
+            ],
+            nextCursor: "second",
+          }
+        : { data: [{ id: "another" }], nextCursor: null }
+      : original(method),
+  );
+  const result = await accounts.inspect(a.id, true);
+  expect(result.modelAccess).toMatchObject({
+    ids: ["alias", "engine", "another"],
+    complete: true,
+  });
+  const restored = new Store(root);
+  await restored.load();
+  expect(restored.data.accounts[0].modelAccess).toEqual(result.modelAccess);
+});
+it("retains partial model evidence when the server repeats its pagination cursor", async () => {
+  const a = await accounts.import(JSON.stringify(auth()));
+  const original = rpc.call.getMockImplementation()!;
+  rpc.call.mockImplementation(async (method) =>
+    method === "model/list"
+      ? { data: [{ id: "listed" }], nextCursor: "repeated" }
+      : original(method),
+  );
+  const result = await accounts.inspect(a.id, true);
+  expect(result.modelAccess).toMatchObject({
+    ids: ["listed"],
+    complete: false,
+  });
+  expect(rpc.call.mock.calls.filter(([m]) => m === "model/list")).toHaveLength(
+    2,
+  );
+});
+it("invalidates old model routing and rejection evidence when credentials are explicitly reimported", async () => {
+  const a = await accounts.import(JSON.stringify(auth()));
+  a.modelAccess = { ids: ["old"], complete: true, observedAt: Date.now() };
+  a.modelDenials = { wanted: Date.now() };
+  await accounts.import(JSON.stringify(auth("new")));
+  expect(a.modelAccess).toBeUndefined();
+  expect(a.modelDenials).toBeUndefined();
+});
 beforeEach(async () => {
   root = await fs.mkdtemp(path.join(os.tmpdir(), "relay-auth-"));
   store = new Store(root);

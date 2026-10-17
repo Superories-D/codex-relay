@@ -836,6 +836,26 @@
   border-color: var(--subtle);
   transform: translateY(-1px);
 }
+.model-wait-note {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  margin-bottom: 8px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: var(--subtle);
+  font-size: 12px;
+}
+.model-wait-note > span {
+  flex: 1;
+  min-width: 0;
+}
+.model-wait-note > button {
+  flex-shrink: 0;
+  color: var(--text);
+}
 .desktop-shell .chat-follow-latest:active {
   transform: scale(0.96);
 }
