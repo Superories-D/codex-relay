@@ -86,6 +86,7 @@ async function until(fn, timeout = 20000) {
   const env = { ...process.env, CODEX_RELAY_DATA_DIR: profile };
   delete env.ELECTRON_RUN_AS_NODE;
   let app, terminalId;
+  let processErrors = "";
   const errors = [],
     report = { inferenceRequests: 0, fixture };
   try {
@@ -99,6 +100,9 @@ async function until(fn, timeout = 20000) {
       timeout: 60000,
     });
     const page = await app.firstWindow();
+    app.process().stderr.on("data", (chunk) => {
+      processErrors = (processErrors + chunk.toString()).slice(-8000);
+    });
     page.on("pageerror", (error) => errors.push(error.message));
     const call = (name, args) =>
       page.evaluate(({ name, args }) => window.relay.command(name, args), {
@@ -203,6 +207,40 @@ async function until(fn, timeout = 20000) {
     await until(async () => (await call("terminal.list")).length === 0);
     report.realPtyInputOutputResizeAndReopen = "passed";
     await call("desktop.preferences", { language: "en" });
+    await app.evaluate(({ Menu, BrowserWindow }) => {
+      const original = Menu.buildFromTemplate;
+      Menu.buildFromTemplate = function (template) {
+        const menu = original.call(Menu, template);
+        global.__relayQaMenu = menu;
+        global.__relayQaMenuLabels = menu.items.map((item) => item.label);
+        return menu;
+      };
+      const window = BrowserWindow.getAllWindows()[0],
+        overlay = window.setTitleBarOverlay.bind(window);
+      window.setTitleBarOverlay = function (value) {
+        global.__relayQaOverlay = value;
+        return overlay(value);
+      };
+    });
+    await call("window.menu", { menu: "edit" });
+    assert.deepEqual(
+      (await app.evaluate(() => global.__relayQaMenuLabels)).filter(Boolean),
+      ["Undo", "Redo", "Cut", "Copy", "Paste", "Select all"],
+    );
+    await app.evaluate(({ BrowserWindow }) =>
+      global.__relayQaMenu.closePopup(BrowserWindow.getAllWindows()[0]),
+    );
+    await call("desktop.preferences", { theme: "light" });
+    assert.equal(
+      (await app.evaluate(() => global.__relayQaOverlay)).color,
+      "#f2f3f2",
+    );
+    await call("desktop.preferences", { theme: "dark" });
+    assert.equal(
+      (await app.evaluate(() => global.__relayQaOverlay)).color,
+      "#1f2020",
+    );
+    report.nativeMenusAndCaptionTheme = "passed";
     await page.reload();
     await until(
       async () => (await page.locator("html").getAttribute("lang")) === "en",
@@ -214,10 +252,11 @@ async function until(fn, timeout = 20000) {
     report.rendererErrors = errors;
     console.log(JSON.stringify(report));
   } catch (error) {
+    console.error("Native QA failed:", error, processErrors);
     if (app) {
-      const page = await app.firstWindow();
+      const page = app.windows()[0];
       await page
-        .screenshot({ path: path.join(output, "desktop-native-failure.png") })
+        ?.screenshot({ path: path.join(output, "desktop-native-failure.png") })
         .catch(() => {});
     }
     throw error;

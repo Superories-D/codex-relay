@@ -12,6 +12,7 @@ import {
   nativeImage,
   powerSaveBlocker,
   Notification,
+  nativeTheme,
 } from "electron";
 import path from "node:path";
 import { promises as fs } from "node:fs";
@@ -53,6 +54,7 @@ import { Terminals } from "../core/terminals";
 import { randomUUID } from "node:crypto";
 import { Rpc } from "../core/rpc";
 import { capabilities } from "../shared/capabilities";
+import { resolveLanguage, translate } from "../shared/locale";
 app.setName("Codex Relay");
 const startupTrace = (stage: string) => {
   if (process.env.CODEX_RELAY_STARTUP_TRACE === "1")
@@ -120,6 +122,35 @@ async function boot() {
   await store.load();
   const desktop = new Desktop(dataRoot);
   await desktop.load();
+  const nativeText = (source: string) =>
+    translate(
+      source,
+      resolveLanguage(
+        desktop.data.preferences.language || "auto",
+        app.getLocale(),
+      ),
+    );
+  const applyDesktopPreferences = () => {
+    if (nativeTheme.themeSource !== desktop.data.preferences.theme)
+      nativeTheme.themeSource = desktop.data.preferences.theme;
+    if (window && !window.isDestroyed())
+      window.setTitleBarOverlay({
+        color: nativeTheme.shouldUseDarkColors ? "#1f2020" : "#f2f3f2",
+        symbolColor: nativeTheme.shouldUseDarkColors ? "#b5b5b5" : "#555555",
+        height: 38,
+      });
+    tray?.setContextMenu(
+      Menu.buildFromTemplate([
+        { label: nativeText("打开 Codex Relay"), click: () => window?.show() },
+        {
+          label: nativeText("暂停受管任务 / 监控并退出"),
+          click: () => app.quit(),
+        },
+      ]),
+    );
+  };
+  nativeTheme.themeSource = desktop.data.preferences.theme;
+  nativeTheme.on("updated", applyDesktopPreferences);
   const terminals = new Terminals(dataRoot, () => store.data.settings.cliPath);
   const notifiedStates = new Map(store.data.jobs.map((j) => [j.id, j.state]));
   let scheduler: Scheduler;
@@ -190,8 +221,8 @@ async function boot() {
         const notice = new Notification({
           title:
             job.state === "completed"
-              ? "Codex 已完成本轮任务"
-              : "Codex 需要你的处理",
+              ? nativeText("Codex 已完成本轮任务")
+              : nativeText("Codex 需要你的处理"),
           body: job.title,
         });
         notice.on("click", () => {
@@ -293,30 +324,46 @@ async function boot() {
         return task;
       }
       case "window.menu": {
-        const menu = Menu.buildFromTemplate([
-          { label: "文件", submenu: [{ role: "close" }, { role: "quit" }] },
+        const a = z
+          .object({ menu: z.enum(["file", "edit", "view"]).optional() })
+          .strict()
+          .parse(args || {});
+        const menus: Electron.MenuItemConstructorOptions[] = [
           {
-            label: "编辑",
+            label: nativeText("文件"),
             submenu: [
-              { role: "undo" },
-              { role: "redo" },
+              { role: "close", label: nativeText("关闭窗口") },
+              { role: "quit", label: nativeText("退出") },
+            ],
+          },
+          {
+            label: nativeText("编辑"),
+            submenu: [
+              { role: "undo", label: nativeText("撤销") },
+              { role: "redo", label: nativeText("重做") },
               { type: "separator" },
-              { role: "cut" },
-              { role: "copy" },
-              { role: "paste" },
-              { role: "selectAll" },
+              { role: "cut", label: nativeText("剪切") },
+              { role: "copy", label: nativeText("复制") },
+              { role: "paste", label: nativeText("粘贴") },
+              { role: "selectAll", label: nativeText("全选") },
             ],
           },
           {
-            label: "视图",
+            label: nativeText("视图"),
             submenu: [
-              { role: "resetZoom" },
-              { role: "zoomIn" },
-              { role: "zoomOut" },
-              { role: "togglefullscreen" },
+              { role: "resetZoom", label: nativeText("实际大小") },
+              { role: "zoomIn", label: nativeText("放大") },
+              { role: "zoomOut", label: nativeText("缩小") },
+              { role: "togglefullscreen", label: nativeText("切换全屏") },
             ],
           },
-        ]);
+        ];
+        const selected = a.menu
+          ? menus[{ file: 0, edit: 1, view: 2 }[a.menu]].submenu
+          : menus;
+        const menu = Menu.buildFromTemplate(
+          selected as Electron.MenuItemConstructorOptions[],
+        );
         menu.popup({ window });
         return;
       }
@@ -354,6 +401,7 @@ async function boot() {
             .parse(args),
         );
         await desktop.save();
+        applyDesktopPreferences();
         return desktop.data;
       }
       case "project.add":
@@ -708,7 +756,7 @@ async function boot() {
       }
       case "chat.attachments": {
         const r = await dialog.showOpenDialog(window!, {
-          title: "添加图片或项目文件",
+          title: nativeText("添加图片或项目文件"),
           properties: ["openFile", "multiSelections"],
         });
         return r.canceled
@@ -808,7 +856,7 @@ async function boot() {
         let file = path.join(os.homedir(), ".codex", "auth.json");
         if (name === "account.import") {
           const result = await dialog.showOpenDialog(window!, {
-            title: "导入 Codex 账户备份",
+            title: nativeText("导入 Codex 账户备份"),
             properties: ["openFile"],
             filters: [
               { name: "auth.json / 账户备份", extensions: ["json", "jsonl"] },
@@ -1077,6 +1125,7 @@ async function boot() {
     },
   });
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  applyDesktopPreferences();
   window.webContents.on("will-navigate", (event) => event.preventDefault());
   window.webContents.session.setPermissionRequestHandler(
     (_wc, _permission, callback) => callback(false),
@@ -1124,12 +1173,7 @@ async function boot() {
   const icon = nativeImage.createFromBitmap(pixels, { width: 32, height: 32 });
   tray = new Tray(icon);
   tray.setToolTip("Codex Relay");
-  tray.setContextMenu(
-    Menu.buildFromTemplate([
-      { label: "打开 Codex Relay", click: () => window?.show() },
-      { label: "暂停受管任务 / 监控并退出", click: () => app.quit() },
-    ]),
-  );
+  applyDesktopPreferences();
   tray.on("double-click", () => window?.show());
   app.on("before-quit", (event) => {
     if (!quitting) {

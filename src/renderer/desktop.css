@@ -3065,7 +3065,7 @@
   }
 }
 .turn-history-description {
-  color: var(--desktop-muted, #999);
+  color: var(--subtle);
   line-height: 1.65;
   margin: 0 0 16px;
 }
@@ -3077,14 +3077,14 @@
 }
 .turn-history-entry {
   padding: 16px;
-  border: 1px solid var(--desktop-border, #363636);
+  border: 1px solid var(--line);
   border-radius: 12px;
 }
 .turn-history-entry header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  color: var(--desktop-muted, #999);
+  color: var(--subtle);
   font-size: 12px;
 }
 .turn-history-entry > p {

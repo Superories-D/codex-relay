@@ -100,14 +100,18 @@ beforeEach(async () => {
     rpcs.push(rpc);
     return rpc as any;
   });
-  scheduler = new Scheduler(store, { inspect, cancelLogin: async () => {} } as any, {
-    cli: () => {
-      throw Error("Inference must not start");
+  scheduler = new Scheduler(
+    store,
+    { inspect, cancelLogin: async () => {} } as any,
+    {
+      cli: () => {
+        throw Error("Inference must not start");
+      },
+      desktop: () => {
+        throw Error("Desktop must not start");
+      },
     },
-    desktop: () => {
-      throw Error("Desktop must not start");
-    },
-  });
+  );
 });
 afterEach(async () => {
   await scheduler.shutdown();

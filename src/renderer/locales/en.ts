@@ -1,6 +1,8 @@
 import { legacyEnglish } from "./legacy-en";
+import { nativeEnglish } from "./native-en";
 export const english: Record<string, string> = {
   ...legacyEnglish,
+  ...nativeEnglish,
   会话历史: "Chat history",
   会话历史与编辑: "History and editing",
   "选择一个轮次继续。编辑会创建独立分支，保留原聊天；项目文件保持当前内容。":

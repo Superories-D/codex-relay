@@ -468,7 +468,7 @@ function App({ initialTab = "dashboard" }: { initialTab?: string }) {
           />{" "}
           {connection === "offline" ? t("后台响应较慢") : t("后台已连接")}{" "}
           {t("· 本机加密")}
-          <small>Agent client / v0.5.0</small>
+          <small>Agent client / v0.6.0</small>
           <button className="text-button" onClick={() => act("data.open")}>
             {t("打开数据目录 ↗")}
           </button>

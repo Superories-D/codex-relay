@@ -590,9 +590,15 @@ export function AgentApp({
         </button>
       </div>
       <div className="desktop-menu">
-        <button onClick={() => void call("window.menu")}>{t("文件")}</button>
-        <button onClick={() => void call("window.menu")}>{t("编辑")}</button>
-        <button onClick={() => void call("window.menu")}>{t("视图")}</button>
+        <button onClick={() => void call("window.menu", { menu: "file" })}>
+          {t("文件")}
+        </button>
+        <button onClick={() => void call("window.menu", { menu: "edit" })}>
+          {t("编辑")}
+        </button>
+        <button onClick={() => void call("window.menu", { menu: "view" })}>
+          {t("视图")}
+        </button>
         <button
           onClick={() =>
             void call("link.open", "https://learn.chatgpt.com/docs/app")

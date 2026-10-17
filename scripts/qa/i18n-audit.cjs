@@ -19,11 +19,16 @@ function audit() {
   );
   const keys = new Map(),
     unlocalized = [];
-  for (const name of fs.readdirSync(path.join(root, "src/renderer"))) {
+  const files = fs
+    .readdirSync(path.join(root, "src/renderer"))
+    .map((name) => path.join("src/renderer", name));
+  files.push("src/main/main.ts");
+  for (const file of files) {
+    const name = path.basename(file);
     if (!/\.tsx?$/.test(name) || name === "i18n.ts") continue;
     const source = ts.createSourceFile(
       name,
-      fs.readFileSync(path.join(root, "src/renderer", name), "utf8"),
+      fs.readFileSync(path.join(root, file), "utf8"),
       ts.ScriptTarget.Latest,
       true,
       name.endsWith("tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
@@ -32,7 +37,7 @@ function audit() {
       if (
         ts.isCallExpression(node) &&
         ts.isIdentifier(node.expression) &&
-        node.expression.text === "t" &&
+        ["t", "nativeText"].includes(node.expression.text) &&
         node.arguments[0] &&
         ts.isStringLiteral(node.arguments[0])
       )

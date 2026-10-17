@@ -17,6 +17,14 @@ const { _electron } = require(
     process.env.RELAY_EXECUTABLE ||
     path.join(root, "release/win-unpacked/Codex Relay.exe");
   const profile = await fs.mkdtemp(path.join(output, "packaged-profile-"));
+  await fs.writeFile(
+    path.join(profile, "desktop.json"),
+    JSON.stringify({
+      projects: [],
+      schedules: [],
+      preferences: { theme: "dark", notifications: false, language: "zh-CN" },
+    }),
+  );
   const env = { ...process.env, CODEX_RELAY_DATA_DIR: profile };
   delete env.ELECTRON_RUN_AS_NODE;
   const app = await _electron.launch({ executablePath, env, timeout: 60000 });
@@ -26,7 +34,7 @@ const { _electron } = require(
   try {
     const page = await app.firstWindow();
     page.on("pageerror", (error) => errors.push(error.message));
-    await page.getByRole("button", { name: "新聊天", exact: false }).waitFor();
+    await page.getByRole("button", { name: "新聊天", exact: true }).waitFor();
     const runtime = await app.evaluate(({ app, safeStorage }) => {
       const probe = "Codex Relay Windows encryption probe";
       return {
@@ -54,12 +62,18 @@ const { _electron } = require(
     );
     assert.equal(cli.stderr, "");
     await page.getByRole("button", { name: "账户轮换", exact: true }).click();
-    for (const name of ["账户轮换", "任务队列", "运行记录", "设置", "工作台"]) {
-      await page
-        .getByRole("button", { name, exact: name !== "任务队列" })
-        .click();
+    for (const name of [
+      "常规",
+      "外观",
+      "账户与接力",
+      "通知",
+      "个人指令",
+      "快捷键",
+      "运行环境",
+    ]) {
+      await page.getByRole("button", { name, exact: true }).click();
     }
-    await page.getByRole("button", { name: "返回对话", exact: false }).click();
+    await page.getByRole("button", { name: "返回聊天", exact: true }).click();
     await page.getByRole("button", { name: "选择模型和思考强度" }).click();
     await page
       .getByText("请先在账户中添加并启用登录。", { exact: true })

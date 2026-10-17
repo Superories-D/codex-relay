@@ -13,16 +13,23 @@ const { chromium } = require(
     output = path.join(root, "qa-output");
   const { version } = require(path.join(root, "package.json"));
   const profile = await fs.mkdtemp(path.join(output, "portable-profile-"));
+  await fs.writeFile(
+    path.join(profile, "desktop.json"),
+    JSON.stringify({
+      projects: [],
+      schedules: [],
+      preferences: { theme: "dark", notifications: false, language: "zh-CN" },
+    }),
+  );
   const server = net.createServer();
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
   const port = server.address().port;
   await new Promise((r) => server.close(r));
   const env = { ...process.env, CODEX_RELAY_DATA_DIR: profile };
   delete env.ELECTRON_RUN_AS_NODE;
-  const executable = path.join(
-    root,
-    `release/Codex-Relay-Portable-${version}-x64.exe`,
-  );
+  const executable =
+    process.env.RELAY_EXECUTABLE ||
+    path.join(root, `release/Codex-Relay-Portable-${version}-x64.exe`);
   const child = spawn(
     executable,
     [`--remote-debugging-port=${port}`, "--remote-debugging-address=127.0.0.1"],
@@ -43,7 +50,7 @@ const { chromium } = require(
     const page =
       context.pages()[0] ||
       (await context.waitForEvent("page", { timeout: 30000 }));
-    await page.getByRole("button", { name: "新聊天", exact: false }).waitFor();
+    await page.getByRole("button", { name: "新聊天", exact: true }).waitFor();
     const cliPath = path.join(
       root,
       "runtime/cli/node_modules/@openai/codex-win32-x64/vendor/x86_64-pc-windows-msvc/bin/codex.exe",
