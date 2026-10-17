@@ -54,6 +54,37 @@ it("distinguishes background approval and spawned agents from main conversations
   ).toMatchObject({ source: "subagent", parentThreadId: "parent" });
   expect(nativeSource("vscode")).toEqual({ source: "vscode" });
 });
+it("rebases copied native rollout paths into the private import home before CLI resume", async () => {
+  const id = await sqliteFixture();
+  const { DatabaseSync } = await import("node:sqlite");
+  const db = new DatabaseSync(path.join(home, "state_5.sqlite"));
+  db.exec("ALTER TABLE threads ADD COLUMN rollout_path TEXT");
+  const sourcePath = path.join(home, "sessions", "original.jsonl");
+  db.prepare("UPDATE threads SET rollout_path=?").run(sourcePath);
+  db.close();
+  importer.start([home]);
+  await finished();
+  const job = store.data.jobs[0];
+  const copy = new DatabaseSync(
+    path.join(store.jobHome(job.id), "state_5.sqlite"),
+    { readOnly: true },
+  );
+  expect(
+    copy.prepare("SELECT rollout_path FROM threads WHERE id=?").get(id)
+      ?.rollout_path,
+  ).toBe(
+    path.join(store.jobHome(job.id), "sessions", "imported", `${id}.jsonl`),
+  );
+  copy.close();
+  const original = new DatabaseSync(path.join(home, "state_5.sqlite"), {
+    readOnly: true,
+  });
+  expect(
+    original.prepare("SELECT rollout_path FROM threads WHERE id=?").get(id)
+      ?.rollout_path,
+  ).toBe(sourcePath);
+  original.close();
+});
 it("preserves every native page and exports complete source when a very large output uses a UI preview", async () => {
   const id = await sqliteFixture();
   const { DatabaseSync } = await import("node:sqlite"),

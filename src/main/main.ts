@@ -61,7 +61,7 @@ import { capabilities } from "../shared/capabilities";
 import { resolveLanguage, translate } from "../shared/locale";
 import { BackgroundHistoryImport } from "../core/history-import";
 import { Attachments, clipboardFilePaths } from "../core/attachments";
-import { exportNativeThread } from "../core/native-history";
+import { exportNativeThread, rebaseNativeHome } from "../core/native-history";
 import { importRunning } from "../shared/history-import";
 app.setName("Codex Relay");
 const startupTrace = (stage: string) => {
@@ -164,7 +164,14 @@ async function boot() {
       desktop: (ctx) => new DesktopWorker(ctx, store, accounts, scripts),
     },
     (job) => recoverJob(job, store, accounts, scripts),
-    (job) => existing.assertManagedSafe(job),
+    async (job) => {
+      await existing.assertManagedSafe(job);
+      if (job.historySource?.storage === "sqlite") {
+        const home = store.jobHome(job.id);
+        await Rpc.assertHomeIdle(home);
+        await rebaseNativeHome(home);
+      }
+    },
   );
   const existing = new ExistingSessions(
     store,

@@ -242,13 +242,19 @@ const version = require("../../package.json").version;
     // Verify the bundled CLI can read/resume the COPY without sending a turn.
     const helper = path.resolve("qa-output/native-rpc.cjs");
     await build({
-      entryPoints: [path.resolve("src/core/rpc.ts")],
+      stdin: {
+        contents:
+          'export {Rpc} from "./src/core/rpc";export {rebaseNativeHome} from "./src/core/native-history";',
+        resolveDir: process.cwd(),
+        loader: "ts",
+      },
       outfile: helper,
       bundle: true,
       platform: "node",
       format: "cjs",
     });
-    const { Rpc } = require(helper);
+    const { Rpc, rebaseNativeHome } = require(helper);
+    await rebaseNativeHome(home);
     assert(candidate);
     const rpc = await Rpc.open(
       path.resolve(

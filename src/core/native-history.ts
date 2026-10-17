@@ -17,6 +17,70 @@ export interface NativeThread {
 }
 const uuid = (id: unknown): id is string =>
   typeof id === "string" && /^[a-f0-9-]{36}$/i.test(id);
+// Native metadata contains absolute paths from the original home. Never let
+// resuming an imported thread append to the source client's rollout files.
+export async function rebaseNativeHome(home: string) {
+  const names = (await fs.readdir(home)).filter((f) =>
+    /^state_\d+\.sqlite$/.test(f),
+  );
+  const { DatabaseSync } = await import("node:sqlite");
+  const realHome = await fs.realpath(home);
+  for (const name of names) {
+    const db = new DatabaseSync(path.join(realHome, name));
+    try {
+      if (
+        !db
+          .prepare("PRAGMA table_info(threads)")
+          .all()
+          .some((r) => r.name === "rollout_path")
+      )
+        continue;
+      await fs.mkdir(path.join(realHome, "sessions", "imported"), {
+        recursive: true,
+        mode: 0o700,
+      });
+      await fs.mkdir(path.join(realHome, "archived_sessions", "imported"), {
+        recursive: true,
+        mode: 0o700,
+      });
+      const rows = db
+        .prepare("SELECT id,rollout_path,archived FROM threads")
+        .all();
+      const update = db.prepare("UPDATE threads SET rollout_path=? WHERE id=?");
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        for (const row of rows) {
+          if (!uuid(row.id)) continue;
+          const relative =
+            typeof row.rollout_path === "string"
+              ? path.relative(realHome, row.rollout_path)
+              : "..";
+          if (
+            relative &&
+            !relative.startsWith("..") &&
+            !path.isAbsolute(relative)
+          )
+            continue;
+          update.run(
+            path.join(
+              realHome,
+              row.archived ? "archived_sessions" : "sessions",
+              "imported",
+              `${row.id}.jsonl`,
+            ),
+            row.id,
+          );
+        }
+        db.exec("COMMIT");
+      } catch (e) {
+        db.exec("ROLLBACK");
+        throw e;
+      }
+    } finally {
+      db.close();
+    }
+  }
+}
 export function nativeSource(raw: unknown) {
   let source: any = raw;
   try {
@@ -162,6 +226,7 @@ export class NativeSnapshots {
           source.close();
         }
       }
+      await rebaseNativeHome(home);
       snapshot = {
         id,
         home,
