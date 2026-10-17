@@ -39,8 +39,9 @@ export function ImportDialog({
       {result ? (
         <>
           <p role="status">
-            {t("已导入")}
-            {result.imported} {t("个账户。额度将由后台核实。")}
+            {t("已导入 {p0} 个账户。额度将由后台核实。", {
+              p0: result.imported,
+            })}
           </p>
           {result.results.map((r) => (
             <div className="import-row" key={r.index}>

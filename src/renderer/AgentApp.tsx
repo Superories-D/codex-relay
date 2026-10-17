@@ -14,7 +14,7 @@ import { Dialog } from "./Dialog";
 import { ModelPicker } from "./ModelPicker";
 import { ActivityTimeline } from "./ActivityTimeline";
 import { importPastedFiles } from "./paste-files";
-import { MotionRegion } from "./MotionRegion";
+import { MotionRegion, ModalPresence } from "./MotionRegion";
 import { mergePage } from "./chat-view";
 import { TerminalPane } from "./TerminalPane";
 import { Workbench, type WorkbenchTab } from "./Workbench";
@@ -194,6 +194,7 @@ export function AgentApp({
   preferencesRef.current = desktop.preferences;
   const initialSelection = useRef(false);
   const messageInput = useRef<HTMLTextAreaElement>(null);
+  const focusAfterHistory = useRef(false);
   const modelDirty = useRef(false);
   selectedRef.current = selected;
   const job = snapshot?.jobs.find((j) => j.id === selected);
@@ -290,6 +291,7 @@ export function AgentApp({
   }, [inspector]);
   useEffect(() => {
     const handle = (e: KeyboardEvent) => {
+      if (document.querySelector("dialog:modal")) return;
       const mod = e.ctrlKey || e.metaKey;
       if (mod && e.key.toLowerCase() === "k") {
         e.preventDefault();
@@ -1842,64 +1844,79 @@ export function AgentApp({
             }}
           />
         )}
-        {history && (
-          <HistoryDialog
-            call={call}
-            close={() => setHistory(false)}
-            imported={(id) => {
-              setSelected(id);
-              setArchived(false);
-            }}
-          />
-        )}
-        {turnHistory && job && (
-          <TurnHistory
-            job={job}
-            call={call}
-            close={() => setTurnHistory(false)}
-            created={async (created, text) => {
-              setSnapshot(await window.relay.snapshot());
-              select(created);
-              if (text !== undefined)
-                setDrafts((values) => ({ ...values, [created.id]: text }));
-              requestAnimationFrame(() => messageInput.current?.focus());
-            }}
-          />
-        )}
-        {operations && job && (
-          <Operations
-            job={job}
-            initialMethod={operationMethod}
-            call={call}
-            close={() => setOperations(false)}
-          />
-        )}
-        {rename && job && (
-          <Dialog title={t("重命名会话")} onClose={() => setRename(false)}>
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                action(async () => {
-                  await call("chat.update", { id: job.id, title });
-                  setRename(false);
-                });
+        <ModalPresence>
+          {history && (
+            <HistoryDialog
+              call={call}
+              close={() => setHistory(false)}
+              imported={(id) => {
+                setSelected(id);
+                setArchived(false);
               }}
-            >
-              <label>
-                {t("会话名称")}
-                <input
-                  autoFocus
-                  value={title}
-                  maxLength={120}
-                  onChange={(e) => setTitle(e.target.value)}
-                />
-              </label>
-              <button className="primary" disabled={pending || !title.trim()}>
-                {t("保存")}
-              </button>
-            </form>
-          </Dialog>
-        )}
+            />
+          )}
+        </ModalPresence>
+        <ModalPresence
+          onExitComplete={() => {
+            if (focusAfterHistory.current) {
+              focusAfterHistory.current = false;
+              messageInput.current?.focus({ preventScroll: true });
+            }
+          }}
+        >
+          {turnHistory && job && (
+            <TurnHistory
+              job={job}
+              call={call}
+              close={() => setTurnHistory(false)}
+              created={async (created, text) => {
+                setSnapshot(await window.relay.snapshot());
+                select(created);
+                if (text !== undefined)
+                  setDrafts((values) => ({ ...values, [created.id]: text }));
+                focusAfterHistory.current = true;
+              }}
+            />
+          )}
+        </ModalPresence>
+        <ModalPresence>
+          {operations && job && (
+            <Operations
+              job={job}
+              initialMethod={operationMethod}
+              call={call}
+              close={() => setOperations(false)}
+            />
+          )}
+        </ModalPresence>
+        <ModalPresence>
+          {rename && job && (
+            <Dialog title={t("重命名会话")} onClose={() => setRename(false)}>
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  action(async () => {
+                    await call("chat.update", { id: job.id, title });
+                    setRename(false);
+                  });
+                }}
+              >
+                <label>
+                  {t("会话名称")}
+                  <input
+                    autoFocus
+                    value={title}
+                    maxLength={120}
+                    onChange={(e) => setTitle(e.target.value)}
+                  />
+                </label>
+                <button className="primary" disabled={pending || !title.trim()}>
+                  {t("保存")}
+                </button>
+              </form>
+            </Dialog>
+          )}
+        </ModalPresence>
       </div>
     </div>
   );

@@ -70,6 +70,13 @@ const root = path.resolve(__dirname, "../.."),
       .click();
     await dialog.waitFor({ state: "hidden" });
     assert.equal(
+      await page
+        .getByLabel("消息", { exact: true })
+        .evaluate((node) => node === document.activeElement),
+      true,
+      "new branch draft receives focus after modal exit",
+    );
+    assert.equal(
       await page.getByLabel("消息", { exact: true }).inputValue(),
       draft,
     );

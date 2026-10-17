@@ -278,11 +278,33 @@ let activeBrowser, activeServer;
           window.qa.push();
           return;
         }
+        if (name === "desktop.read")
+          return {
+            projects: [],
+            schedules: [],
+            preferences: { theme: "dark", language: "zh-CN" },
+          };
+        if (name === "history.importAll.status")
+          return {
+            phase: "idle",
+            scanned: 0,
+            processed: 0,
+            imported: 0,
+            skipped: 0,
+            failed: 0,
+            projects: 0,
+            readOnly: 0,
+            roots: [],
+            warnings: [],
+            failures: [],
+          };
         return null;
       },
     };
   });
   await page.goto(`http://127.0.0.1:${server.address().port}/`);
+  await page.getByRole("button", { name: "任务队列", exact: true }).click();
+  await page.getByRole("button", { name: "工作台", exact: true }).click();
   await page.getByRole("heading", { name: "接力工作，不丢进度。" }).waitFor();
 
   if (process.env.RELAY_QA_FONT_DIR) {
@@ -309,7 +331,7 @@ let activeBrowser, activeServer;
     fullPage: true,
   });
   await page.keyboard.press("Escape");
-  assert.equal(await page.getByRole("dialog").count(), 0);
+  await page.getByRole("dialog").waitFor({ state: "hidden" });
   await page.getByRole("button", { name: "取消任务", exact: true }).click();
   await page.getByRole("dialog").waitFor();
   await page.keyboard.press("Escape");

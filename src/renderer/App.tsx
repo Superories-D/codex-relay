@@ -1,3 +1,4 @@
+import { ModalPresence } from "./MotionRegion";
 import { t, useI18n, formatDate, getLanguage } from "./i18n";
 import React, { useEffect, useState, useRef } from "react";
 import { createRoot } from "react-dom/client";
@@ -1036,142 +1037,156 @@ function App({ initialTab = "dashboard" }: { initialTab?: string }) {
           </span>
         </footer>
       </main>
-      {modal && (
-        <Dialog
-          title={modal === "job" ? t("新建任务") : t("添加账户")}
-          busy={busy}
-          onClose={() => setModal(null)}
-        >
-          {error && (
-            <div className="alert" role="alert">
-              {error}
+      <ModalPresence>
+        {modal && (
+          <Dialog
+            title={modal === "job" ? t("新建任务") : t("添加账户")}
+            busy={busy}
+            onClose={() => setModal(null)}
+          >
+            {error && (
+              <div className="alert" role="alert">
+                {error}
+              </div>
+            )}
+            {modal === "login" ? (
+              <LoginForm
+                busy={busy}
+                submit={async (a) => {
+                  await cmd("account.login", a);
+                  setModal(null);
+                  setNotice(t("请在官方页面完成登录，账户会自动添加。"));
+                }}
+              />
+            ) : (
+              <JobForm
+                accounts={snapshot.accounts}
+                busy={busy}
+                command={cmd}
+                submit={async (a) => {
+                  const job = (await cmd("job.add", a)) as Job;
+                  setSelected(job.id);
+                  setModal(null);
+                  setTab("tasks");
+                  setNotice(t("任务已加入队列，可以在这里查看执行进度。"));
+                }}
+              />
+            )}
+          </Dialog>
+        )}
+      </ModalPresence>
+      <ModalPresence>
+        {showExisting && (
+          <ExistingDialog
+            command={cmd}
+            close={() => setShowExisting(false)}
+            attached={(job) => {
+              setShowExisting(false);
+              setSelected(job.id);
+              setTab("tasks");
+              setNotice(t("已接入原会话，可在任务详情查看监控和交接进度。"));
+            }}
+          />
+        )}
+      </ModalPresence>
+      <ModalPresence>
+        {importPreview && (
+          <ImportDialog
+            key={importPreview.id}
+            preview={importPreview}
+            commit={(indices) =>
+              cmd("account.importCommit", {
+                id: importPreview.id,
+                indices,
+              }) as Promise<any>
+            }
+            cancel={() => {
+              act("account.importCancel", importPreview.id);
+              setImportPreview(undefined);
+            }}
+          />
+        )}
+      </ModalPresence>
+      <ModalPresence>
+        {confirmAction && (
+          <Dialog
+            title={confirmAction.title}
+            onClose={() => setConfirmAction(undefined)}
+          >
+            <h2>{confirmAction.title}</h2>
+            <p>{confirmAction.message}</p>
+            <div className="row gap">
+              <button onClick={() => setConfirmAction(undefined)}>
+                {t("返回")}
+              </button>
+              <button
+                className="primary"
+                onClick={() => {
+                  const action = confirmAction;
+                  setConfirmAction(undefined);
+                  action.run();
+                }}
+              >
+                {t("确认")}
+              </button>
             </div>
-          )}
-          {modal === "login" ? (
-            <LoginForm
-              busy={busy}
-              submit={async (a) => {
-                await cmd("account.login", a);
-                setModal(null);
-                setNotice(t("请在官方页面完成登录，账户会自动添加。"));
-              }}
-            />
-          ) : (
-            <JobForm
-              accounts={snapshot.accounts}
-              busy={busy}
-              command={cmd}
-              submit={async (a) => {
-                const job = (await cmd("job.add", a)) as Job;
-                setSelected(job.id);
-                setModal(null);
-                setTab("tasks");
-                setNotice(t("任务已加入队列，可以在这里查看执行进度。"));
-              }}
-            />
-          )}
-        </Dialog>
-      )}
-      {showExisting && (
-        <ExistingDialog
-          command={cmd}
-          close={() => setShowExisting(false)}
-          attached={(job) => {
-            setShowExisting(false);
-            setSelected(job.id);
-            setTab("tasks");
-            setNotice(t("已接入原会话，可在任务详情查看监控和交接进度。"));
-          }}
-        />
-      )}
-      {importPreview && (
-        <ImportDialog
-          key={importPreview.id}
-          preview={importPreview}
-          commit={(indices) =>
-            cmd("account.importCommit", {
-              id: importPreview.id,
-              indices,
-            }) as Promise<any>
-          }
-          cancel={() => {
-            act("account.importCancel", importPreview.id);
-            setImportPreview(undefined);
-          }}
-        />
-      )}
-      {confirmAction && (
-        <Dialog
-          title={confirmAction.title}
-          onClose={() => setConfirmAction(undefined)}
-        >
-          <h2>{confirmAction.title}</h2>
-          <p>{confirmAction.message}</p>
-          <div className="row gap">
-            <button onClick={() => setConfirmAction(undefined)}>
-              {t("返回")}
-            </button>
+          </Dialog>
+        )}
+      </ModalPresence>
+      <ModalPresence>
+        {desktopReport && (
+          <Dialog
+            title={t("客户端适配检查")}
+            onClose={() => setDesktopReport(undefined)}
+          >
+            <p className="eyebrow">DESKTOP CHECK</p>
+            <h2>{t("客户端适配检查")}</h2>
+            <div className="diagnostic-grid">
+              <p>
+                <b>{desktopReport.connected ? t("已连接") : t("未连接")}</b>
+                {t("受管调试连接")}
+              </p>
+              <p>
+                <b>
+                  {desktopReport.threadSelected ? t("已确认") : t("未确认")}
+                </b>
+                {t("当前目标会话")}
+              </p>
+              {Object.entries(desktopReport.counts ?? {}).map(
+                ([key, value]) => (
+                  <p key={key}>
+                    <b>
+                      {String(value)} {t("个")}
+                    </b>
+                    {(
+                      {
+                        editorSelector: t("可用输入框"),
+                        sendSelector: t("可用发送按钮"),
+                        stopSelector: t("可用停止按钮"),
+                        threadSelector: t("会话控件"),
+                      } as any
+                    )[key] ?? key}
+                  </p>
+                ),
+              )}
+            </div>
+            <p className="notice">
+              {t(
+                "运行中发送按钮可能不可用；停止按钮应唯一。检测只读取控件状态，不会发送消息或改写草稿。",
+              )}
+              {desktopReport.hasDraft ? t(" 当前输入框内有草稿。") : ""}
+            </p>
             <button
-              className="primary"
               onClick={() => {
-                const action = confirmAction;
-                setConfirmAction(undefined);
-                action.run();
+                setDesktopReport(undefined);
+                setTab("settings");
               }}
             >
-              {t("确认")}
+              {t("查看适配设置")}
             </button>
-          </div>
-        </Dialog>
-      )}
-      {desktopReport && (
-        <Dialog
-          title={t("客户端适配检查")}
-          onClose={() => setDesktopReport(undefined)}
-        >
-          <p className="eyebrow">DESKTOP CHECK</p>
-          <h2>{t("客户端适配检查")}</h2>
-          <div className="diagnostic-grid">
-            <p>
-              <b>{desktopReport.connected ? t("已连接") : t("未连接")}</b>
-              {t("受管调试连接")}
-            </p>
-            <p>
-              <b>{desktopReport.threadSelected ? t("已确认") : t("未确认")}</b>
-              {t("当前目标会话")}
-            </p>
-            {Object.entries(desktopReport.counts ?? {}).map(([key, value]) => (
-              <p key={key}>
-                <b>
-                  {String(value)} {t("个")}
-                </b>
-                {(
-                  {
-                    editorSelector: t("可用输入框"),
-                    sendSelector: t("可用发送按钮"),
-                    stopSelector: t("可用停止按钮"),
-                    threadSelector: t("会话控件"),
-                  } as any
-                )[key] ?? key}
-              </p>
-            ))}
-          </div>
-          <p className="notice">
-            {t(
-              "运行中发送按钮可能不可用；停止按钮应唯一。检测只读取控件状态，不会发送消息或改写草稿。",
-            )}
-            {desktopReport.hasDraft ? t(" 当前输入框内有草稿。") : ""}
-          </p>
-          <button
-            onClick={() => {
-              setDesktopReport(undefined);
-              setTab("settings");
-            }}
-          >
-            {t("查看适配设置")}
-          </button>
-        </Dialog>
-      )}
+          </Dialog>
+        )}
+      </ModalPresence>
     </div>
   );
 }

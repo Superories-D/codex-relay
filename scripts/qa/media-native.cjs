@@ -94,8 +94,10 @@ async function until(fn, timeout = 20000) {
         args,
       });
     await page.getByRole("button", { name: "新聊天", exact: true }).waitFor();
-    const png = await app.evaluate(({ nativeImage }) => {
-      const bitmap = Buffer.alloc(96 * 96 * 4);
+    const png = await app.evaluate(({ nativeImage }, large) => {
+      const width = large ? 1600 : 96,
+        height = large ? 1200 : 96;
+      const bitmap = Buffer.alloc(width * height * 4);
       for (let i = 0; i < bitmap.length; i += 4) {
         bitmap[i] = 0;
         bitmap[i + 1] = 0;
@@ -103,10 +105,10 @@ async function until(fn, timeout = 20000) {
         bitmap[i + 3] = 255;
       }
       return nativeImage
-        .createFromBitmap(bitmap, { width: 96, height: 96 })
+        .createFromBitmap(bitmap, { width, height })
         .toPNG()
         .toString("base64");
-    });
+    }, !live);
     const source = path.join(cwd, "红色 方块.png"),
       generated = path.join(cwd, "generated-result.png");
     await fs.writeFile(source, Buffer.from(png, "base64"));
@@ -348,9 +350,121 @@ async function until(fn, timeout = 20000) {
     await viewer.getByRole("button", { name: "放大图片", exact: true }).click();
     assert.match(await viewer.innerText(), /125%/);
     await viewer.getByRole("button", { name: "重置缩放", exact: true }).click();
+    if (!live) {
+      const canvas = viewer.getByLabel("图片画布", { exact: true });
+      await canvas.focus();
+      for (let index = 0; index < 8; index++) await canvas.press("+");
+      await until(async () => /300%/.test(await viewer.innerText()));
+      await sleep(260);
+      const edges = await canvas.evaluate((node) => {
+        const image = node.querySelector("img");
+        node.scrollLeft = 0;
+        node.scrollTop = 0;
+        const start = {
+          frame: node.getBoundingClientRect().toJSON(),
+          image: image.getBoundingClientRect().toJSON(),
+        };
+        node.scrollLeft = node.scrollWidth;
+        node.scrollTop = node.scrollHeight;
+        const end = {
+          frame: node.getBoundingClientRect().toJSON(),
+          image: image.getBoundingClientRect().toJSON(),
+        };
+        return {
+          start,
+          end,
+          horizontal: node.scrollWidth > node.clientWidth,
+          vertical: node.scrollHeight > node.clientHeight,
+        };
+      });
+      assert(
+        edges.horizontal && edges.vertical,
+        "enlarged image must scroll on both axes",
+      );
+      assert(
+        edges.start.image.left >= edges.start.frame.left &&
+          edges.start.image.top >= edges.start.frame.top,
+        "top-left corner is accessible",
+      );
+      assert(
+        edges.end.image.right <= edges.end.frame.right &&
+          edges.end.image.bottom <= edges.end.frame.bottom,
+        "bottom-right corner is accessible",
+      );
+      await canvas.evaluate((node) => {
+        node.scrollLeft = 100;
+        node.scrollTop = 100;
+      });
+      const box = await canvas.boundingBox();
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(
+        box.x + box.width / 2 - 90,
+        box.y + box.height / 2 - 70,
+        { steps: 6 },
+      );
+      await page.mouse.up();
+      const moved = await canvas.evaluate((node) => ({
+        left: node.scrollLeft,
+        top: node.scrollTop,
+      }));
+      assert(moved.left > 170 && moved.top > 150);
+      await page.evaluate(() =>
+        document.querySelector(".agent-composer textarea").focus(),
+      );
+      assert(
+        await page.evaluate(
+          () => !!document.activeElement.closest("dialog[open]"),
+        ),
+        "native modal blocks background focus",
+      );
+      await page.keyboard.press("Tab");
+      await page.keyboard.press("Shift+Tab");
+      assert(
+        await page.evaluate(
+          () => !!document.activeElement.closest("dialog[open]"),
+        ),
+        "tab navigation stays inside the active modal",
+      );
+      await page.keyboard.press("Control+j");
+      assert.equal(
+        await page.locator(".terminal-pane").count(),
+        0,
+        "background shortcuts remain blocked while modal is open",
+      );
+      report.imagePanCornersAndModalFocus = "passed";
+      await viewer
+        .getByRole("button", { name: "重置缩放", exact: true })
+        .click();
+    }
     await page.screenshot({ path: path.join(output, "media-viewer.png") });
-    await page.keyboard.press("Escape");
+    const fade = await viewer.evaluate(async (node) => {
+      const dialog = node.closest("dialog"),
+        frames = [];
+      node.querySelector(".modal-close").click();
+      const start = performance.now();
+      while (performance.now() - start < 280) {
+        await new Promise(requestAnimationFrame);
+        frames.push({
+          opacity: Number(getComputedStyle(dialog).opacity),
+          connected: dialog.isConnected,
+          modal: dialog.matches(":modal"),
+        });
+      }
+      return frames;
+    });
+    assert(
+      fade.some(
+        (frame) => frame.connected && frame.opacity > 0 && frame.opacity < 0.95,
+      ),
+      "closing dialog has fade frames",
+    );
+    assert(
+      fade.filter((frame) => frame.connected).every((frame) => frame.modal),
+      "background remains blocked during exit",
+    );
     await viewer.waitFor({ state: "hidden" });
+    report.dialogExitAndFocus = "passed";
     assert.deepEqual(errors, []);
     report.rendererErrors = errors;
     report.inlineImagesAndViewer = "passed";

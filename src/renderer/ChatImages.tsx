@@ -1,3 +1,4 @@
+import { ModalPresence } from "./MotionRegion";
 import React, {
   createContext,
   useContext,
@@ -17,7 +18,6 @@ import {
 import type { ChatImage } from "../shared/types";
 import { t, useI18n } from "./i18n";
 import { Dialog } from "./Dialog";
-import { createPortal } from "react-dom";
 
 export const MediaContext = createContext<{
   id?: string;
@@ -137,13 +137,15 @@ export function ImageThumbnail({
           </span>
         )}
       </button>
-      {open && (
-        <ImageViewer
-          image={image}
-          context={context}
-          close={() => setOpen(false)}
-        />
-      )}
+      <ModalPresence>
+        {open && (
+          <ImageViewer
+            image={image}
+            context={context}
+            close={() => setOpen(false)}
+          />
+        )}
+      </ModalPresence>
     </>
   );
 }
@@ -160,6 +162,38 @@ function ImageViewer({
   const [source, setSource] = useState(image.data || image.url || ""),
     [error, setError] = useState(""),
     [zoom, setZoom] = useState(1);
+  const [natural, setNatural] = useState({ width: 0, height: 0 });
+  const [viewport, setViewport] = useState({ width: 1, height: 1 });
+  const [dragging, setDragging] = useState(false);
+  const canvas = useRef<HTMLDivElement>(null);
+  const drag = useRef<
+    | {
+        pointerId: number;
+        x: number;
+        y: number;
+        left: number;
+        top: number;
+      }
+    | undefined
+  >(undefined);
+  const fit = natural.width
+    ? Math.min(
+        1,
+        Math.max(1, viewport.width - 28) / natural.width,
+        Math.max(1, viewport.height - 28) / natural.height,
+      )
+    : 1;
+  const width = Math.max(1, natural.width * fit * zoom),
+    height = Math.max(1, natural.height * fit * zoom);
+  const overflow = width > viewport.width || height > viewport.height;
+  useEffect(() => {
+    const node = canvas.current!;
+    const observer = new ResizeObserver(() =>
+      setViewport({ width: node.clientWidth, height: node.clientHeight }),
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
   useEffect(() => {
     if (image.data || image.url) return;
     let alive = true;
@@ -179,7 +213,7 @@ function ImageViewer({
       alive = false;
     };
   }, []);
-  return createPortal(
+  return (
     <Dialog title={image.name} onClose={close}>
       <div className="image-viewer-toolbar">
         <button
@@ -217,23 +251,90 @@ function ImageViewer({
           </button>
         )}
       </div>
-      <div className="image-viewer-canvas">
+      <div
+        ref={canvas}
+        className={`image-viewer-canvas ${overflow ? "pannable" : ""} ${dragging ? "dragging" : ""}`}
+        tabIndex={0}
+        aria-label={t("图片画布")}
+        onKeyDown={(event) => {
+          if (event.key === "+" || event.key === "=") {
+            event.preventDefault();
+            setZoom((value) => Math.min(3, value + 0.25));
+          } else if (event.key === "-") {
+            event.preventDefault();
+            setZoom((value) => Math.max(0.5, value - 0.25));
+          } else if (event.key === "0") {
+            event.preventDefault();
+            setZoom(1);
+          }
+        }}
+        onPointerDown={(event) => {
+          if (!overflow || event.button !== 0 || event.pointerType === "touch")
+            return;
+          event.preventDefault();
+          event.currentTarget.focus({ preventScroll: true });
+          drag.current = {
+            pointerId: event.pointerId,
+            x: event.clientX,
+            y: event.clientY,
+            left: event.currentTarget.scrollLeft,
+            top: event.currentTarget.scrollTop,
+          };
+          event.currentTarget.setPointerCapture(event.pointerId);
+          setDragging(true);
+        }}
+        onPointerMove={(event) => {
+          const start = drag.current;
+          if (!start || start.pointerId !== event.pointerId) return;
+          event.currentTarget.scrollLeft = start.left + start.x - event.clientX;
+          event.currentTarget.scrollTop = start.top + start.y - event.clientY;
+        }}
+        onPointerUp={(event) => {
+          if (drag.current?.pointerId === event.pointerId) {
+            drag.current = undefined;
+            setDragging(false);
+            event.currentTarget.releasePointerCapture(event.pointerId);
+          }
+        }}
+        onLostPointerCapture={() => {
+          drag.current = undefined;
+          setDragging(false);
+        }}
+        onPointerCancel={() => {
+          drag.current = undefined;
+          setDragging(false);
+        }}
+      >
         {error ? (
           <p role="alert">{error}</p>
         ) : source ? (
-          <img
-            src={source}
-            alt={image.name}
-            referrerPolicy="no-referrer"
-            style={{ scale: zoom }}
-            onError={() => setError(t("图片暂时无法加载"))}
-          />
+          <div
+            className="image-viewer-stage"
+            style={{
+              width: Math.max(viewport.width, width + 28),
+              height: Math.max(viewport.height, height + 28),
+            }}
+          >
+            <img
+              src={source}
+              alt={image.name}
+              referrerPolicy="no-referrer"
+              draggable={false}
+              style={{ width, height }}
+              onLoad={(event) =>
+                setNatural({
+                  width: event.currentTarget.naturalWidth,
+                  height: event.currentTarget.naturalHeight,
+                })
+              }
+              onError={() => setError(t("图片暂时无法加载"))}
+            />
+          </div>
         ) : (
           <LoaderCircle className="spin" size={24} />
         )}
       </div>
-    </Dialog>,
-    document.querySelector(".desktop-shell") || document.body,
+    </Dialog>
   );
 }
 export function ImageGallery({ images }: { images: ChatImage[] }) {

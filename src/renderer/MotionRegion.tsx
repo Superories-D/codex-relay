@@ -1,4 +1,32 @@
-import React, { useEffect, useState } from "react";
+import React, { createContext, useEffect, useRef, useState } from "react";
+
+export const DialogPresenceContext = createContext(false);
+export function ModalPresence({
+  children,
+  onExitComplete,
+}: {
+  children: React.ReactNode;
+  onExitComplete?: () => void;
+}) {
+  const previous = useRef(children);
+  if (children) previous.current = children;
+  const present = usePresence(!!children);
+  const shown = useRef(present),
+    exited = useRef(onExitComplete);
+  exited.current = onExitComplete;
+  useEffect(() => {
+    if (present) shown.current = true;
+    else if (shown.current) {
+      shown.current = false;
+      exited.current?.();
+    }
+  }, [present]);
+  return present ? (
+    <DialogPresenceContext.Provider value={!children}>
+      {children || previous.current}
+    </DialogPresenceContext.Provider>
+  ) : null;
+}
 
 // Keep a closing surface around just long enough to finish its exit, without
 // leaving focusable controls or active subscriptions behind after the transition.

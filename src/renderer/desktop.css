@@ -1362,8 +1362,7 @@
   font-size: 12px;
 }
 .image-viewer-canvas {
-  display: grid;
-  place-items: center;
+  position: relative;
   height: min(65vh, 700px);
   overflow: auto;
   border-radius: 12px;
@@ -1381,13 +1380,31 @@
     10px -10px,
     -10px 0;
 }
-.image-viewer-canvas > img {
+.image-viewer-stage {
+  display: grid;
+  place-items: center;
+  min-height: 100%;
+  min-width: 100%;
+}
+.image-viewer-canvas:not(:has(img)) {
+  display: grid;
+  place-items: center;
+}
+.image-viewer-canvas.pannable {
+  cursor: grab;
+}
+.image-viewer-canvas.dragging {
+  cursor: grabbing;
+  user-select: none;
+}
+.image-viewer-stage > img {
   display: block;
-  max-width: 100%;
-  max-height: min(62vh, 670px);
+  max-width: none;
+  max-height: none;
   object-fit: contain;
-  transform-origin: center;
-  transition: scale var(--motion-normal) var(--motion-ease);
+  transition:
+    width var(--motion-normal) var(--motion-ease),
+    height var(--motion-normal) var(--motion-ease);
 }
 .desktop-shell[data-color-scheme="light"] .summary-card {
   background: #f8f8f8;
@@ -3081,6 +3098,7 @@
   z-index: 100;
   color: #aaa;
   font-size: 12px;
+  padding-left: 145px;
 }
 .legacy-window .app-shell {
   padding-top: 39px;
@@ -3089,7 +3107,16 @@
   top: 39px;
 }
 .legacy-window .agent-return {
-  top: 47px;
+  top: 5px;
+  bottom: auto;
+  left: 12px;
+  z-index: 101;
+  height: 28px;
+  padding: 4px 10px;
+  background: #ffffff0a;
+  border: 1px solid #ffffff12;
+  color: #bbb;
+  -webkit-app-region: no-drag;
 }
 .desktop-shell.reduce-motion *,
 .desktop-shell.reduce-motion *::before,
