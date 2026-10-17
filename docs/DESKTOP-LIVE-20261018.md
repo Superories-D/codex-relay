@@ -172,3 +172,10 @@ Goal 创建/恢复入口、完整原生自动多轮/跨账户验收、父任务�
 真实 Electron 验证六种路径表示、丢失文件恢复后重试、禁止读取项目外文件；另对报告中的实际存在文档以五种链接形式打开，内容与磁盘一致，没有修改该项目文件。无登录、无模型轮次。报告：`qa-output/file-links-native-baseline-report.json`、`qa-output/file-links-native-fixed-report.json`、`qa-output/file-links-native-actual-project-report.json`。
 
 31 个文件、247 项回归测试通过，882 个静态文本键无缺失。真实文件编辑/冲突、Git/Worktree、PTY、原生菜单及语言持久化回归通过，浏览器流式和三种宽度/三语言回归通过。完整目标继续推进；这项修复不等同于全部客户端功能完成。
+
+修复版 0.6.5 打包后，实际 `win-unpacked` 程序再次通过报告中文档的五种链接预览；最终便携 EXE 自解压启动、命名管道、CLI 和 Windows PowerShell 检查通过。未运行安装向导；两项产物均未做发布者证书签名。目录：`release/desktop-0.6.5/`。
+
+| 产物 | 字节 | SHA-256 |
+| --- | ---: | --- |
+| Codex-Relay-Portable-0.6.5-x64.exe | 124871347 | 8E1BF310611B99371266F6DF4EFBC9CEB4331D00F4DBAA6A31CC88D153CD27EF |
+| Codex-Relay-Setup-0.6.5-x64.exe | 125101145 | 66EA98EA9A842CB7F5988AD440A51CB65E0FF2ED104C481EDA4A3AD408445D6C |
