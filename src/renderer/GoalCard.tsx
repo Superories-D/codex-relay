@@ -14,6 +14,7 @@ import type { Job } from "../shared/types";
 import { t, useI18n, errorText } from "./i18n";
 import { Dialog } from "./Dialog";
 import { ModalPresence } from "./MotionRegion";
+import { GOAL_OBJECTIVE_MAX_LENGTH } from "../shared/goal";
 
 type Call = (name: string, args?: unknown) => Promise<any>;
 export function GoalCard({ job, call }: { job?: Job; call: Call }) {
@@ -390,7 +391,7 @@ export function GoalCard({ job, call }: { job?: Job; call: Call }) {
                             "设定清晰的验收结果，让 Codex 持续推进。可以先保存，也可以立即开始。",
                           )
                         : t(
-                            "修改目标会保留当前聊天和文件；执行状态由原生目标管理。",
+                            "修改目标正文会重置原生目标的已用 Token 和计时；聊天记录与文件会保留。",
                           )}
                     </p>
                     <label>
@@ -398,7 +399,7 @@ export function GoalCard({ job, call }: { job?: Job; call: Call }) {
                       <textarea
                         aria-label={t("目标内容")}
                         rows={5}
-                        maxLength={20000}
+                        maxLength={GOAL_OBJECTIVE_MAX_LENGTH}
                         value={objective}
                         onChange={(e) => setObjective(e.target.value)}
                         placeholder={t("描述期望的最终结果和验收标准…")}

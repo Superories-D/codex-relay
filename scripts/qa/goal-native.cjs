@@ -232,6 +232,45 @@ async function until(fn, timeout = 20000) {
     assert.equal((await current()).goal.tokenBudget, 10000);
     await menu("编辑目标");
     dialog = page.getByRole("dialog", { name: "编辑目标", exact: true });
+    assert.equal(
+      await dialog
+        .getByLabel("目标内容", { exact: true })
+        .getAttribute("maxlength"),
+      "4000",
+    );
+    await dialog
+      .getByText(
+        "修改目标正文会重置原生目标的已用 Token 和计时；聊天记录与文件会保留。",
+        { exact: true },
+      )
+      .waitFor();
+    const originalObjective = (await current()).goal.objective;
+    const oversized = await call("chat.goal.update", {
+      id,
+      action: "edit",
+      objective: "x".repeat(4001),
+    }).then(
+      () => "",
+      (error) => error.message,
+    );
+    assert(oversized, "Oversized objective must be rejected before mutation");
+    assert.equal(
+      (await call("chat.goal.read", { id })).goal.objective,
+      originalObjective,
+    );
+    await call("chat.goal.update", {
+      id,
+      action: "edit",
+      objective: "x".repeat(4000),
+    });
+    assert.equal(
+      (await call("chat.goal.read", { id })).goal.objective.length,
+      4000,
+    );
+    report.nativeObjectiveLimit = {
+      maximumAccepted: 4000,
+      oversizedRejectedWithoutMutation: true,
+    };
     await dialog
       .getByLabel("目标内容", { exact: true })
       .fill("修改后的原生目标：保留聊天，不开始执行。");
@@ -313,7 +352,10 @@ async function until(fn, timeout = 20000) {
     await page
       .getByRole("button", { name: createdGoal.title, exact: true })
       .click();
-    await page.getByLabel("会话目标", { exact: true }).getByText(createdGoal.goal.objective, { exact: true }).waitFor();
+    await page
+      .getByLabel("会话目标", { exact: true })
+      .getByText(createdGoal.goal.objective, { exact: true })
+      .waitFor();
     assert.equal(
       (await call("chat.goal.read", { id: createdGoal.id })).goal.createdAt,
       createdGoal.goal.createdAt,

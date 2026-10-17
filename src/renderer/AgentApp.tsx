@@ -11,6 +11,7 @@ import type {
   Snapshot,
 } from "../shared/types";
 import { capabilities } from "../shared/capabilities";
+import { GOAL_OBJECTIVE_MAX_LENGTH } from "../shared/goal";
 import { Dialog } from "./Dialog";
 import { ModelPicker } from "./ModelPicker";
 import { ActivityTimeline } from "./ActivityTimeline";
@@ -545,8 +546,8 @@ export function AgentApp({
     const creatingGoal = !job && goalMode && !review;
     const tokenBudget = goalBudget.trim() ? Number(goalBudget) : null;
     if (creatingGoal) {
-      if (text.trim().length > 20000)
-        throw new Error(t("目标最多支持 20000 个字符"));
+      if (text.trim().length > GOAL_OBJECTIVE_MAX_LENGTH)
+        throw new Error(t("目标最多支持 4000 个字符"));
       if (
         tokenBudget !== null &&
         (!Number.isSafeInteger(tokenBudget) || tokenBudget <= 0)

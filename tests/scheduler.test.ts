@@ -307,6 +307,10 @@ function nativeGoals(initial: any = null) {
       };
       for (const key of ["objective", "status", "tokenBudget"])
         if (Object.hasOwn(params, key)) current[key] = params[key];
+      if (Object.hasOwn(params, "objective")) {
+        current.tokensUsed = 0;
+        current.timeUsedSeconds = 0;
+      }
     }
     return { goal: structuredClone(current) };
   });
@@ -526,7 +530,8 @@ it("rechecks native Goal existence and budget before mutation and preserves pend
     expect(job.goal).toMatchObject({
       objective: "Edited acceptance criteria",
       status: "budgetLimited",
-      tokensUsed: 1000,
+      tokensUsed: 0,
+      timeUsedSeconds: 0,
       tokenBudget: 1000,
     });
   } finally {

@@ -40,7 +40,7 @@ export const english: Record<string, string> = {
   持续目标: "Ongoing goal",
   完成目标前持续推进: "Keep working toward the result",
   退出持续目标模式: "Exit ongoing goal mode",
-  "目标最多支持 20000 个字符": "Goals support up to 20,000 characters",
+  "目标最多支持 4000 个字符": "Goals support up to 4,000 characters",
   "预算在轮次结束时核算，当前轮次可能超过设定值。":
     "Budgets are checked after each turn. The current turn may exceed the limit.",
   "请先创建持续目标，再在聊天中补充文件或发起审查":
@@ -75,8 +75,8 @@ export const english: Record<string, string> = {
   请填写目标: "Enter an objective",
   "设定清晰的验收结果，让 Codex 持续推进。可以先保存，也可以立即开始。":
     "Describe a clear outcome for Codex to work toward. Save it for later or start now.",
-  "修改目标会保留当前聊天和文件；执行状态由原生目标管理。":
-    "Editing the objective keeps the chat and files. The native goal manages execution status.",
+  "修改目标正文会重置原生目标的已用 Token 和计时；聊天记录与文件会保留。":
+    "Editing the objective resets the native goal's token usage and elapsed time. Chat history and files are kept.",
   "描述期望的最终结果和验收标准…":
     "Describe the outcome and acceptance criteria…",
   仅保存目标: "Save for later",

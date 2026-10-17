@@ -1,5 +1,11 @@
 import path from "node:path";
 import { z } from "zod";
+import { GOAL_OBJECTIVE_MAX_LENGTH } from "../shared/goal";
+export const goalObjectiveSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(GOAL_OBJECTIVE_MAX_LENGTH);
 const text = z.string().max(10000);
 // Current CLI catalogs define reasoning effort as a string, including model-specific levels.
 const effort = z

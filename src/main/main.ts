@@ -37,6 +37,7 @@ import { redact } from "../core/redact";
 import { startCommandServer } from "./ipc-server";
 import {
   newJobSchema,
+  goalObjectiveSchema,
   settingsSchema,
   idSchema,
   controlSchema,
@@ -622,7 +623,7 @@ async function boot() {
         const a = newJobSchema
           .extend({
             mode: z.literal("cli"),
-            prompt: z.string().trim().min(1).max(20000),
+            prompt: goalObjectiveSchema,
             tokenBudget: z
               .number()
               .int()
@@ -649,14 +650,14 @@ async function boot() {
               .object({
                 id: idSchema,
                 action: z.literal("edit"),
-                objective: z.string().trim().min(1).max(20000),
+                objective: goalObjectiveSchema,
               })
               .strict(),
             z
               .object({
                 id: idSchema,
                 action: z.literal("create"),
-                objective: z.string().trim().min(1).max(20000),
+                objective: goalObjectiveSchema,
                 tokenBudget: z
                   .number()
                   .int()
