@@ -1,4 +1,4 @@
-import { t, useI18n } from "./i18n";
+import { t, useI18n, errorText } from "./i18n";
 import React, { useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
@@ -537,26 +537,28 @@ function FilePreview({
     [text, setText] = useState(""),
     [edit, setEdit] = useState(false),
     [error, setError] = useState(""),
-    [busy, setBusy] = useState(false);
+    [busy, setBusy] = useState(false),
+    [reload, setReload] = useState(0);
   useEffect(() => {
     let alive = true;
     setData(undefined);
     setError("");
     setEdit(false);
-    void call("chat.asset.read", { cwd, path: file, id: jobId })
-      .then((value) => {
+    void window.relay
+      .command("chat.asset.read", { cwd, path: file, id: jobId })
+      .then((value: any) => {
         if (alive) {
           setData(value);
           setText(value.content);
         }
       })
       .catch((e) => {
-        if (alive) setError(String(e));
+        if (alive) setError(errorText(e));
       });
     return () => {
       alive = false;
     };
-  }, [cwd, file]);
+  }, [cwd, file, jobId, reload]);
   return (
     <div className="file-preview">
       <header>
@@ -575,9 +577,9 @@ function FilePreview({
         <button
           title={t("在默认应用中打开")}
           onClick={() =>
-            void call("chat.asset.open", { cwd, path: file, id: jobId }).catch(
-              (e) => setError(String(e)),
-            )
+            void window.relay
+              .command("chat.asset.open", { cwd, path: file, id: jobId })
+              .catch((e) => setError(errorText(e)))
           }
         >
           <Upload size={14} />
@@ -588,14 +590,15 @@ function FilePreview({
             disabled={busy || text === data.content}
             onClick={() => {
               setBusy(true);
-              void call("workspace.write", {
-                cwd,
-                path: file,
-                text,
-                mtime: data.mtime,
-              })
+              void window.relay
+                .command("workspace.write", {
+                  cwd,
+                  path: file,
+                  text,
+                  mtime: data.mtime,
+                })
                 .then(setData)
-                .catch((e) => setError(String(e)))
+                .catch((e) => setError(errorText(e)))
                 .finally(() => setBusy(false));
             }}
           >
@@ -604,9 +607,15 @@ function FilePreview({
         )}
       </header>
       {error ? (
-        <p role="alert" className="panel-error">
-          {error}
-        </p>
+        <div className="file-preview-error">
+          <p role="alert" className="panel-error">
+            {error}
+          </p>
+          <button onClick={() => setReload((v) => v + 1)}>
+            <RefreshCw size={14} />
+            {t("重试")}
+          </button>
+        </div>
       ) : !data ? (
         <div className="panel-loading">
           <LoaderCircle className="spin" size={20} />

@@ -53,6 +53,7 @@ import { chatSendSchema } from "./validation";
 import { Desktop, nextSchedule } from "../core/desktop";
 import { Terminals } from "../core/terminals";
 import { randomUUID } from "node:crypto";
+import { normalizeLocalPath } from "../shared/file-reference";
 import { Rpc } from "../core/rpc";
 import { capabilities } from "../shared/capabilities";
 import { resolveLanguage, translate } from "../shared/locale";
@@ -866,7 +867,10 @@ async function boot() {
           !job?.agents?.some((agent) => agent.threadId === a.threadId)
         )
           throw Error("该子代理不属于当前会话");
-        const target = path.resolve(job?.cwd || a.cwd || dataRoot, a.path);
+        const target = path.resolve(
+          job?.cwd || a.cwd || dataRoot,
+          normalizeLocalPath(a.path),
+        );
         let file: string | undefined;
         for (const root of [
           path.join(dataRoot, "attachments"),
@@ -885,8 +889,9 @@ async function boot() {
           if (
             references.some(
               (reference) =>
-                path.resolve(job.cwd, reference).toLowerCase() ===
-                target.toLowerCase(),
+                path
+                  .resolve(job.cwd, normalizeLocalPath(reference))
+                  .toLowerCase() === target.toLowerCase(),
             )
           )
             file = await fs.realpath(target);

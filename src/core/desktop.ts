@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { atomicWrite } from "./store";
+import { normalizeLocalPath } from "../shared/file-reference";
 
 export interface Project {
   id: string;
@@ -98,7 +99,9 @@ export class Desktop {
   }
   async resolve(cwd: string, relative = ".") {
     const root = await fs.realpath(cwd);
-    const target = await fs.realpath(path.resolve(root, relative));
+    const target = await fs.realpath(
+      path.resolve(root, normalizeLocalPath(relative)),
+    );
     const rel = path.relative(root, target);
     if (rel === ".." || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel))
       throw new Error("文件超出当前项目目录");

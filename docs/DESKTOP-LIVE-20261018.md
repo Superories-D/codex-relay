@@ -162,3 +162,13 @@ Goal 创建/恢复入口、完整原生自动多轮/跨账户验收、父任务�
 | Codex-Relay-Setup-0.6.4-x64.exe | 125101759 | 6183BBB7644AE23C1B8BE05C2C62715C98033A1083BDB9E059C8C611678D38FD |
 
 重置周期观测仍为 `observing`：等待服务器真实重置，零次 `hi` 请求，不能计为已通过。完整 Desktop 对齐 Goal 保持执行中；未将这个构建视为全部功能完成。
+
+## Windows 文件链接回归修复
+
+用户报告回答中的文档链接无法预览。在实际 0.6.4 打包程序中用 `file-links-native.cjs` 复现：Markdown 目标 `/D:/project/docs/story-editor.md` 被 Windows 的 `path.resolve` 解释为 `D:\D:\project\docs\story-editor.md`。文件实际存在；此前只测了不带前导斜杠的 `D:/...`，没有覆盖模型常用的 URL 形式。
+
+修复在 Markdown 链接与主进程文件路径边界统一处理盘符前斜杠。支持本地 `file://` 链接、行号引用，按一次编码解码中文、空格、百分号和井号，保留原始文件名的字面百分号；实际文件访问仍检查真实路径与项目/附件边界。预览错误留在当前面板，去掉 Electron IPC 包装，不再同时显示全局横幅；提供重新读取按钮。
+
+真实 Electron 验证六种路径表示、丢失文件恢复后重试、禁止读取项目外文件；另对报告中的实际存在文档以五种链接形式打开，内容与磁盘一致，没有修改该项目文件。无登录、无模型轮次。报告：`qa-output/file-links-native-baseline-report.json`、`qa-output/file-links-native-fixed-report.json`、`qa-output/file-links-native-actual-project-report.json`。
+
+31 个文件、247 项回归测试通过，882 个静态文本键无缺失。真实文件编辑/冲突、Git/Worktree、PTY、原生菜单及语言持久化回归通过，浏览器流式和三种宽度/三语言回归通过。完整目标继续推进；这项修复不等同于全部客户端功能完成。

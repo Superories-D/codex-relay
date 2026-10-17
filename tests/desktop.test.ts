@@ -35,6 +35,20 @@ it("previews and edits project files with conflict detection and rejects paths e
     "updated",
   );
 });
+it("opens slash-prefixed Windows drive references while keeping percent filenames literal and enforcing project boundaries", async () => {
+  if (process.platform !== "win32") return;
+  const file = path.join(project, "100%20 note.md");
+  await fs.writeFile(file, "original percent filename");
+  const urlPath = `/${file.replaceAll("\\", "/")}`;
+  expect((await desktop.read(project, urlPath)).content).toBe(
+    "original percent filename",
+  );
+  const outside = path.join(root, "outside.md");
+  await fs.writeFile(outside, "outside");
+  await expect(
+    desktop.read(project, `/${outside.replaceAll("\\", "/")}`),
+  ).rejects.toThrow("超出");
+});
 it("runs real Git staging, commit, diff and independent worktree operations in a fixture repository", async () => {
   await desktop.git(project, ["init"]);
   await desktop.git(project, ["config", "user.email", "test@example.invalid"]);

@@ -59,6 +59,7 @@ export function MarkdownText({
       <Markdown
         urlTransform={(url, key) =>
           /^[A-Za-z]:[\\/]/.test(url) ||
+          /^file:\/\//i.test(url) ||
           (key === "src" &&
             /^data:image\/(png|jpeg|webp|gif|avif|bmp);base64,/i.test(url))
             ? url
@@ -104,10 +105,7 @@ export function MarkdownText({
                   if (!href) return;
                   if (/^https?:\/\//i.test(href))
                     void window.relay.command("link.open", href);
-                  else if (href)
-                    onOpen?.(
-                      decodeFileLink(href).replace(/:\d+(?::\d+)?$/, ""),
-                    );
+                  else if (href) onOpen?.(decodeFileLink(href));
                 }}
               >
                 {children}

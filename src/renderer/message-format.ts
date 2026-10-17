@@ -1,3 +1,5 @@
+import { normalizeLocalPath } from "../shared/file-reference";
+
 /** Presentation only: the persisted answer and whole-answer copy stay original. */
 export function normalizeMessage(text: string, streaming = false): string {
   const lines = text.split(/\r?\n/);
@@ -139,11 +141,30 @@ export interface TextNode {
   children?: TextNode[];
 }
 export function decodeFileLink(value: string): string {
-  try {
-    return decodeURIComponent(value);
-  } catch {
-    return value;
+  let target = value;
+  if (/^file:\/\//i.test(target)) {
+    try {
+      const url = new URL(target);
+      target =
+        (url.hostname && url.hostname !== "localhost"
+          ? `//${url.hostname}`
+          : "") + url.pathname;
+    } catch {
+      // Preserve malformed links for a readable file error, never execute them.
+    }
   }
+  // Strip location syntax before decoding, so %23L2 remains a literal filename.
+  target = target
+    .replace(/#L\d+(?:C\d+)?(?:-L\d+(?:C\d+)?)?$/i, "")
+    .replace(/:\d+(?::\d+)?$/, "");
+  const decoded = target.replace(/(?:%[a-f\d]{2})+/gi, (encoded) => {
+    try {
+      return decodeURIComponent(encoded);
+    } catch {
+      return encoded;
+    }
+  });
+  return normalizeLocalPath(decoded);
 }
 export function nodeText(node?: TextNode): string {
   if (!node) return "";

@@ -6,6 +6,7 @@ import {
   normalizeMessage,
   decodeFileLink,
 } from "../src/renderer/message-format";
+import { normalizeLocalPath } from "../src/shared/file-reference";
 it("formats standalone paired triple quotes while preserving embedded fences and exact code whitespace", () => {
   const text =
     'Before\n\n"""python\n  x = "你好 → ≥"\n```literal```\n\n"""\n\nAfter';
@@ -100,4 +101,35 @@ it("handles literal percent signs in file references without throwing", () => {
       <MarkdownText text="![preview](</project/100%ready.png>)" />,
     ),
   ).not.toThrow();
+});
+it("normalizes URL-style Windows drives without duplicating the drive or corrupting filenames", () => {
+  for (const link of [
+    "/D:/My%20Project/docs/story-editor.md",
+    "D:/My%20Project/docs/story-editor.md:12:3",
+    "/D:/My%20Project/docs/story-editor.md#L12C3-L14",
+    "file:///D:/My%20Project/docs/story-editor.md#L12",
+    "file://localhost/D:/My%20Project/docs/story-editor.md",
+  ])
+    expect(decodeFileLink(link)).toBe("D:/My Project/docs/story-editor.md");
+  expect(decodeFileLink("/D:/My%20Project/100%完成%20%231.md")).toBe(
+    "D:/My Project/100%完成 #1.md",
+  );
+  expect(decodeFileLink("D:/project/literal%2520%23L12")).toBe(
+    "D:/project/literal%20#L12",
+  );
+  expect(normalizeLocalPath("D:/project/100%20.md")).toBe(
+    "D:/project/100%20.md",
+  );
+  expect(normalizeLocalPath("/usr/local/file.md")).toBe("/usr/local/file.md");
+  expect(decodeFileLink("docs/story-editor.md")).toBe("docs/story-editor.md");
+  expect(decodeFileLink("file:///tmp/My%20Project/file.md")).toBe(
+    "/tmp/My Project/file.md",
+  );
+  expect(decodeFileLink("file://server/share/file.md")).toBe(
+    "//server/share/file.md",
+  );
+  const html = renderToStaticMarkup(
+    <MarkdownText text="[file](file:///D:/project/story-editor.md) [bad](javascript:alert(1))" />,
+  );
+  expect(html).not.toContain("javascript:");
 });
