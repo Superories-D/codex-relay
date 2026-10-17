@@ -22,4 +22,21 @@
 
 `npm run build` 和 36 个文件的 311 项测试通过。新增覆盖重定向临时文件的物理目录替换、拒绝替换时保留旧文件、真实 DACL 修复多余公开权限，以及明确的启动失败诊断。
 
-已安装脚本修改前备份到独立 QA 目录。新版安装包和现有安装目录的实际升级、连续启动、设置持久化与命名管道验证结果在完成后补充。本轮仅处理启动问题，持续功能 Goal 保持暂停。
+源码修复提交 `d613d79` 已推送。已安装脚本修改前备份到独立 QA 目录，实际升级前又备份原 EXE 与 app.asar。本轮仅处理启动问题，持续功能 Goal 保持暂停。
+
+实际运行最终 NSIS 安装包 `/S /D=D:\codex-relay\Codex Relay`，退出码 0，原目录从 `0.6.11.0` 升级到 `0.6.12.0`。安装后的 app.asar 与本次构建 SHA256 相同，权限脚本与修复源码相同。
+
+`scripts/qa/installed-startup.cjs` 使用真正安装的 `D:\codex-relay\Codex Relay\Codex Relay.exe` 和默认既有 `C:\Users\antho\AppData\Roaming\Codex Relay`，不指定临时数据目录，连续冷启动两次：4558 ms、4615 ms。两次均验证原有设置值可保存、状态可读和 CLI 命名管道连接；应用版本 `0.6.12`、Electron `isPackaged=true`、界面错误 0。测试开始前确认该 profile 的账户数为 0 且没有待执行任务，模型调用 0。
+
+最终自解压便携 EXE 的启动、命名管道、Codex CLI `0.162.1` 和 Windows PowerShell `5.1.26100.9711` 检查也通过。
+
+## 产物
+
+位于 `release/desktop-0.6.12/`，两个 EXE 的产品版本均为 `0.6.12`，签名状态为 `NotSigned`。
+
+| 文件                                  |      字节 | SHA256                                                             |
+| ------------------------------------- | --------: | ------------------------------------------------------------------ |
+| `Codex-Relay-Portable-0.6.12-x64.exe` | 124898728 | `53DFE2284518D6646FB4E321FCC558AC67A1D2B0964606342C589CAE51F0A281` |
+| `Codex-Relay-Setup-0.6.12-x64.exe`    | 125128547 | `6034AD19A1488CEE62ADDE722B66C6E36DE776631880766AFB6E7A01F232C4CE` |
+
+完整本地记录：`qa-output/installed-upgrade-0.6.12-report.json`、`qa-output/installed-startup-report.json`、`qa-output/appdata-atomic-report.json`、`qa-output/portable-smoke.json`。二进制、应用备份和私人 QA 数据不提交到 Git。
