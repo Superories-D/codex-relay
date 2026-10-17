@@ -58,6 +58,22 @@ export class Scheduler extends EventEmitter {
   private backgroundProbe?: Promise<void>;
   private lastWarmupRecovery = 0;
   private questionReplies = new Map<string, QuestionRecord["answers"]>();
+  private syncAgentRoot(
+    job: Job,
+    patch: Partial<import("../shared/types").AgentState>,
+  ) {
+    if (!job.agentOrigin || !job.threadId) return;
+    for (const owner of this.store.data.jobs) {
+      if (this.store.jobHome(owner.id) !== this.store.jobHome(job.id)) continue;
+      const agent = owner.agents?.find(
+        (agent) => agent.threadId === job.threadId,
+      );
+      if (agent)
+        Object.assign(agent, { model: job.model, effort: job.effort }, patch, {
+          updatedAt: Date.now(),
+        });
+    }
+  }
   private recordQuestion(
     a: Approval,
     status: QuestionRecord["status"],
@@ -540,6 +556,7 @@ export class Scheduler extends EventEmitter {
     let outcome: Outcome | undefined;
     try {
       job.state = "preparing";
+      this.syncAgentRoot(job, { status: "pendingInit" });
       await this.beforeStart(job);
       job.accountId = account.id;
       job.nextWakeAt = undefined;
@@ -614,6 +631,7 @@ export class Scheduler extends EventEmitter {
             job.threadId = threadId;
             job.importedRollout = undefined;
             if (turnId) {
+              this.syncAgentRoot(job, { turnId, status: "running" });
               job.turnId = turnId;
               job.pendingMessage = undefined;
               job.attachments = undefined;
@@ -636,6 +654,11 @@ export class Scheduler extends EventEmitter {
         });
         const worker = active.worker;
         worker.on("chat", (method, params) => {
+          if (
+            method === "item/completed" &&
+            params.item?.type === "agentMessage"
+          )
+            this.syncAgentRoot(job, { message: params.item.text });
           void this.chats
             .event(job.id, method, params)
             .then(() => this.emit("chatChanged", job.id))
@@ -652,6 +675,22 @@ export class Scheduler extends EventEmitter {
           const previous = agents.find((a) => a.threadId === agent.threadId);
           if (previous) Object.assign(previous, agent);
           else agents.push(agent);
+          // Independently continued descendants remain visible in every saved
+          // ancestor tree, rather than forking a second status history.
+          for (const owner of this.store.data.jobs) {
+            if (
+              owner === job ||
+              owner.threadId === agent.threadId ||
+              this.store.jobHome(owner.id) !== this.store.jobHome(job.id)
+            )
+              continue;
+            const known = owner.agents?.find(
+              (a) => a.threadId === agent.threadId,
+            );
+            if (known) Object.assign(known, agent);
+            else if (owner.agents?.some((a) => a.threadId === job.threadId))
+              (owner.agents ??= []).push({ ...agent });
+          }
           void this.store
             .save()
             .catch((error) => this.log(error, "error", job.id));
@@ -870,6 +909,17 @@ export class Scheduler extends EventEmitter {
       job.state = "paused";
     }
     job.updatedAt = Date.now();
+    this.syncAgentRoot(job, {
+      turnId: job.turnId,
+      status:
+        job.state === "completed"
+          ? "completed"
+          : job.state === "paused" || job.state === "cancelled"
+            ? "interrupted"
+            : job.state === "queued"
+              ? "waiting"
+              : "errored",
+    });
     await this.store.save();
     if (!active.failedStop) this.active = undefined;
     this.changed();
@@ -910,6 +960,14 @@ export class Scheduler extends EventEmitter {
         )
           throw new Error("请先在任务管理中完成安全恢复或交接");
         if (job.archived) throw new Error("请先取消归档");
+        if (
+          this.active &&
+          this.active.job.id !== job.id &&
+          this.store.jobHome(this.active.job.id) ===
+            this.store.jobHome(job.id) &&
+          input.action !== "queue"
+        )
+          throw Error("同组会话正在运行，请排队发送或在主会话的代理面板操作");
         const active =
           this.active?.job.id === job.id ||
           [
@@ -1029,17 +1087,21 @@ export class Scheduler extends EventEmitter {
             chatgptPlanType: account.plan,
           });
           await ensureWindowsSandbox(rpc, job.cwd, job.sandbox);
-          await prepareThread(
+          const resumed = await prepareThread(
             rpc,
             job.threadId,
             {
               cwd: job.cwd,
-              approvalPolicy: job.approvalPolicy,
-              sandbox: {
-                workspaceWrite: "workspace-write",
-                readOnly: "read-only",
-                dangerFullAccess: "danger-full-access",
-              }[job.sandbox],
+              ...(job.preserveNativePermissions
+                ? {}
+                : {
+                    approvalPolicy: job.approvalPolicy,
+                    sandbox: {
+                      workspaceWrite: "workspace-write",
+                      readOnly: "read-only",
+                      dangerFullAccess: "danger-full-access",
+                    }[job.sandbox],
+                  }),
               // Loading a thread for inspection must never dispatch its active
               // Goal. The override is local to this maintenance process.
               config: { "features.goals": false },
@@ -1055,10 +1117,21 @@ export class Scheduler extends EventEmitter {
           };
           // Commands use the same sandbox as the conversation; no arbitrary policy override.
           if (method === "command/exec") {
+            if (
+              job.preserveNativePermissions &&
+              ![
+                "readOnly",
+                "workspaceWrite",
+                "dangerFullAccess",
+                "externalSandbox",
+              ].includes(resumed.sandbox?.type)
+            )
+              throw Error("无法核实子代理原生权限，未执行命令");
             delete (args as any).disableTimeout;
             Object.assign(args, {
-              sandboxPolicy:
-                job.sandbox === "dangerFullAccess"
+              sandboxPolicy: job.preserveNativePermissions
+                ? resumed.sandbox
+                : job.sandbox === "dangerFullAccess"
                   ? { type: "dangerFullAccess" }
                   : job.sandbox === "readOnly"
                     ? { type: "readOnly", networkAccess: false }
@@ -1113,6 +1186,7 @@ export class Scheduler extends EventEmitter {
     id: string,
     run: (rpc: Rpc, job: Job) => Promise<T>,
     resume = true,
+    commit?: (result: T, job: Job) => Promise<void>,
   ) {
     const task = this.controls
       .catch(() => {})
@@ -1146,6 +1220,21 @@ export class Scheduler extends EventEmitter {
           throw new Error("当前会话尚不可操作，请先发送一条消息或完成安全恢复");
         this.maintaining = true;
         let rpc: Rpc | undefined;
+        const close = async () => {
+          const owned = rpc;
+          rpc = undefined;
+          try {
+            await owned?.close();
+          } catch (error) {
+            if (error instanceof ProcessSafetyError) {
+              job.recoveryRequired = true;
+              job.state = "needs_attention";
+              job.lastError = redact(error);
+              await this.store.save();
+            }
+            throw error;
+          }
+        };
         try {
           // Metadata, paging, and forks are local operations: never log in or start a turn.
           rpc = await Rpc.open(
@@ -1166,10 +1255,13 @@ export class Scheduler extends EventEmitter {
               },
               job.importedRollout,
             );
-          return await run(rpc, job);
+          const result = await run(rpc, job);
+          await close();
+          await commit?.(result, job);
+          return result;
         } finally {
           try {
-            await rpc?.close();
+            await close();
           } finally {
             this.maintaining = false;
             this.changed();
@@ -1311,6 +1403,181 @@ export class Scheduler extends EventEmitter {
         sortDirection: "desc",
         itemsView: "full",
       }),
+    );
+  }
+  openAgent(id: string, threadId: string) {
+    const source = this.store.data.jobs.find((job) => job.id === id);
+    if (!source?.agents?.some((agent) => agent.threadId === threadId))
+      return Promise.reject(Error("该子代理不属于当前会话"));
+    const existing = this.store.data.jobs.find((job) => job.id === threadId);
+    if (existing) {
+      if (
+        existing.threadId !== threadId ||
+        this.store.jobHome(existing.id) !== this.store.jobHome(source.id)
+      )
+        return Promise.reject(Error("子代理会话标识已被其他运行目录占用"));
+      // Opening an already adopted chat is read-only, including while its
+      // original worker is active. Never launch a second process to inspect it.
+      return Promise.resolve(existing);
+    }
+    return this.localHistory(
+      id,
+      async (rpc, parent) => {
+        const read = async (target: string) => {
+          const value = (
+            await rpc.call("thread/read", {
+              threadId: target,
+              includeTurns: false,
+            })
+          ).thread;
+          if (value?.id !== target) throw Error("原生子代理会话身份不匹配");
+          return value;
+        };
+        const child = await read(threadId);
+        const parentOf = (value: any) =>
+          value.parentThreadId ||
+          value.source?.subAgent?.thread_spawn?.parent_thread_id;
+        const directParent = parentOf(child);
+        let ancestor = directParent;
+        const seen = new Set([threadId]);
+        while (ancestor !== parent.threadId) {
+          if (!ancestor || seen.has(ancestor) || seen.size > 256)
+            throw Error("无法核实原生子代理的父子关系");
+          seen.add(ancestor);
+          ancestor = parentOf(await read(ancestor));
+        }
+        if (child.ephemeral) throw Error("临时子代理没有可恢复的持久化历史");
+        // No login and Goals explicitly disabled: inspecting saved permissions
+        // must not admit a model turn, even if this child has an active Goal.
+        const resumed = await rpc.call("thread/resume", {
+          threadId,
+          excludeTurns: true,
+          config: { "features.goals": false },
+        });
+        if (resumed.thread?.id !== threadId)
+          throw Error("原生子代理恢复后的身份不匹配");
+        const cwd = resumed.cwd || child.cwd;
+        if (typeof cwd !== "string" || !path.isAbsolute(cwd))
+          throw Error("子代理的原生项目目录无效");
+        const agent = parent.agents!.find(
+          (agent) => agent.threadId === threadId,
+        )!;
+        const rows: import("../shared/types").ChatItem[] = [];
+        let cursor: string | undefined, turnId: string | undefined;
+        const cursors = new Set<string>();
+        do {
+          const page = await rpc.call("thread/turns/list", {
+            threadId,
+            cursor,
+            limit: 20,
+            sortDirection: "asc",
+            itemsView: "full",
+          });
+          for (const turn of page.data) {
+            turnId = turn.id;
+            for (const item of turn.items)
+              rows.push({
+                ...protocolItem(item, `${turn.id}:${item.id}`),
+                turnId: turn.id,
+                status: turn.status,
+                at: turn.startedAt
+                  ? turn.startedAt * 1000
+                  : child.createdAt * 1000 || Date.now(),
+              });
+          }
+          cursor = page.nextCursor || undefined;
+          if (cursor && cursors.has(cursor))
+            throw Error("原生历史分页游标重复，停止打开子代理");
+          if (cursor) cursors.add(cursor);
+        } while (cursor);
+        await this.chats.hydrate(threadId, rows);
+        const descendants = new Set([threadId]);
+        let added = true;
+        while (added) {
+          added = false;
+          for (const a of parent.agents || [])
+            if (
+              a.parentThreadId &&
+              descendants.has(a.parentThreadId) &&
+              !descendants.has(a.threadId)
+            ) {
+              descendants.add(a.threadId);
+              added = true;
+            }
+        }
+        const now = Date.now();
+        return {
+          id: threadId,
+          threadId,
+          runtimeHomeId: parent.runtimeHomeId || parent.id,
+          agentOrigin: { jobId: parent.id, parentThreadId: directParent },
+          preserveNativePermissions: true,
+          title: (
+            child.name ||
+            agent.name ||
+            child.agentNickname ||
+            threadId.slice(0, 8)
+          ).slice(0, 120),
+          prompt: "",
+          cwd,
+          mode: "cli" as const,
+          model: resumed.model || child.model || agent.model || parent.model,
+          effort:
+            resumed.reasoningEffort ??
+            child.reasoningEffort ??
+            agent.effort ??
+            "",
+          serviceTier: resumed.serviceTier ?? undefined,
+          sandbox: (resumed.sandbox?.type === "dangerFullAccess"
+            ? "dangerFullAccess"
+            : resumed.sandbox?.type === "workspaceWrite"
+              ? "workspaceWrite"
+              : "readOnly") as Job["sandbox"],
+          approvalPolicy: (resumed.approvalPolicy === "never"
+            ? "never"
+            : "on-request") as Job["approvalPolicy"],
+          bucket: parent.bucket,
+          interactive: true,
+          state: "completed" as const,
+          multiAgent: parent.multiAgent,
+          turnId,
+          rotations: 0,
+          createdAt: now,
+          updatedAt: now,
+          agents: parent
+            .agents!.filter(
+              (a) => a.threadId !== threadId && descendants.has(a.threadId),
+            )
+            .map((a) => ({ ...a })),
+        };
+      },
+      false,
+      async (child) => {
+        this.store.data.jobs.push(child);
+        const links: {
+          agent: import("../shared/types").AgentState;
+          previous?: string;
+        }[] = [];
+        for (const owner of this.store.data.jobs)
+          for (const agent of owner.agents || [])
+            if (
+              agent.threadId === child.threadId &&
+              this.store.jobHome(owner.id) === this.store.jobHome(child.id)
+            ) {
+              links.push({ agent, previous: agent.conversationId });
+              agent.conversationId = child.id;
+            }
+        try {
+          await this.store.save();
+        } catch (error) {
+          for (const link of links) link.agent.conversationId = link.previous;
+          this.store.data.jobs = this.store.data.jobs.filter(
+            (job) => job !== child,
+          );
+          throw error;
+        }
+        this.emit("chatChanged", child.id);
+      },
     );
   }
   fork(id: string, at?: { beforeTurnId?: string; lastTurnId?: string }) {

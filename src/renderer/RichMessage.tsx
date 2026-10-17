@@ -38,6 +38,9 @@ const rehypePlugins: PluggableList = [
   [rehypeHighlight, { detect: false }],
 ];
 
+export function UserText({ text }: { text: string }) {
+  return <div className="user-message-text">{text}</div>;
+}
 export function MarkdownText({
   text,
   onOpen,
@@ -367,13 +370,17 @@ function RichMessageView({
           )}
         </div>
       )}
-      <MarkdownText
-        text={item.text}
-        onOpen={onOpen}
-        streaming={["running", "inProgress", "in_progress"].includes(
-          item.status || "",
-        )}
-      />
+      {item.role === "user" ? (
+        <UserText text={item.text} />
+      ) : (
+        <MarkdownText
+          text={item.text}
+          onOpen={onOpen}
+          streaming={["running", "inProgress", "in_progress"].includes(
+            item.status || "",
+          )}
+        />
+      )}
       {item.detail && (
         <div className="message-attachments">
           {item.detail

@@ -308,18 +308,24 @@ export class CliWorker extends EventEmitter implements Worker {
   private threadConfig(
     model = this.ctx.job.model,
     effort = this.ctx.job.effort,
+    preserveNativeContext = false,
   ) {
     const sandbox = this.ctx.job.planMode ? "readOnly" : this.ctx.job.sandbox;
     return {
-      cwd: this.ctx.job.cwd,
-      approvalPolicy: this.ctx.job.approvalPolicy,
-      sandbox: {
-        workspaceWrite: "workspace-write",
-        readOnly: "read-only",
-        dangerFullAccess: "danger-full-access",
-      }[sandbox],
+      ...(preserveNativeContext ? {} : { cwd: this.ctx.job.cwd }),
+      ...((preserveNativeContext || this.ctx.job.preserveNativePermissions) &&
+      !this.ctx.job.planMode
+        ? {}
+        : {
+            approvalPolicy: this.ctx.job.approvalPolicy,
+            sandbox: {
+              workspaceWrite: "workspace-write",
+              readOnly: "read-only",
+              dangerFullAccess: "danger-full-access",
+            }[sandbox],
+          }),
       ...(model ? { model } : {}),
-      ...(this.ctx.job.serviceTier
+      ...(!preserveNativeContext && this.ctx.job.serviceTier
         ? { serviceTier: this.ctx.job.serviceTier }
         : {}),
       config: {
@@ -737,10 +743,7 @@ export class CliWorker extends EventEmitter implements Worker {
       });
     const resumed = await this.rpc.call("thread/resume", {
       threadId,
-      ...this.threadConfig(
-        agent.model || this.ctx.job.model,
-        agent.effort || this.ctx.job.effort,
-      ),
+      ...this.threadConfig(agent.model || "", agent.effort || "", true),
       excludeTurns: true,
     });
     if (resumed.thread?.id !== threadId)

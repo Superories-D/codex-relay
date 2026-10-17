@@ -11,6 +11,7 @@ import { redact } from "./redact";
 import { questionList } from "../shared/user-questions";
 import { protocolImages, imageSafePayload } from "../shared/chat-images";
 import { persistImages } from "./chat-media";
+import { atomicWrite } from "./store";
 
 // Conversations are stored separately from the bounded diagnostic log and snapshots.
 export class Chats {
@@ -103,6 +104,70 @@ export class Chats {
       at: Date.now(),
     });
   }
+  // Reconcile a quiescent child journal with native paginated history. Preserve
+  // local user IDs, media and question records; do not duplicate locally sent
+  // messages when their native userMessage IDs become available later.
+  async hydrate(id: string, items: ChatItem[]) {
+    await this.flush(id);
+    const next = (this.writes.get(id) ?? Promise.resolve()).then(async () => {
+      const previous = new Map<string, ChatItem>();
+      try {
+        for await (const row of jsonLines(this.file(id)))
+          previous.set(row.id, row);
+      } catch (error: any) {
+        if (error.code !== "ENOENT") throw error;
+      }
+      const users = new Map<string, { rows: ChatItem[]; offset: number }>();
+      const userKey = (row: ChatItem) =>
+        JSON.stringify([row.text, row.detail || ""]);
+      for (const row of previous.values())
+        if (row.role === "user" && !row.turnId) {
+          const key = userKey(row),
+            queue = users.get(key) || { rows: [], offset: 0 };
+          queue.rows.push(row);
+          users.set(key, queue);
+        }
+      const used = new Set<string>(),
+        nativeIds = new Set(items.map((item) => item.id)),
+        rows: ChatItem[] = [];
+      for (const item of items) {
+        const queue =
+          item.role === "user" ? users.get(userKey(item)) : undefined;
+        if (queue)
+          while (
+            queue.offset < queue.rows.length &&
+            used.has(queue.rows[queue.offset].id)
+          )
+            queue.offset++;
+        const old = previous.get(item.id) || queue?.rows[queue.offset++];
+        if (old) used.add(old.id);
+        rows.push(
+          await persistImages(this.root, {
+            ...item,
+            ...(old
+              ? {
+                  id: old.id,
+                  at: old.at,
+                  ...(old.images?.length && !item.images?.length
+                    ? { images: old.images }
+                    : {}),
+                }
+              : {}),
+          }),
+        );
+      }
+      for (const old of previous.values())
+        if (!used.has(old.id) && !nativeIds.has(old.id)) rows.push(old);
+      await atomicWrite(
+        this.file(id),
+        rows.map((row) => JSON.stringify(row) + "\n").join(""),
+      );
+      this.cache.delete(id);
+      this.prepared.add(id);
+    });
+    this.writes.set(id, next);
+    return next;
+  }
   event(id: string, method: string, p: any) {
     const next = (this.events.get(id) ?? Promise.resolve()).then(() =>
       this.reduce(id, method, p),
@@ -130,16 +195,14 @@ export class Chats {
     const end = Math.min(before ?? rows.length, rows.length),
       start = Math.max(0, end - 20);
     return {
-      items: rows
-        .slice(start, end)
-        .map(
-          (item) =>
-            ({
-              ...item.data,
-              id: item.id,
-              at: item.at,
-            }) as unknown as QuestionRecord,
-        ),
+      items: rows.slice(start, end).map(
+        (item) =>
+          ({
+            ...item.data,
+            id: item.id,
+            at: item.at,
+          }) as unknown as QuestionRecord,
+      ),
       total: rows.length,
       ...(start ? { before: start } : {}),
     };

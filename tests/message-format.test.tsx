@@ -1,12 +1,45 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it } from "vitest";
-import { MarkdownText } from "../src/renderer/RichMessage";
+import { MarkdownText, RichMessage } from "../src/renderer/RichMessage";
 import {
   normalizeMessage,
   decodeFileLink,
 } from "../src/renderer/message-format";
 import { normalizeLocalPath } from "../src/shared/file-reference";
+it("keeps user shell variables, Windows paths and Markdown punctuation literal without changing assistant math", () => {
+  const text =
+    '$agentDeadline=(Get-Date); while ($agentDeadline) { Test-Path "D:\\_work\\a_b.md" }\n<script>literal</script> **literal**';
+  const callbacks = {
+    onOpen: () => {},
+    onAgents: () => {},
+    onChanges: () => {},
+  };
+  const html = renderToStaticMarkup(
+    <RichMessage
+      {...callbacks}
+      item={{ id: "user-literal", role: "user", kind: "message", text, at: 1 }}
+    />,
+  );
+  expect(html).toContain('class="user-message-text"');
+  expect(html).toContain("$agentDeadline=(Get-Date)");
+  expect(html).toContain("D:\\_work\\a_b.md");
+  expect(html).toContain("&lt;script&gt;literal&lt;/script&gt; **literal**");
+  expect(html).not.toContain("katex");
+  const assistant = renderToStaticMarkup(
+    <RichMessage
+      {...callbacks}
+      item={{
+        id: "assistant-math",
+        role: "assistant",
+        kind: "message",
+        text: "$E=mc^2$",
+        at: 1,
+      }}
+    />,
+  );
+  expect(assistant).toContain("katex");
+});
 it("formats standalone paired triple quotes while preserving embedded fences and exact code whitespace", () => {
   const text =
     'Before\n\n"""python\n  x = "你好 → ≥"\n```literal```\n\n"""\n\nAfter';

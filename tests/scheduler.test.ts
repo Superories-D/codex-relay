@@ -38,7 +38,7 @@ class FakeWorker extends EventEmitter implements Worker {
   async start() {
     this.submitted = taskPrompt(this.ctx);
     await this.ctx.checkpoint(
-      "stable-thread",
+      this.ctx.job.threadId || "stable-thread",
       this.ctx.job.turnId ?? "first-turn",
     );
     this.started = true;
@@ -579,6 +579,73 @@ it("serializes child messages with parent pause and rejects further child work a
     scheduler.agentControl(job.id, "child", "send", "too late"),
   ).rejects.toThrow("未运行");
   expect(workers[0].agentControl).toHaveBeenCalledTimes(1);
+});
+it("queues an adopted child behind the current family owner, then rotates accounts on the same child thread", async () => {
+  const parent = await scheduler.add({
+    ...input,
+    cwd: root,
+    interactive: true,
+  });
+  await until(() => workers[0]?.started);
+  const childId = "33333333-3333-4333-8333-333333333333";
+  parent.agents = [
+    {
+      threadId: childId,
+      parentThreadId: parent.threadId,
+      name: "Child",
+      status: "completed",
+      updatedAt: 1,
+    },
+  ];
+  const child = {
+    ...parent,
+    id: childId,
+    threadId: childId,
+    turnId: undefined,
+    prompt: "",
+    pendingMessage: undefined,
+    accountId: undefined,
+    state: "completed" as const,
+    runtimeHomeId: parent.id,
+    agentOrigin: { jobId: parent.id, parentThreadId: parent.threadId! },
+    agents: [],
+  };
+  store.data.jobs.push(child);
+  await expect(
+    scheduler.send({
+      id: childId,
+      text: "unsafe overlap",
+      attachments: [],
+      action: "send",
+    }),
+  ).rejects.toThrow("同组会话");
+  await scheduler.send({
+    id: childId,
+    text: "queued independent continuation",
+    attachments: [],
+    action: "queue",
+  });
+  await (scheduler as any).tick();
+  expect(workers).toHaveLength(1);
+  workers[0].settle({ kind: "completed" });
+  await (scheduler as any).currentRun;
+  await (scheduler as any).tick();
+  await until(() => workers[1]?.started);
+  expect(workers[1].ctx.home).toBe(workers[0].ctx.home);
+  expect(child.threadId).toBe(childId);
+  expect(parent.agents[0].status).toBe("running");
+  const firstAccount = child.accountId;
+  workers[1].settle({ kind: "quota" });
+  await (scheduler as any).currentRun;
+  await (scheduler as any).tick();
+  await until(() => workers[2]?.started);
+  expect(child.accountId).not.toBe(firstAccount);
+  expect(child.threadId).toBe(childId);
+  expect(workers[2].ctx.home).toBe(workers[0].ctx.home);
+  expect(parent.state).toBe("completed");
+  workers[2].settle({ kind: "completed" });
+  await (scheduler as any).currentRun;
+  expect(parent.agents[0].status).toBe("completed");
 });
 it("keeps running Goal mutations on the owned worker and serializes them before pause", async () => {
   const job = await scheduler.add({ ...input, cwd: root, interactive: true });

@@ -35,7 +35,7 @@ import type {
   ChatAttachment,
   Approval,
 } from "../shared/types";
-import { MarkdownText } from "./RichMessage";
+import { MarkdownText, UserText } from "./RichMessage";
 import { ActivityTimeline } from "./ActivityTimeline";
 import { ImageThumbnail } from "./ChatImages";
 import { GoalCard } from "./GoalCard";
@@ -177,6 +177,7 @@ export function Workbench({
   addSources,
   draftAttachments = [],
   questions = [],
+  onOpenConversation,
 }: {
   tab: WorkbenchTab;
   setTab: (v: WorkbenchTab) => void;
@@ -191,6 +192,7 @@ export function Workbench({
   addSources?: () => void;
   draftAttachments?: ChatAttachment[];
   questions?: Approval[];
+  onOpenConversation?: (job: Job) => void;
 }) {
   const { language } = useI18n();
   const tabs = useRef<HTMLDivElement>(null);
@@ -292,7 +294,12 @@ export function Workbench({
       ) : tab === "changes" ? (
         <Changes cwd={cwd} call={call} openFile={setFile} comment={setDraft} />
       ) : tab === "agents" ? (
-        <Agents job={job} call={call} openFile={setFile} />
+        <Agents
+          job={job}
+          call={call}
+          openFile={setFile}
+          onOpenConversation={onOpenConversation}
+        />
       ) : tab === "questions" ? (
         <QuestionPanel job={job} requests={questions} />
       ) : (
@@ -959,10 +966,12 @@ function Agents({
   job,
   call,
   openFile,
+  onOpenConversation,
 }: {
   job?: Job;
   call: Call;
   openFile: (path: string) => void;
+  onOpenConversation?: (job: Job) => void;
 }) {
   useI18n();
 
@@ -974,6 +983,14 @@ function Agents({
   const controlLock = useRef(false),
     currentSelection = useRef(selectedId);
   currentSelection.current = selectedId;
+  const ownerJob = useRef(job?.id);
+  ownerJob.current = job?.id;
+  useEffect(
+    () => () => {
+      currentSelection.current = "";
+    },
+    [],
+  );
   const latestMessages = useRef(messages);
   latestMessages.current = messages;
   useEffect(() => {
@@ -1077,6 +1094,27 @@ function Agents({
     waiting: t("等待中"),
     interrupting: t("正在停止"),
   };
+  const openConversation = () => {
+    if (!job || !selected || controlLock.current) return;
+    const id = job.id,
+      threadId = selected.threadId;
+    controlLock.current = true;
+    setControlling(true);
+    setError("");
+    void call("chat.agent.open", { id, threadId })
+      .then((child: Job) => {
+        if (ownerJob.current === id && currentSelection.current === threadId)
+          onOpenConversation?.(child);
+      })
+      .catch((error) => {
+        if (ownerJob.current === id && currentSelection.current === threadId)
+          setError(errorText(error));
+      })
+      .finally(() => {
+        controlLock.current = false;
+        setControlling(false);
+      });
+  };
   return (
     <div className="agents-pane">
       {!job?.agents?.length ? (
@@ -1129,6 +1167,30 @@ function Agents({
             <div className="child-conversation">
               <header>
                 <span>{selected.name}</span>
+                {onOpenConversation && (
+                  <button
+                    title={t("打开子代理聊天")}
+                    aria-label={t("打开子代理聊天")}
+                    disabled={
+                      controlling ||
+                      (!selected.conversationId &&
+                        ![
+                          "completed",
+                          "paused",
+                          "cancelled",
+                          "needs_attention",
+                        ].includes(job.state)) ||
+                      !!job.recoveryRequired
+                    }
+                    onClick={openConversation}
+                  >
+                    {controlling ? (
+                      <LoaderCircle className="spin" size={14} />
+                    ) : (
+                      <MessageSquare size={14} />
+                    )}
+                  </button>
+                )}
                 <button
                   title={t("停止子代理")}
                   disabled={
@@ -1143,12 +1205,16 @@ function Agents({
                   <Square size={13} />
                 </button>
               </header>
-              {selected.prompt && (
-                <div className="child-prompt">
-                  <span>{t("任务")}</span>
-                  <MarkdownText text={selected.prompt} />
-                </div>
-              )}
+              {selected.prompt &&
+                !chat?.items.some(
+                  (item) =>
+                    item.role === "user" && item.text === selected.prompt,
+                ) && (
+                  <div className="child-prompt">
+                    <span>{t("任务")}</span>
+                    <UserText text={selected.prompt} />
+                  </div>
+                )}
               {error && <p className="panel-error">{error}</p>}
               <ActivityTimeline
                 scope={selected.threadId}
@@ -1182,7 +1248,7 @@ function Agents({
                             ].includes(selected.status)
                           ? t("向子代理补充要求…")
                           : t("发送消息继续这个子代理…")
-                      : t("父会话结束后，子代理记录为只读")
+                      : t("打开子代理聊天可独立继续任务")
                   }
                   disabled={job.state !== "running"}
                   value={message}

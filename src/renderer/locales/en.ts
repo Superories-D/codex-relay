@@ -1,6 +1,31 @@
 import { legacyEnglish } from "./legacy-en";
 import { nativeEnglish } from "./native-en";
 export const english: Record<string, string> = {
+  打开子代理聊天: "Open agent chat",
+  子代理会话标识已被其他运行目录占用:
+    "The agent chat ID belongs to a different runtime directory",
+  原生子代理会话身份不匹配: "The native agent thread identity does not match",
+  无法核实原生子代理的父子关系:
+    "The native agent's parent relationship could not be verified",
+  临时子代理没有可恢复的持久化历史:
+    "This ephemeral agent has no saved history to resume",
+  原生子代理恢复后的身份不匹配:
+    "The resumed native agent identity does not match",
+  子代理的原生项目目录无效: "The agent's native project directory is invalid",
+  "原生历史分页游标重复，停止打开子代理":
+    "The native history cursor repeated. Opening this agent has stopped",
+  "无法核实子代理原生权限，未执行命令":
+    "The agent's native permissions could not be verified. The command was not run",
+  打开子代理聊天可独立继续任务:
+    "Open this agent's chat to continue independently",
+  返回主会话: "Back to parent chat",
+  "保留原会话历史 · 自动账户接力":
+    "Original chat history · Automatic account relay",
+  "同组会话正在运行，这里的消息将在它结束后执行。实时控制可在主会话的代理面板进行。":
+    "Another chat in this thread family is running. Messages here will run after it ends. Use the parent chat's Agents panel for live controls.",
+  沿用原生权限: "Saved native permissions",
+  "同组会话正在运行，请排队发送或在主会话的代理面板操作":
+    "This thread family is running. Queue the message or use the parent chat's Agents panel",
   问题: "Questions",
   "问题已更新，请重新查看后回答":
     "The questions have changed. Review them before answering",

@@ -205,6 +205,14 @@ export function AgentApp({
   const modelDirty = useRef(false);
   selectedRef.current = selected;
   const job = snapshot?.jobs.find((j) => j.id === selected);
+  const familyOwner =
+    job &&
+    snapshot?.jobs.find(
+      (other) =>
+        other.id !== job.id &&
+        (other.runtimeHomeId || other.id) === (job.runtimeHomeId || job.id) &&
+        ["preparing", "running", "pausing", "rotating"].includes(other.state),
+    );
   const inputRequests = (snapshot?.approvals || []).filter(
     (a) => a.kind === "input",
   );
@@ -601,7 +609,7 @@ export function AgentApp({
         id: job.id,
         text,
         attachments,
-        action: mode,
+        action: familyOwner && mode === "send" ? "queue" : mode,
         model,
         effort,
         review,
@@ -1225,6 +1233,33 @@ export function AgentApp({
                         setPreviewFile("");
                       }}
                     />
+                    {job?.agentOrigin && (
+                      <div className="agent-origin-note">
+                        <button
+                          onClick={() => {
+                            const parent = snapshot?.jobs.find(
+                              (parent) => parent.id === job.agentOrigin!.jobId,
+                            );
+                            if (parent) {
+                              select(parent);
+                              setWorkspaceTab("agents");
+                              setInspector(true);
+                            }
+                          }}
+                        >
+                          <ArrowLeft size={14} />
+                          {t("返回主会话")}
+                        </button>
+                        <span>{t("保留原会话历史 · 自动账户接力")}</span>
+                      </div>
+                    )}
+                    {familyOwner && (
+                      <div className="agent-history-note">
+                        {t(
+                          "同组会话正在运行，这里的消息将在它结束后执行。实时控制可在主会话的代理面板进行。",
+                        )}
+                      </div>
+                    )}
                     {job && !allItems.length && (
                       <p className="agent-muted">
                         {running(job)
@@ -1584,12 +1619,30 @@ export function AgentApp({
                         <select
                           aria-label={t("执行权限")}
                           title={t("执行权限")}
-                          value={sandbox}
-                          disabled={running(job)}
-                          onChange={(e) =>
-                            setSandbox(e.target.value as Job["sandbox"])
+                          value={
+                            job?.preserveNativePermissions &&
+                            sandbox === job.sandbox
+                              ? "native"
+                              : sandbox
                           }
+                          disabled={running(job) || !!familyOwner}
+                          onChange={(e) => {
+                            const value = e.target.value as Job["sandbox"];
+                            setSandbox(value);
+                            if (job?.preserveNativePermissions)
+                              action(() =>
+                                call("chat.update", {
+                                  id: job.id,
+                                  sandbox: value,
+                                }),
+                              );
+                          }}
                         >
+                          {job?.preserveNativePermissions && (
+                            <option value="native" disabled>
+                              {t("沿用原生权限")}
+                            </option>
+                          )}
                           <option value="workspaceWrite">
                             {t("请求审批")}
                           </option>
@@ -1661,24 +1714,28 @@ export function AgentApp({
                         <button
                           className="agent-send"
                           title={
-                            running(job)
-                              ? desktop.preferences?.followUp === "steer" &&
-                                job?.state === "running"
-                                ? t("立即补充到当前轮次 ↗")
-                                : t("排队发送")
-                              : !job && goalMode
-                                ? t("保存并开始")
-                                : t("发送")
+                            familyOwner
+                              ? t("排队发送")
+                              : running(job)
+                                ? desktop.preferences?.followUp === "steer" &&
+                                  job?.state === "running"
+                                  ? t("立即补充到当前轮次 ↗")
+                                  : t("排队发送")
+                                : !job && goalMode
+                                  ? t("保存并开始")
+                                  : t("发送")
                           }
                           aria-label={
-                            running(job)
-                              ? desktop.preferences?.followUp === "steer" &&
-                                job?.state === "running"
-                                ? t("立即补充到当前轮次 ↗")
-                                : t("排队发送")
-                              : !job && goalMode
-                                ? t("保存并开始")
-                                : t("发送")
+                            familyOwner
+                              ? t("排队发送")
+                              : running(job)
+                                ? desktop.preferences?.followUp === "steer" &&
+                                  job?.state === "running"
+                                  ? t("立即补充到当前轮次 ↗")
+                                  : t("排队发送")
+                                : !job && goalMode
+                                  ? t("保存并开始")
+                                  : t("发送")
                           }
                           disabled={
                             pending ||
@@ -1789,6 +1846,10 @@ export function AgentApp({
                   }}
                   draftAttachments={attachments}
                   questions={chatQuestions}
+                  onOpenConversation={(child) => {
+                    select(child);
+                    setInspector(false);
+                  }}
                   addSources={() => {
                     const target = key;
                     addPastedFiles(target, () => call("chat.attachments"));

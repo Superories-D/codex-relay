@@ -58,6 +58,8 @@ export interface ResetWarmup {
   error?: string;
 }
 export interface Job {
+  agentOrigin?: { jobId: string; parentThreadId: string };
+  preserveNativePermissions?: boolean;
   goal?: ThreadGoal | null;
   goalResumeAfterQuota?: boolean;
   goalStartRequested?: boolean;
@@ -267,6 +269,7 @@ export type NewJob = Pick<
   | "serviceTier"
 >;
 export interface AgentState {
+  conversationId?: string;
   threadId: string;
   parentThreadId?: string;
   name: string;

@@ -85,6 +85,27 @@ function worker() {
     refresh: async () => auth,
   });
 }
+it("preserves adopted thread permissions while enforcing an explicitly selected read-only planning turn", async () => {
+  job.threadId = "thread-1";
+  job.preserveNativePermissions = true;
+  const original = worker();
+  await original.start(auth);
+  const resume = rpc.call.mock.calls.find(
+    ([method]) => method === "thread/resume",
+  )![1];
+  expect(resume).not.toHaveProperty("sandbox");
+  expect(resume).not.toHaveProperty("approvalPolicy");
+  await original.close();
+  rpc.call.mockClear();
+  job.planMode = true;
+  const planned = worker();
+  await planned.start(auth);
+  const planningResume = rpc.call.mock.calls.find(
+    ([method]) => method === "thread/resume",
+  )![1];
+  expect(planningResume.sandbox).toBe("read-only");
+  await planned.close();
+});
 beforeEach(() => {
   vi.useFakeTimers();
   rpc = new FakeRpc();
@@ -434,10 +455,15 @@ it("restores owned nested children after reconnect and resumes them using the cu
     expect.objectContaining({
       threadId: "child",
       model: "child-model",
-      sandbox: "read-only",
       excludeTurns: true,
     }),
   );
+  const childResume = rpc.call.mock.calls.find(
+    ([method, params]) =>
+      method === "thread/resume" && params.threadId === "child",
+  )![1];
+  expect(childResume.sandbox).toBe("read-only"); // Explicit planning restriction still applies to descendants.
+  expect(childResume).not.toHaveProperty("cwd");
   expect(rpc.call).toHaveBeenCalledWith(
     "turn/start",
     expect.objectContaining({

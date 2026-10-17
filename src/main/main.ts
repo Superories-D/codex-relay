@@ -756,6 +756,13 @@ async function boot() {
           .parse(args);
         return scheduler.agentControl(a.id, a.threadId, a.action, a.text);
       }
+      case "chat.agent.open": {
+        const a = z
+          .object({ id: idSchema, threadId: idSchema })
+          .strict()
+          .parse(args);
+        return scheduler.openAgent(a.id, a.threadId);
+      }
       case "chat.export": {
         const id = idSchema.parse(args),
           job = store.data.jobs.find((j) => j.id === id);
@@ -977,6 +984,8 @@ async function boot() {
         if (a.cwd && !(await fs.stat(a.cwd)).isDirectory())
           throw new Error("项目目录无效");
         Object.assign(job, a);
+        if (a.sandbox !== undefined || a.approvalPolicy !== undefined)
+          job.preserveNativePermissions = false;
         await store.save();
         scheduler.changed();
         return;
