@@ -803,6 +803,50 @@
   max-width: 910px;
   position: relative;
 }
+.desktop-shell .agent-shell .chat-follow-latest {
+  position: absolute;
+  z-index: 3;
+  top: -47px;
+  left: calc(50% - 18px);
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 3px 14px #0002;
+  opacity: 0;
+  transform: translateY(5px) scale(0.92);
+  pointer-events: none;
+  transition:
+    opacity 160ms ease,
+    transform 180ms ease,
+    background 140ms ease;
+}
+.desktop-shell .chat-follow-latest[data-visible="true"] {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  pointer-events: auto;
+}
+.desktop-shell .chat-follow-latest:hover {
+  background: var(--surface);
+  border-color: var(--subtle);
+  transform: translateY(-1px);
+}
+.desktop-shell .chat-follow-latest:active {
+  transform: scale(0.96);
+}
+.desktop-shell .chat-follow-latest:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+.desktop-shell .agent-scroll:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  outline-offset: -1px;
+}
 .desktop-shell .agent-composer {
   background: #303030;
   border: 1px solid #3d3d3d;

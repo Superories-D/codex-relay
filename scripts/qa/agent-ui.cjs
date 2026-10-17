@@ -569,6 +569,32 @@ const root = path.resolve(__dirname, "../..");
           120,
       ) < 5,
     );
+    const settle = () =>
+      page.evaluate(
+        () =>
+          new Promise((resolve) =>
+            requestAnimationFrame(() => requestAnimationFrame(resolve)),
+          ),
+      );
+    const atBottom = () =>
+      page.waitForFunction(
+        () => {
+          const el = document.querySelector(".agent-scroll");
+          return el.scrollHeight - el.scrollTop - el.clientHeight < 4;
+        },
+        undefined,
+        { timeout: 2500 },
+      );
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await settle();
+    await page.locator(".agent-scroll").evaluate((el) => {
+      el.scrollTop = el.scrollHeight;
+      el.dispatchEvent(new Event("scroll"));
+    });
+    await settle();
+    await page.setViewportSize({ width: 900, height: 650 });
+    await atBottom();
+    smoothness.followAfterResize = true;
     await page
       .getByRole("button", { name: "插件与 Skills", exact: true })
       .click();

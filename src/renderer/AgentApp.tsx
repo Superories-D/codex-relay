@@ -18,6 +18,7 @@ import { ActivityTimeline } from "./ActivityTimeline";
 import { importPastedFiles } from "./paste-files";
 import { MotionRegion, ModalPresence } from "./MotionRegion";
 import { mergePage } from "./chat-view";
+import { followChat } from "./chat-scroll";
 import { TerminalPane } from "./TerminalPane";
 import { Workbench, type WorkbenchTab } from "./Workbench";
 import { ExtensionsPage, SchedulesPage } from "./FeaturePages";
@@ -29,6 +30,7 @@ import type { DesktopData } from "../core/desktop";
 import {
   Archive,
   ArrowLeft,
+  ArrowDown,
   ArrowRight,
   ArrowUp,
   Bell,
@@ -180,8 +182,13 @@ export function AgentApp({
   const [page, setPage] = useState<ChatPage>({ items: [], total: 0 });
   const [older, setOlder] = useState<ChatItem[]>([]);
   const [olderBefore, setOlderBefore] = useState<number>();
-  const bottom = useRef<HTMLDivElement>(null);
+  const transcript = useRef<HTMLDivElement>(null);
   const scroll = useRef<HTMLDivElement>(null);
+  const scrollControl = useRef<ReturnType<typeof followChat> | null>(null);
+  const [awayFromLatest, setAwayFromLatest] = useState(false);
+  const lastScroll = useRef<{ id?: string; top: number } | undefined>(
+    undefined,
+  );
   const viewCache = useRef(
     new Map<
       string,
@@ -384,10 +391,6 @@ export function AgentApp({
     setOlder(cached?.older || []);
     setOlderBefore(cached?.before);
     following.current = cached?.follow ?? true;
-    if (cached && !cached.follow)
-      requestAnimationFrame(() => {
-        if (scroll.current) scroll.current.scrollTop = cached.top;
-      });
     void window.relay.command("chat.watch", { id: selected }).catch(() => {});
     if (!selected) return;
     let alive = true,
@@ -419,12 +422,30 @@ export function AgentApp({
     };
   }, [selected]);
   useEffect(() => {
-    if (!following.current) return;
-    const frame = requestAnimationFrame(() =>
-      bottom.current?.scrollIntoView({ block: "end", behavior: "instant" }),
+    if (!scroll.current || !transcript.current) return;
+    const viewport = scroll.current;
+    const position =
+      lastScroll.current?.id === selected
+        ? lastScroll.current
+        : selected
+          ? viewCache.current.get(selected)
+          : undefined;
+    const control = followChat(
+      viewport,
+      transcript.current,
+      following,
+      (away) => {
+        lastScroll.current = { id: selected, top: viewport.scrollTop };
+        setAwayFromLatest(away);
+      },
+      !following.current ? position?.top : undefined,
     );
-    return () => cancelAnimationFrame(frame);
-  }, [page.items.map((i) => i.id + i.text.length + i.status).join("|")]);
+    scrollControl.current = control;
+    return () => {
+      control.destroy();
+      scrollControl.current = null;
+    };
+  }, [selected, screen, manage]);
   const select = (j?: Job) => {
     setManage("");
     if (selected) {
@@ -1137,13 +1158,10 @@ export function AgentApp({
                 <div
                   className="agent-scroll"
                   ref={scroll}
-                  onScroll={(e) => {
-                    const el = e.currentTarget;
-                    following.current =
-                      el.scrollHeight - el.scrollTop - el.clientHeight < 100;
-                  }}
+                  tabIndex={0}
+                  aria-label={t("聊天记录")}
                 >
-                  <div className="agent-transcript">
+                  <div className="agent-transcript" ref={transcript}>
                     {!job && (
                       <div className="agent-welcome">
                         <span className="agent-welcome-mark">
@@ -1315,10 +1333,20 @@ export function AgentApp({
                         {t("条消息，将在本轮结束后发送。")}
                       </div>
                     )}
-                    <div ref={bottom} />
                   </div>
                 </div>
                 <div className="agent-composer-wrap">
+                  <button
+                    className="chat-follow-latest"
+                    aria-label={t("回到最新消息")}
+                    title={t("回到最新消息")}
+                    data-visible={awayFromLatest}
+                    inert={!awayFromLatest}
+                    aria-hidden={!awayFromLatest}
+                    onClick={() => scrollControl.current?.latest()}
+                  >
+                    <ArrowDown size={17} />
+                  </button>
                   <div
                     className={`agent-composer ${pasting[key] ? "is-pasting" : ""}`}
                     onDragOver={(event) => {

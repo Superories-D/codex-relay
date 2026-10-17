@@ -1,6 +1,8 @@
 import { legacyEnglish } from "./legacy-en";
 import { nativeEnglish } from "./native-en";
 export const english: Record<string, string> = {
+  聊天记录: "Chat transcript",
+  回到最新消息: "Back to latest message",
   打开子代理聊天: "Open agent chat",
   子代理会话标识已被其他运行目录占用:
     "The agent chat ID belongs to a different runtime directory",
