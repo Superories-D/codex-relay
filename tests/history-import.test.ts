@@ -54,6 +54,70 @@ it("distinguishes background approval and spawned agents from main conversations
   ).toMatchObject({ source: "subagent", parentThreadId: "parent" });
   expect(nativeSource("vscode")).toEqual({ source: "vscode" });
 });
+it("refreshes a rebuilt native projection in place, preserves owned images, and keeps identical item IDs from different turns", async () => {
+  const id = await sqliteFixture();
+  const image = path.join(project, "source.png");
+  await fs.writeFile(
+    image,
+    Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j9ocAAAAASUVORK5CYII=",
+      "base64",
+    ),
+  );
+  const { DatabaseSync } = await import("node:sqlite");
+  const source = new DatabaseSync(path.join(home, "thread_history_1.sqlite"));
+  const raw = JSON.parse(
+    String(
+      source
+        .prepare(
+          "SELECT item_json FROM thread_items WHERE item_id='user-native'",
+        )
+        .get()?.item_json,
+    ),
+  );
+  raw.content.push({ type: "localImage", path: image });
+  source
+    .prepare("UPDATE thread_items SET item_json=? WHERE item_id='user-native'")
+    .run(JSON.stringify(raw));
+  source.close();
+  importer.start([home]);
+  await finished();
+  const first = store.data.jobs[0],
+    runtime = store.jobHome(first.id),
+    saved = (await new Chats(store.root).read(first.id)).items.find(
+      (i) => i.role === "user",
+    )!.images![0].path;
+  await fs.rm(image);
+  const copy = new DatabaseSync(path.join(runtime, "thread_history_1.sqlite"));
+  copy
+    .prepare("INSERT INTO thread_items VALUES(?,?,?,?,?,?)")
+    .run(
+      id,
+      "other-turn",
+      "user-native",
+      3000,
+      JSON.stringify({
+        type: "agentMessage",
+        id: "user-native",
+        text: "恢复完整缓存 中文😀",
+      }),
+      3,
+    );
+  copy.close();
+  importer.start([home]);
+  await finished();
+  expect(importer.progress.updated).toBe(1);
+  expect(store.data.jobs).toHaveLength(1);
+  expect(store.data.jobs[0].id).toBe(first.id);
+  expect(store.jobHome(first.id)).toBe(runtime);
+  const page = await new Chats(store.root).read(first.id);
+  expect(page.total).toBe(4);
+  expect(page.items.some((i) => i.text === "恢复完整缓存 中文😀")).toBe(true);
+  expect(page.items.find((i) => i.role === "user")!.images![0].path).toBe(
+    saved,
+  );
+  await expect(fs.access(saved!)).resolves.toBeUndefined();
+});
 it("rebases copied native rollout paths into the private import home before CLI resume", async () => {
   const id = await sqliteFixture();
   const { DatabaseSync } = await import("node:sqlite");

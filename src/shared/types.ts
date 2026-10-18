@@ -113,6 +113,8 @@ export interface Job {
     source: string;
     issue?: string;
     storage?: "sqlite";
+    itemCount?: number;
+    journalVersion?: number;
     parentThreadId?: string;
   };
   review?: boolean;

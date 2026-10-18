@@ -61,6 +61,7 @@ export class BackgroundHistoryImport {
       workerData: {
         root: this.store.root,
         homes,
+        cli: this.store.data.settings.cliPath,
         knownSources: this.store.data.jobs
           .map((job) => job.historySource?.threadId)
           .filter(Boolean),
@@ -70,6 +71,11 @@ export class BackgroundHistoryImport {
             threadId: j.historySource!.threadId,
             id: j.id,
             storage: j.historySource!.storage,
+            job: j.historySource!.storage === "sqlite" ? j : undefined,
+            home:
+              j.historySource!.storage === "sqlite"
+                ? this.store.jobHome(j.id)
+                : undefined,
             upgradable:
               j.state === "completed" &&
               !j.turnId &&

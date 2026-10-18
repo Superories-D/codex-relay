@@ -5,6 +5,7 @@ import os from "node:os";
 import { Store } from "./store";
 import { Chats } from "./chat";
 import { History } from "./history";
+import { NativeSnapshots } from "./native-history";
 import type { Job } from "../shared/types";
 
 if (!parentPort) throw Error("History import requires a worker");
@@ -59,6 +60,16 @@ async function run() {
     128 * 1024 * 1024,
   );
   history.cancelled = () => cancelled;
+  history.cliPath = workerData.cli;
+  history.warning = (message) => post({ type: "warning", message });
+  const refreshSnapshots = new NativeSnapshots(
+    new Store(workerData.root),
+    new Chats(workerData.root),
+    undefined,
+    () => cancelled,
+    workerData.cli,
+    history.warning,
+  );
   let lastSnapshotProgress = 0;
   history.snapshotProgress = (snapshotPercent) => {
     if (Date.now() - lastSnapshotProgress > 250 || snapshotPercent === 100) {
@@ -166,7 +177,25 @@ async function run() {
         entry.storage === "sqlite" &&
         previous?.storage !== "sqlite" &&
         previous?.upgradable;
-      if (known.has(entry.threadId) && !upgrade) skipped++;
+      if (
+        known.has(entry.threadId) &&
+        previous?.storage === "sqlite" &&
+        previous.upgradable
+      ) {
+        try {
+          const refreshed = await refreshSnapshots.refresh(
+            previous.job,
+            previous.home,
+          );
+          if (refreshed) {
+            (refreshed as any).replaceId = previous.id;
+            pending.push(refreshed);
+            previous.job = { ...refreshed, id: previous.id };
+          } else skipped++;
+        } catch (error) {
+          post({ type: "failure", title: entry.title, message: String(error) });
+        }
+      } else if (known.has(entry.threadId) && !upgrade) skipped++;
       else
         try {
           const job = await history.copyEntry(entry.id);
@@ -197,6 +226,7 @@ async function run() {
     if (pending.length) await batch(pending);
     post({ type: "done", phase: cancelled ? "cancelled" : "completed" });
   } finally {
+    refreshSnapshots.close();
     history.close();
   }
 }

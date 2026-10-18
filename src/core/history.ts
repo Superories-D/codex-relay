@@ -24,6 +24,8 @@ export class History {
   private nativeSnapshots?: NativeSnapshots;
   nativeProjects: { cwd: string; name: string; id: string }[] = [];
   snapshotProgress?: (percent: number) => void;
+  cliPath?: string;
+  warning?: (message: string) => void;
   cancelled?: () => boolean;
   constructor(
     private store: Store,
@@ -185,6 +187,8 @@ export class History {
         this.chats,
         (percent) => this.snapshotProgress?.(percent),
         () => this.cancelled?.() || false,
+        this.cliPath || this.store.data.settings.cliPath,
+        this.warning,
       );
       return this.nativeSnapshots.copy(found.native);
     }

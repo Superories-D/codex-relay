@@ -8,6 +8,9 @@ import { Store } from "./store";
 import { Chats, protocolItem, jsonLines } from "./chat";
 import { TextWriter } from "./text-writer";
 import { persistImages } from "./chat-media";
+import { Rpc } from "./rpc";
+import { redact } from "./redact";
+import type { ChatItem } from "../shared/types";
 
 export interface NativeThread {
   home: string;
@@ -291,12 +294,135 @@ export class NativeSnapshots {
     { id: string; home: string; history?: DatabaseSync; missing: Set<string> }
   >();
   private copies = new Map<string, string>();
+  private prepared = new Set<string>();
+  private catalogs = new Map<
+    string,
+    Awaited<ReturnType<typeof nativeCatalog>>
+  >();
+  private previousImages = new Map<string, ChatItem["images"]>();
   constructor(
     private store: Store,
     private chats: Chats,
     private progress?: (percent: number) => void,
     private cancelled?: () => boolean,
+    private cli?: string,
+    private warning?: (message: string) => void,
   ) {}
+  private async prepare(
+    home: string,
+    snapshot: { history?: DatabaseSync; missing: Set<string> },
+  ) {
+    if (this.prepared.has(home)) return;
+    this.prepared.add(home);
+    if (
+      !this.cli ||
+      !snapshot.history
+        ?.prepare(
+          "SELECT name FROM sqlite_master WHERE name='thread_history_projection_state'",
+        )
+        .get()
+    )
+      return;
+    const catalog = await nativeCatalog(home);
+    this.catalogs.set(home, catalog);
+    let rpc: Rpc | undefined;
+    try {
+      await Rpc.assertHomeIdle(home);
+      rpc = await Rpc.open(this.cli, home);
+      for (const thread of catalog?.threads || []) {
+        if (this.cancelled?.()) break;
+        if (snapshot.missing.has(thread.entry.threadId)) continue;
+        // Ask the native backend to rebuild its cached projection, without
+        // returning enormous tool outputs or starting/resuming a model turn.
+        try {
+          await rpc.call(
+            "thread/resume",
+            {
+              threadId: thread.entry.threadId,
+              cwd: home,
+              approvalPolicy: "never",
+              sandbox: "read-only",
+              excludeTurns: true,
+              config: { "features.goals": false },
+            },
+            10000,
+          );
+          await rpc.call(
+            "thread/items/list",
+            {
+              threadId: thread.entry.threadId,
+              limit: 1,
+              sortDirection: "asc",
+            },
+            10000,
+          );
+        } catch (error) {
+          this.warning?.(`原生历史未能重建，保留已保存缓存：${redact(error)}`);
+          await rpc.close();
+          rpc = await Rpc.open(this.cli, home);
+        }
+      }
+    } catch (error) {
+      this.warning?.(
+        `原生分页历史重建不可用，保留已保存缓存：${redact(error)}`,
+      );
+      // Cached messages remain readable if the optional native rebuild is
+      // unavailable. Execution still validates the original rollout lineage.
+    } finally {
+      if (rpc) await rpc.close();
+    }
+  }
+  async refresh(job: Job, home: string): Promise<Job | undefined> {
+    let catalog = this.catalogs.get(home);
+    if (!catalog) {
+      catalog = await nativeCatalog(home);
+      this.catalogs.set(home, catalog);
+    }
+    const native = catalog?.threads.find(
+      (t) => t.entry.threadId === job.threadId,
+    );
+    if (!native) return;
+    let snapshot = this.snapshots.get(native.state);
+    if (!snapshot) {
+      const { DatabaseSync } = await import("node:sqlite");
+      snapshot = {
+        id: job.runtimeHomeId || job.id,
+        home,
+        missing: await rebaseNativeHome(home),
+        history: new DatabaseSync(native.history, { readOnly: true }),
+      };
+      this.snapshots.set(native.state, snapshot);
+    }
+    await this.prepare(home, snapshot);
+    const count = Number(
+      snapshot.history
+        ?.prepare("SELECT COUNT(*) n FROM thread_items WHERE thread_id=?")
+        .get(job.threadId!)?.n || 0,
+    );
+    if (
+      job.historySource?.journalVersion === 2 &&
+      job.historySource.itemCount === count
+    )
+      return;
+    for await (const old of jsonLines(this.chats.file(job.id)))
+      if (old.images?.length) {
+        const key =
+          old.turnId && !old.id.startsWith(old.turnId + ":")
+            ? old.turnId + ":" + old.id
+            : old.id;
+        this.previousImages.set(key, old.images);
+      }
+    const fresh = await this.copy(native);
+    return {
+      ...job,
+      id: fresh.id,
+      historySource: {
+        ...job.historySource!,
+        itemCount: count,
+        journalVersion: 2,
+      },
+    };
+  }
   async copy(native: NativeThread): Promise<Job> {
     let snapshot = this.snapshots.get(native.state);
     if (!snapshot) {
@@ -337,6 +463,7 @@ export class NativeSnapshots {
       };
       this.snapshots.set(native.state, snapshot);
     }
+    await this.prepare(snapshot.home, snapshot);
     if (this.cancelled?.()) throw Error("导入已停止");
     const id = randomUUID(),
       entry = native.entry;
@@ -364,7 +491,26 @@ export class NativeSnapshots {
           .iterate(entry.threadId)) {
           if (this.cancelled?.()) throw Error("导入已停止");
           const raw = JSON.parse(String(row.item_json));
-          const item = protocolItem(raw, String(row.item_id));
+          const item = protocolItem(raw, `${row.turn_id}:${row.item_id}`);
+          const savedImages = this.previousImages.get(item.id);
+          if (
+            savedImages?.length &&
+            savedImages.length >= (item.images?.length || 0) &&
+            !item.images?.some((image) => image.data || image.url) &&
+            (
+              await Promise.all(
+                savedImages.map((image) =>
+                  image.path
+                    ? fs.access(image.path).then(
+                        () => true,
+                        () => false,
+                      )
+                    : Promise.resolve(!!image.url || !!image.data),
+                ),
+              )
+            ).every(Boolean)
+          )
+            item.images = savedImages;
           for (const key of ["text", "detail"] as const)
             if (item[key] && item[key]!.length > 262144) {
               item[key] = item[key]!.slice(0, 262144);
@@ -435,6 +581,8 @@ export class NativeSnapshots {
         threadId: entry.threadId,
         source: entry.source,
         storage: "sqlite",
+        itemCount: count,
+        journalVersion: 2,
         parentThreadId: entry.parentThreadId,
         issue: !count
           ? "源客户端尚未保存可读取的消息记录。"
