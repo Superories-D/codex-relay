@@ -54,7 +54,7 @@ function fixture({ theme, language }) {
       if (name === "history.importAll.cancel") { progress.phase = "cancelled"; return structuredClone(progress); }
       if (name === "chat.read") return { items, total: items.length };
       if (name === "chat.update") { Object.assign(job, args); listener?.(structuredClone(data)); return job; }
-      if (name === "account.models") return [{ id: "gpt-6-astra", model: "gpt-6-astra", displayName: "GPT-6 Astra", description: "", defaultReasoningEffort: "high", supportedReasoningEfforts: ["low", "medium", "high"].map((reasoningEffort) => ({ reasoningEffort, description: reasoningEffort })) }];
+      if (name === "account.models") return [{ id: "gpt-6-astra", model: "gpt-6-astra", displayName: "GPT-6 Astra", description: "", defaultReasoningEffort: "high", supportedReasoningEfforts: ["low", "medium", "high", "xhigh", "max", "ultra"].map((reasoningEffort) => ({ reasoningEffort, description: reasoningEffort })) }];
       if (name === "workspace.files") return [];
       if (name === "workspace.changes") return { root: cwd, branch: "main", files: [] };
       if (name === "chat.assets") return { files: [], images: [], sources: [] };
@@ -81,8 +81,9 @@ function fixture({ theme, language }) {
     for (const [theme, language, width, height] of [
       ["dark", "zh-CN", 1600, 1000], ["light", "zh-CN", 1600, 1000],
       ["dark", "en", 900, 760], ["light", "zh-TW", 1100, 850],
+      ["dark", "zh-CN", 900, 1020],
     ]) {
-      const page = await browser.newPage({ viewport: { width, height }, deviceScaleFactor: 1.25 });
+      const page = await browser.newPage({ viewport: { width, height }, deviceScaleFactor: width === 900 ? 1.5 : 1.25 });
       page.on("pageerror", (e) => report.rendererErrors.push(e.message));
       await page.addInitScript(fixture, { theme, language });
       await page.goto(`http://127.0.0.1:${server.address().port}`);
@@ -116,6 +117,42 @@ function fixture({ theme, language }) {
       assert.ok(await input.evaluate((e) => e.clientHeight >= 180 || e.scrollHeight <= e.clientHeight + 2));
       await input.fill("");
       await page.setViewportSize({ width, height });
+      const checkPopover = async (selector) => {
+        await page.locator(selector).evaluate(async (node) => {
+          await Promise.all(node.getAnimations().map((animation) => animation.finished.catch(() => {})));
+        });
+        const geometry = await page.locator(selector).evaluate((node) => {
+          const popup = node.getBoundingClientRect();
+          const input = document.querySelector('.agent-composer').getBoundingClientRect();
+          return { width: popup.width, height: popup.height, bottom: popup.bottom, inputTop: input.top, aboveInput: popup.bottom <= input.top - 6, visible: popup.x >= 0 && popup.right <= innerWidth && popup.y >= 0 };
+        });
+        assert.ok(geometry.aboveInput && geometry.visible, JSON.stringify(geometry));
+        return geometry;
+      };
+      await page.locator('.agent-model-trigger').click();
+      await page.locator('.agent-model-popover input[type="range"]').waitFor();
+      const modelGeometry = await checkPopover('.agent-model-popover');
+      assert.ok(modelGeometry.width <= 300 && modelGeometry.height <= 170, JSON.stringify(modelGeometry));
+      await page.locator('.agent-model-popover input').press('End');
+      assert.equal(await page.locator('.agent-model-popover input').inputValue(), '5');
+      await page.screenshot({ path: path.join(output, `popover-model-${theme}-${language}-${width}.png`) });
+      await page.keyboard.press('Escape');
+      await page.locator('.agent-model-popover').waitFor({ state: 'detached' });
+      await page.locator('.permission-trigger').press('ArrowDown');
+      await page.locator('.permission-menu').waitFor();
+      await page.waitForFunction(() => document.activeElement?.getAttribute('role') === 'menuitemradio');
+      await checkPopover('.permission-menu');
+      await page.keyboard.press('End');
+      assert.ok(await page.getByRole('menuitemradio').last().evaluate(node => node === document.activeElement), 'End focuses last permission');
+      await page.keyboard.press('Enter');
+      await page.locator('.permission-trigger').click();
+      assert.equal(await page.getByRole('menuitemradio').last().getAttribute('aria-checked'), 'true');
+      await page.screenshot({ path: path.join(output, `popover-permission-${theme}-${language}-${width}.png`) });
+      await page.keyboard.press('Escape');
+      assert.ok(await page.locator('.permission-trigger').evaluate((node) => node === document.activeElement));
+      await page.locator('.permission-trigger').click();
+      await input.click();
+      assert.equal(await page.locator('.permission-menu').count(), 0);
       await page.locator(".sidebar-import > summary").click();
       await page.locator(".sidebar-import-content > button").first().click();
       await page.waitForFunction(() => document.querySelector(".sidebar-import progress") !== null);
@@ -130,7 +167,7 @@ function fixture({ theme, language }) {
       report.layouts.push({ theme, language, width, height, ...dimensions });
       await page.close();
     }
-    report.checks = ["60 projects and long titles", "compact composer grows and shrinks", "resizing wrapped draft", "successful import collapsed", "start and cancel import", "failed import reveals details", "light/dark and three languages"];
+    report.checks = ["60 projects and long titles", "compact composer grows and shrinks", "resizing wrapped draft", "successful import collapsed", "start and cancel import", "failed import reveals details", "light/dark and three languages", "compact model panel above input", "permission keyboard selection, Escape focus and outside dismissal", "150 percent display scale"];
     assert.deepEqual(report.rendererErrors, []);
     report.status = "passed";
     console.log(JSON.stringify(report));

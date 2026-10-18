@@ -533,6 +533,7 @@ export const english: Record<string, string> = {
   待核实: "Not checked",
   快捷键: "Shortcuts",
   思考强度: "Reasoning effort",
+  "移除附件 {p0}": "Remove attachment {p0}",
   思考过程: "Thinking",
   恢复此模型的默认思考强度: "Reset to this model's default reasoning effort",
   打开文件: "Open file",

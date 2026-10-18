@@ -1101,8 +1101,12 @@
   border-left: 1px solid var(--strong-line);
 }
 .desktop-shell .agent-model-popover {
-  width: 362px;
-  bottom: calc(100% + 19px);
+  width: 300px;
+  bottom: calc(100% + 8px);
+  padding: 12px;
+  border-radius: 12px;
+  overflow: auto;
+  z-index: 40;
   background: var(--surface);
   border-color: var(--line);
   color: var(--text);
@@ -1158,11 +1162,87 @@
   color: #99b7ed;
   font-size: 10px;
 }
-.desktop-shell .agent-attachments button {
-  color: #ccc;
-  border: 1px solid #4c4c4c;
-  background: #3b3b3b;
+.desktop-shell .agent-attachments {
+  padding: 0 0 8px;
+  gap: 8px;
+  max-height: 140px;
+  overflow: auto;
+}
+.draft-attachment {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 6px;
+  max-width: min(260px, 100%);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  color: var(--subtle);
+}
+.draft-attachment > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.desktop-shell .draft-attachment .chat-image-thumbnail {
+  width: 42px;
+  height: 36px;
+  min-width: 42px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+}
+.desktop-shell .draft-attachment .draft-attachment-remove {
+  display: grid;
+  place-items: center;
+  padding: 3px;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  background: transparent;
+  color: var(--subtle);
+}
+.permission-picker { position: relative; }
+.desktop-shell .permission-trigger {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px;
+  color: var(--subtle);
   font-size: 11px;
+  white-space: nowrap;
+}
+.permission-menu {
+  z-index: 40;
+  overflow: auto;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 8px 24px #0003;
+}
+.composer-menu-label {
+  color: var(--subtle);
+  font-size: 11px;
+}
+.permission-menu > .composer-menu-label { padding: 5px 8px 7px; }
+.desktop-shell .permission-menu > button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 8px;
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 12px;
+  text-align: left;
+}
+.desktop-shell .permission-menu > button[aria-checked="true"] {
+  background: var(--selection);
 }
 .desktop-shell .composer-mode-badge {
   gap: 4px;
@@ -4462,8 +4542,67 @@
   color: var(--subtle);
 }
 .desktop-shell .agent-effort-track {
+  height: 24px;
+  background: transparent;
+}
+.desktop-shell .agent-effort-track::before {
+  content: "";
+  position: absolute;
+  inset: 10px 8px;
+  height: 4px;
+  border-radius: 2px;
   background: var(--line);
 }
+.desktop-shell .agent-effort-fill {
+  top: 10px;
+  bottom: auto;
+  left: 0;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+.desktop-shell .agent-effort-ticks { inset: 0 8px; }
+.desktop-shell .agent-effort-ticks i {
+  height: 4px;
+  width: 4px;
+  background: var(--subtle);
+}
+.desktop-shell .agent-effort-track input[type="range"] {
+  height: 24px;
+  min-height: 0;
+  border-radius: 5px;
+}
+.desktop-shell .agent-effort-track input:focus-visible { outline-offset: 2px; }
+.desktop-shell .agent-effort-track input::-webkit-slider-runnable-track {
+  height: 24px;
+}
+.desktop-shell .agent-effort-track input::-webkit-slider-thumb {
+  width: 16px;
+  height: 16px;
+  margin-top: 4px;
+  border: 2px solid var(--accent);
+  box-shadow: 0 1px 4px #0003;
+}
+.desktop-shell .agent-effort-labels { padding: 3px 0 0; }
+.desktop-shell .agent-model-heading { padding: 0; height: 26px; gap: 8px; }
+.desktop-shell .agent-model-heading strong {
+  font-size: 12px;
+  margin-left: auto;
+  color: var(--text);
+}
+.desktop-shell .agent-model-name {
+  justify-content: space-between;
+  font-size: 13px;
+  padding: 8px;
+  margin: 6px 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  text-align: left;
+}
+.desktop-shell .agent-model-list { padding: 0; }
+.desktop-shell .agent-model-list button { padding: 8px; border-radius: 7px; }
+.desktop-shell .agent-model-note { padding: 8px 0; }
+.desktop-shell .agent-model-heading button { color: var(--subtle); }
 .questions-pane {
   color: var(--text);
   min-height: 0;

@@ -196,7 +196,7 @@ async function until(fn, timeout = 15000) {
     await until(async () =>
       (await input.inputValue()).includes("普通文本\n第二行"),
     );
-    assert.equal(await page.locator(".agent-attachments button").count(), 0);
+    assert.equal(await page.locator(".agent-attachments .draft-attachment").count(), 0);
     report.plainText = "passed";
     await app.evaluate(
       async ({ clipboard, ClipboardItem }, uris) => {
@@ -207,10 +207,10 @@ async function until(fn, timeout = 15000) {
     await input.press("Control+V");
     await until(
       async () =>
-        (await page.locator(".agent-attachments button").count()) === 2,
+        (await page.locator(".agent-attachments .draft-attachment").count()) === 2,
     );
     const copiedPaths = await page
-      .locator(".agent-attachments button")
+      .locator(".agent-attachments .draft-attachment")
       .evaluateAll((nodes) => nodes.map((node) => node.title));
     assert(
       copiedPaths.every((file) =>
@@ -250,7 +250,7 @@ async function until(fn, timeout = 15000) {
     try {
       await until(
         async () =>
-          (await page.locator(".agent-attachments button").count()) === 3,
+          (await page.locator(".agent-attachments .draft-attachment").count()) === 3,
       );
     } catch (e) {
       console.log(await page.locator(".agent-error").allTextContents());
@@ -262,7 +262,7 @@ async function until(fn, timeout = 15000) {
       throw e;
     }
     const imagePath = await page
-      .locator(".agent-attachments button")
+      .locator(".agent-attachments .draft-attachment")
       .last()
       .getAttribute("title");
     assert.equal(
@@ -270,6 +270,15 @@ async function until(fn, timeout = 15000) {
       "PNG",
     );
     report.imagePaste = "passed";
+    await page.waitForFunction(() => {
+      const img = document.querySelector('.draft-attachment img');
+      return img?.complete && img.naturalWidth > 0;
+    });
+    await page.locator('.draft-attachment .chat-image-thumbnail').click();
+    await page.getByRole('dialog').waitFor();
+    await page.keyboard.press('Escape');
+    await page.getByRole('dialog', { includeHidden: true }).waitFor({ state: 'detached' });
+    report.draftImagePreview = "passed";
     // Exercise disk-backed File -> webUtils bridge as well as the clipboard fallback.
     await page.evaluate(() => {
       const element = document.createElement("input");
@@ -294,7 +303,7 @@ async function until(fn, timeout = 15000) {
     });
     await until(
       async () =>
-        (await page.locator(".agent-attachments button").count()) === 4,
+        (await page.locator(".agent-attachments .draft-attachment").count()) === 4,
     );
     report.nativeFileDrop = "passed";
     assert.equal(

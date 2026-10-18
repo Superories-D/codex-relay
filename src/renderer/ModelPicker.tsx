@@ -2,6 +2,7 @@ import { t, useI18n } from "./i18n";
 import React, { useEffect, useRef, useState } from "react";
 import { usePresence } from "./MotionRegion";
 import { ChevronDown } from "lucide-react";
+import { useComposerPopover } from "./useComposerPopover";
 
 export type ModelOption = {
   id: string;
@@ -44,6 +45,7 @@ export function ModelPicker({
   const present = usePresence(open);
 
   const root = useRef<HTMLDivElement>(null);
+  const popoverStyle = useComposerPopover(root, open, 300);
   const [models, setModels] = useState<ModelOption[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -124,6 +126,7 @@ export function ModelPicker({
       {present && (
         <div
           className="agent-model-popover"
+          style={popoverStyle}
           data-open={open}
           inert={!open}
           aria-hidden={!open}
@@ -131,19 +134,7 @@ export function ModelPicker({
           aria-label={t("模型和思考强度")}
         >
           <div className="agent-model-heading">
-            <span className="agent-model-bolt" aria-hidden="true">
-              <svg
-                width="22"
-                height="22"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.6"
-                strokeLinejoin="round"
-              >
-                <path d="m13 2-9 12h7l-1 8 10-13h-7z" />
-              </svg>
-            </span>
+            <span className="composer-menu-label">{t("思考强度")}</span>
             <strong>{strength}</strong>
             <button
               aria-label={t("重置思考强度")}
@@ -152,8 +143,8 @@ export function ModelPicker({
               onClick={() => onChange(model, current!.defaultReasoningEffort)}
             >
               <svg
-                width="21"
-                height="21"
+                width="15"
+                height="15"
                 viewBox="0 0 24 24"
                 fill="none"
                 stroke="currentColor"
@@ -170,7 +161,7 @@ export function ModelPicker({
             onClick={() => setList(!list)}
           >
             {name}
-            <span aria-hidden="true">{list ? "⌄" : "›"}</span>
+            <ChevronDown size={14} aria-hidden="true" />
           </button>
           {loading ? (
             <p className="agent-model-note" role="status">
@@ -236,7 +227,7 @@ export function ModelPicker({
                         className="agent-effort-track"
                         style={
                           {
-                            "--effort-fill": `calc(${21 - 42 * fraction}px + ${fraction * 100}%)`,
+                            "--effort-fill": `calc(${8 - 16 * fraction}px + ${fraction * 100}%)`,
                           } as React.CSSProperties
                         }
                       >

@@ -14,6 +14,8 @@ import { capabilities } from "../shared/capabilities";
 import { GOAL_OBJECTIVE_MAX_LENGTH } from "../shared/goal";
 import { Dialog } from "./Dialog";
 import { ModelPicker } from "./ModelPicker";
+import { PermissionPicker } from "./PermissionPicker";
+import { ImageThumbnail } from "./ChatImages";
 import { ActivityTimeline } from "./ActivityTimeline";
 import { importPastedFiles } from "./paste-files";
 import { MotionRegion, ModalPresence } from "./MotionRegion";
@@ -1529,18 +1531,24 @@ export function AgentApp({
                     {!!attachments.length && (
                       <div className="agent-attachments">
                         {attachments.map((a, i) => (
-                          <button
-                            key={a.path}
-                            title={a.path}
-                            onClick={() =>
-                              setFiles((f) => ({
-                                ...f,
-                                [key]: attachments.filter((_, n) => n !== i),
-                              }))
-                            }
-                          >
-                            {a.type === "localImage" ? "▧" : "▤"} {a.name} ×
-                          </button>
+                          <div className="draft-attachment" key={a.path} title={a.path}>
+                            {a.type === "localImage" ? (
+                              <ImageThumbnail
+                                compact
+                                image={{ id: a.path, path: a.path, name: a.name, origin: "input" }}
+                                context={{ id: job?.id, cwd: currentCwd }}
+                              />
+                            ) : <FileCode2 size={18} />}
+                            <span>{a.name}</span>
+                            <button
+                              className="draft-attachment-remove"
+                              title={a.path}
+                              aria-label={t("移除附件 {p0}", { p0: a.name })}
+                              onClick={() => setFiles((f) => ({
+                                ...f, [key]: attachments.filter((_, n) => n !== i),
+                              }))}
+                            ><X size={13} /></button>
+                          </div>
                         ))}
                       </div>
                     )}
@@ -1881,42 +1889,16 @@ export function AgentApp({
                             </button>
                           )}
                         </div>
-                        <ShieldCheck size={15} className="composer-shield" />
-                        <select
-                          aria-label={t("执行权限")}
-                          title={t("执行权限")}
-                          value={
-                            job?.preserveNativePermissions &&
-                            sandbox === job.sandbox
-                              ? "native"
-                              : sandbox
-                          }
+                        <PermissionPicker
+                          value={job?.preserveNativePermissions && sandbox === job.sandbox ? "native" : sandbox}
+                          native={!!job?.preserveNativePermissions}
                           disabled={running(job) || !!familyOwner}
-                          onChange={(e) => {
-                            const value = e.target.value as Job["sandbox"];
+                          onChange={(value) => {
                             setSandbox(value);
                             if (job?.preserveNativePermissions)
-                              action(() =>
-                                call("chat.update", {
-                                  id: job.id,
-                                  sandbox: value,
-                                }),
-                              );
+                              action(() => call("chat.update", { id: job.id, sandbox: value }));
                           }}
-                        >
-                          {job?.preserveNativePermissions && (
-                            <option value="native" disabled>
-                              {t("沿用原生权限")}
-                            </option>
-                          )}
-                          <option value="workspaceWrite">
-                            {t("请求审批")}
-                          </option>
-                          <option value="readOnly">{t("只读")}</option>
-                          <option value="dangerFullAccess">
-                            {t("完全访问")}
-                          </option>
-                        </select>
+                        />
                         {planMode && (
                           <button
                             className="composer-mode-badge"
