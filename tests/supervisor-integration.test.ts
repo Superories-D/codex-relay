@@ -16,7 +16,15 @@ vi.mock("../src/core/process", async (importOriginal) => {
     spawnCodex: async (_cli: string, _args: string[], home: string) =>
       spawn(
         process.execPath,
-        [path.join(process.cwd(), "tests/fixtures/app-server.cjs")],
+        [
+          path.join(
+            process.cwd(),
+            "tests/fixtures",
+            _cli === "fixture-agents"
+              ? "agents-app-server.cjs"
+              : "app-server.cjs",
+          ),
+        ],
         {
           env: {
             ...process.env,
@@ -264,6 +272,160 @@ it("hands off an existing rollout and drives the real worker to completion with 
     await fs.rm(root, { recursive: true, force: true });
   }
 }, 15000);
+
+it("preserves a nested agent graph and Goal accounting through subprocess quota relay and child continuation", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "relay-nested-"));
+  const store = new Store(root);
+  store.data.settings.cliPath = "fixture-agents";
+  store.data.accounts = ["a", "b"].map((id) => ({
+    id,
+    identity: id,
+    label: id,
+    email: id,
+    plan: "test",
+    enabled: true,
+    status: "ready",
+    blockedUntil: null,
+    failureCount: 0,
+    quotas: {
+      codex: {
+        limitId: "codex",
+        primary: {
+          usedPercent: 10,
+          windowDurationMins: 300,
+          resetsAt: Date.now() + 3600000,
+        },
+        secondary: null,
+        observedAt: Date.now(),
+        reached: false,
+      },
+    },
+  }));
+  const accounts: any = {
+    busy: new Set(),
+    inspect: async (id: string) => ({
+      auth: { tokens: { access_token: "synthetic" } },
+      models: [],
+      quotas: store.data.accounts.find((a) => a.id === id)!.quotas,
+    }),
+    cancelLogin: async () => {},
+  };
+  const scheduler = new Scheduler(store, accounts, {
+    cli: (ctx) => new CliWorker(ctx),
+    desktop: () => {
+      throw Error("not used");
+    },
+  });
+  const wait = async (check: () => void) =>
+    vi.waitFor(check, { timeout: 8000, interval: 20 });
+  try {
+    const job = await scheduler.add({
+      title: "Nested goal",
+      prompt: "Preserve the entire nested task",
+      cwd: root,
+      mode: "cli",
+      model: "",
+      effort: "",
+      bucket: "codex",
+      approvalPolicy: "on-request",
+      sandbox: "workspaceWrite",
+      interactive: true,
+    });
+    await wait(() =>
+      expect(
+        job.agents?.find((a) => a.threadId === "agent-nested"),
+      ).toMatchObject({
+        parentThreadId: "agent-child",
+        model: "synthetic-nested",
+        effort: "high",
+        status: "running",
+      }),
+    );
+    const home = store.jobHome(job.id);
+    const journal = async () =>
+      (await fs.readFile(path.join(home, "agents-journal.jsonl"), "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+    const originalPid = (await journal())[0].pid;
+    await fs.writeFile(path.join(home, "exhaust-nested"), "");
+    await wait(() => expect(job.rotations).toBe(1));
+    await (scheduler as any).currentRun;
+    expect(job.state).toBe("queued");
+    expect(job.goalResumeAfterQuota).toBe(true);
+    expect(() => process.kill(originalPid, 0)).toThrow();
+    await (scheduler as any).tick();
+    await wait(() => expect(job.state).toBe("running"));
+    expect(job.accountId).toBe("b");
+    expect(job.threadId).toBe("agent-root");
+    expect(job.goal).toMatchObject({
+      status: "active",
+      objective: "Preserve the entire nested task",
+      tokenBudget: 50000,
+      tokensUsed: 1234,
+    });
+    expect(
+      job.agents?.find((a) => a.threadId === "agent-nested"),
+    ).toMatchObject({
+      parentThreadId: "agent-child",
+      effort: "high",
+      status: "interrupted",
+    });
+    await scheduler.agentControl(
+      job.id,
+      "agent-nested",
+      "send",
+      "Continue the nested work",
+    );
+    expect(
+      job.agents?.find((a) => a.threadId === "agent-nested"),
+    ).toMatchObject({
+      turnId: "newer-b",
+      status: "running",
+      parentThreadId: "agent-child",
+    });
+    await scheduler.agentControl(job.id, "agent-nested", "interrupt");
+    expect(job.agents?.find((a) => a.threadId === "agent-nested")?.status).toBe(
+      "interrupted",
+    );
+    await scheduler.control(job.id, "pause");
+    expect(job.state).toBe("paused");
+    expect(job.goal?.status).toBe("paused");
+    const events = await journal();
+    expect(
+      events
+        .filter((e) => e.account === "b" && e.method === "turn/start")
+        .map((e) => e.threadId),
+    ).toEqual(["agent-nested"]);
+    expect(
+      events.find((e) => e.account === "b" && e.method === "thread/goal/set")
+        ?.params,
+    ).toEqual({
+      threadId: "agent-root",
+      status: "active",
+      origin: "automatic",
+    });
+    expect(
+      events.find((e) => e.account === "b" && e.method === "turn/start")
+        ?.effort,
+    ).toBe("high");
+    const restored = new Store(root);
+    await restored.load();
+    expect(
+      restored.data.jobs[0].agents?.find((a) => a.threadId === "agent-nested"),
+    ).toMatchObject({
+      parentThreadId: "agent-child",
+      effort: "high",
+      turnId: "newer-b",
+    });
+    await expect(
+      fs.stat(path.join(home, "relay-owner.json")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  } finally {
+    await scheduler.shutdown();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+}, 20000);
 
 it("runs real isolated JSONL processes concurrently on one account and pauses only the selected thread", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "relay-parallel-"));

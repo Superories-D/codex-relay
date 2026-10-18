@@ -888,6 +888,163 @@ function endParent() {
     turn: { id: "turn-2", status: "completed" },
   });
 }
+it("preserves nested ancestry and creation settings across cross-agent messages and activity summaries", async () => {
+  const w = worker(),
+    updates = vi.fn();
+  w.on("agent", updates);
+  await w.start(auth);
+  beginChild("child", "child-turn");
+  rpc.notify("thread/started", {
+    thread: {
+      id: "nested",
+      agentNickname: "Nested",
+      source: { subAgent: { thread_spawn: { parent_thread_id: "child" } } },
+    },
+  });
+  rpc.notify("item/completed", {
+    threadId: "child",
+    item: {
+      type: "subAgentActivity",
+      agentThreadId: "nested",
+      agentPath: "child/nested",
+      kind: "started",
+      model: "nested-model",
+      reasoningEffort: "high",
+    },
+  });
+  rpc.notify("turn/started", {
+    threadId: "nested",
+    turn: { id: "nested-turn" },
+  });
+  rpc.notify("turn/completed", {
+    threadId: "nested",
+    turn: { id: "nested-turn", status: "completed" },
+  });
+  rpc.notify("item/completed", {
+    threadId: "child",
+    item: {
+      type: "subAgentActivity",
+      agentThreadId: "nested",
+      agentPath: "child/nested",
+      kind: "started",
+    },
+  });
+  rpc.notify("item/completed", {
+    threadId: "thread-1",
+    item: {
+      type: "collabAgentToolCall",
+      tool: "sendMessage",
+      senderThreadId: "thread-1",
+      receiverThreadIds: ["nested", "unrelated"],
+      prompt: "a status question",
+      agentsStates: {},
+    },
+  });
+  rpc.notify("item/completed", {
+    threadId: "thread-1",
+    item: {
+      type: "subAgentActivity",
+      agentThreadId: "nested",
+      agentPath: "child/nested",
+      kind: "interacted",
+      model: null,
+      reasoningEffort: null,
+    },
+  });
+  const nested = updates.mock.calls
+    .map(([a]) => a)
+    .filter((a) => a.threadId === "nested")
+    .at(-1);
+  expect(nested).toMatchObject({
+    parentThreadId: "child",
+    model: "nested-model",
+    effort: "high",
+    status: "completed",
+  });
+  await expect(
+    w.agentControl("unrelated", "send", "must not adopt a message target"),
+  ).rejects.toThrow("不可控制");
+  await w.close();
+});
+it("keeps stale child messages in history without overwriting current state or rotating the parent", async () => {
+  const w = worker(),
+    updates = vi.fn(),
+    chats = vi.fn();
+  w.on("agent", updates);
+  w.on("childChat", chats);
+  await w.start(auth);
+  beginChild("child", "old");
+  rpc.notify("turn/completed", {
+    threadId: "child",
+    turn: { id: "old", status: "completed" },
+  });
+  rpc.notify("turn/started", { threadId: "child", turn: { id: "new" } });
+  rpc.notify("item/completed", {
+    threadId: "child",
+    turnId: "new",
+    item: { type: "agentMessage", text: "current answer" },
+  });
+  rpc.notify("turn/started", { threadId: "child", turn: { id: "old" } });
+  rpc.notify("item/completed", {
+    threadId: "child",
+    turnId: "old",
+    item: { type: "agentMessage", text: "old answer" },
+  });
+  rpc.notify("turn/completed", {
+    threadId: "child",
+    turn: {
+      id: "old",
+      status: "failed",
+      error: { codexErrorInfo: "usageLimitExceeded", message: "old quota" },
+    },
+  });
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(updates.mock.calls.at(-1)?.[0]).toMatchObject({
+    turnId: "new",
+    status: "running",
+    message: "current answer",
+  });
+  expect(rpc.calls.filter((m) => m === "turn/interrupt")).toEqual([]);
+  expect(chats).toHaveBeenCalledWith(
+    "child",
+    "item/completed",
+    expect.objectContaining({ turnId: "old" }),
+  );
+  await w.close();
+});
+it("does not rewind a newer child turn when an older start response arrives", async () => {
+  const w = worker(),
+    updates = vi.fn();
+  w.on("agent", updates);
+  await w.start(auth);
+  beginChild();
+  rpc.notify("turn/completed", {
+    threadId: "child",
+    turn: { id: "child-turn", status: "completed" },
+  });
+  const original = rpc.call.getMockImplementation()!;
+  rpc.call.mockImplementation(async (method, params) => {
+    if (method === "turn/start" && params.threadId === "child") {
+      rpc.notify("turn/started", {
+        threadId: "child",
+        turn: { id: "requested" },
+      });
+      rpc.notify("turn/completed", {
+        threadId: "child",
+        turn: { id: "requested", status: "completed" },
+      });
+      rpc.notify("turn/started", { threadId: "child", turn: { id: "newer" } });
+      return { turn: { id: "requested" } };
+    }
+    return original(method, params);
+  });
+  await w.agentControl("child", "send", "follow up");
+  expect(updates.mock.calls.at(-1)?.[0]).toMatchObject({
+    turnId: "newer",
+    status: "running",
+  });
+  await w.close();
+});
 it("keeps a manual child interruption pending until the terminal event and refuses a premature restart", async () => {
   const w = worker();
   await w.start(auth);

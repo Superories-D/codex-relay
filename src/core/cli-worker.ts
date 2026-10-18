@@ -54,6 +54,9 @@ export class CliWorker extends EventEmitter implements Worker {
   private deferredOutcome?: Outcome;
   private interruptingAgents = new Map<string, Promise<unknown>>();
   private activeAgentTurns = new Map<string, string>();
+  private seenAgentTurns = new Set<string>();
+  private completedAgentTurns = new Set<string>();
+  private agentTurnVersions = new Map<string, number>();
   private finalText = "";
   private quotas: Record<string, Quota> = {};
   private requests = new Map<string, number | string>();
@@ -499,6 +502,19 @@ export class CliWorker extends EventEmitter implements Worker {
       activeAgentStatuses.has(a.status),
     );
   }
+  private beginAgentTurn(threadId: string, turnId: string) {
+    const key = `${threadId}:${turnId}`;
+    if (this.seenAgentTurns.has(key) || this.completedAgentTurns.has(key))
+      return false;
+    this.seenAgentTurns.add(key);
+    this.agentTurnVersions.set(
+      threadId,
+      (this.agentTurnVersions.get(threadId) || 0) + 1,
+    );
+    this.activeAgentTurns.set(threadId, turnId);
+    this.agent(threadId, { turnId, status: "running", message: undefined });
+    return true;
+  }
   private completeAfterChildren(outcome: Outcome) {
     if (outcome.kind === "quota") this.quotaSeen = true;
     if (this.quotaSeen)
@@ -560,48 +576,82 @@ export class CliWorker extends EventEmitter implements Worker {
         });
       }
     }
-    const item = p.item;
+    // Preserve old-turn history, but don't let delayed child events change the
+    // current agent graph, answer, quota outcome or control target.
+    const child = this.agents.get(p.threadId);
+    const eventTurn =
+      p.turnId || (msg.method === "turn/completed" ? p.turn?.id : undefined);
     if (
-      item?.type === "collabAgentToolCall" &&
-      (!p.threadId ||
-        p.threadId === this.threadId ||
-        this.agents.has(p.threadId))
+      msg.method !== "turn/started" &&
+      child?.turnId &&
+      eventTurn &&
+      eventTurn !== child.turnId
     ) {
+      this.emit("childChat", p.threadId, msg.method, p);
+      return;
+    }
+    const item = p.item;
+    const currentItem =
+      !p.threadId ||
+      (p.threadId === this.threadId
+        ? !p.turnId || p.turnId === this.turnId
+        : this.agents.has(p.threadId));
+    if (item?.type === "collabAgentToolCall" && currentItem) {
       for (const id of item.receiverThreadIds ?? []) {
+        const previous = this.agents.get(id);
+        const spawn =
+          item.tool === "spawnAgent" &&
+          (item.senderThreadId === this.threadId ||
+            this.agents.has(item.senderThreadId));
+        // A send/wait target is not proof of parentage or ownership.
+        if (!previous && !spawn) continue;
         const state = item.agentsStates?.[id];
         this.agent(id, {
-          parentThreadId: item.senderThreadId,
-          ...(item.prompt ? { prompt: item.prompt } : {}),
+          ...(!previous?.parentThreadId && spawn
+            ? { parentThreadId: item.senderThreadId }
+            : {}),
+          ...(spawn && item.prompt ? { prompt: item.prompt } : {}),
           ...(item.model ? { model: item.model } : {}),
           ...(item.reasoningEffort ? { effort: item.reasoningEffort } : {}),
-          ...(state ? { status: state.status, message: state.message } : {}),
+          // Once this worker has a child turn identity, turn events and that
+          // child's own messages outrank unversioned parent snapshots.
+          ...(state && !previous?.turnId
+            ? { status: state.status, message: state.message }
+            : {}),
         });
       }
     }
-    if (
-      item?.type === "subAgentActivity" &&
-      (!p.threadId ||
-        p.threadId === this.threadId ||
-        this.agents.has(p.threadId))
-    ) {
-      this.agent(item.agentThreadId, {
-        name: item.agentPath || item.agentThreadId.slice(0, 8),
-        parentThreadId: p.threadId,
-        model: item.model,
-        effort: item.reasoningEffort,
-        status:
-          item.kind === "completed"
-            ? "completed"
-            : item.kind === "interrupted"
-              ? "interrupted"
-              : "running",
-      });
+    if (item?.type === "subAgentActivity" && currentItem) {
+      const previous = this.agents.get(item.agentThreadId);
+      if (
+        previous ||
+        (item.kind === "started" &&
+          p.threadId &&
+          (p.threadId === this.threadId || this.agents.has(p.threadId)))
+      )
+        this.agent(item.agentThreadId, {
+          name: item.agentPath || item.agentThreadId.slice(0, 8),
+          ...(!previous?.parentThreadId && p.threadId
+            ? { parentThreadId: p.threadId }
+            : {}),
+          ...(item.model ? { model: item.model } : {}),
+          ...(item.reasoningEffort ? { effort: item.reasoningEffort } : {}),
+          ...(!previous?.turnId && item.kind !== "interacted"
+            ? {
+                status:
+                  item.kind === "completed"
+                    ? "completed"
+                    : item.kind === "interrupted"
+                      ? "interrupted"
+                      : "running",
+              }
+            : {}),
+        });
     }
     if (p.threadId && this.agents.has(p.threadId)) {
       this.emit("childChat", p.threadId, msg.method, p);
       if (msg.method === "turn/started") {
-        this.activeAgentTurns.set(p.threadId, p.turn.id);
-        this.agent(p.threadId, { turnId: p.turn.id, status: "running" });
+        if (!this.beginAgentTurn(p.threadId, p.turn.id)) return;
         if (this.stopRequested && !this.confirmingStop)
           void this.interruptAgent(this.agents.get(p.threadId)!).catch(
             (error) => {
@@ -614,6 +664,9 @@ export class CliWorker extends EventEmitter implements Worker {
       if (msg.method === "item/completed" && p.item?.type === "agentMessage")
         this.agent(p.threadId, { message: p.item.text });
       if (msg.method === "turn/completed") {
+        const key = `${p.threadId}:${p.turn.id}`;
+        if (this.completedAgentTurns.has(key)) return;
+        this.completedAgentTurns.add(key);
         const current = this.agents.get(p.threadId)!;
         if (!current.turnId || current.turnId === p.turn.id) {
           this.activeAgentTurns.delete(p.threadId);
@@ -867,6 +920,7 @@ export class CliWorker extends EventEmitter implements Worker {
       throw Error("子代理恢复后的会话 ID 不匹配，停止发送消息");
     if (this.stopRequested || this.terminal)
       throw Error("会话正在停止，请稍后继续");
+    const version = this.agentTurnVersions.get(threadId) || 0;
     const result = await this.rpc.call("turn/start", {
       threadId,
       input,
@@ -878,10 +932,9 @@ export class CliWorker extends EventEmitter implements Worker {
     });
     if (
       result.turn?.id &&
-      this.agents.get(threadId)?.turnId !== result.turn.id
+      (this.agentTurnVersions.get(threadId) || 0) === version
     ) {
-      this.activeAgentTurns.set(threadId, result.turn.id);
-      this.agent(threadId, { turnId: result.turn.id, status: "running" });
+      this.beginAgentTurn(threadId, result.turn.id);
     }
     if (this.stopRequested) {
       await this.interruptAgent(this.agents.get(threadId)!);
