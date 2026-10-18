@@ -1,6 +1,7 @@
 import { t, useI18n } from "./i18n";
 import React, { useEffect, useRef, useState } from "react";
 import { usePresence } from "./MotionRegion";
+import { ChevronDown } from "lucide-react";
 
 export type ModelOption = {
   id: string;
@@ -117,8 +118,8 @@ export function ModelPicker({
         onClick={() => setOpen(!open)}
       >
         <span className="agent-model-current">{name}</span>
-        <span>{strength}</span>
-        <span aria-hidden="true">⌄</span>
+        <span className="agent-model-strength">{strength}</span>
+        <ChevronDown size={12} aria-hidden="true" />
       </button>
       {present && (
         <div

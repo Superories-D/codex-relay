@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import {
   Check,
+  ChevronDown,
   Download,
   LoaderCircle,
   Square,
@@ -17,15 +18,18 @@ export function ImportAllControl({
   call,
   compact = false,
   changed,
+  browse,
 }: {
   call: (name: string, args?: unknown) => Promise<any>;
   compact?: boolean;
   changed?: () => void;
+  browse?: () => void;
 }) {
   useI18n();
   const [progress, setProgress] = useState<ImportProgress>(emptyImportProgress),
     [busy, setBusy] = useState(false),
-    [error, setError] = useState("");
+    [error, setError] = useState(""),
+    [expanded, setExpanded] = useState(false);
   const changedRef = useRef(changed);
   changedRef.current = changed;
   useEffect(() => {
@@ -58,6 +62,7 @@ export function ImportAllControl({
     };
   }, []);
   const run = async (name: string) => {
+    setExpanded(true);
     setBusy(true);
     setError("");
     try {
@@ -69,6 +74,14 @@ export function ImportAllControl({
     }
   };
   const active = importRunning(progress.phase);
+  const needsAttention =
+    progress.phase === "failed" ||
+    progress.failed > 0 ||
+    progress.warnings.length > 0 ||
+    !!error;
+  useEffect(() => {
+    if (active || needsAttention || error) setExpanded(true);
+  }, [active, needsAttention, error]);
   const phase =
     progress.phase === "scanning"
       ? t("正在扫描本机 Desktop 和 CLI…")
@@ -83,11 +96,8 @@ export function ImportAllControl({
               : progress.phase === "failed"
                 ? t("导入未完成，请查看详情")
                 : "";
-  return (
-    <section
-      className={`import-all-control ${compact ? "compact" : ""}`}
-      aria-label={t("批量导入项目和对话")}
-    >
+  const content = (
+    <>
       {!compact && (
         <>
           <h2>{t("导入 Desktop 和 CLI")}</h2>
@@ -110,6 +120,11 @@ export function ImportAllControl({
         )}{" "}
         {t("一键导入全部项目和对话")}
       </button>
+      {compact && browse && (
+        <button className="agent-sidebar-link" onClick={browse}>
+          <Download size={15} /> {t("选择历史来源…")}
+        </button>
+      )}
       {progress.phase !== "idle" && (
         <div className="import-all-progress" role="status" aria-live="polite">
           <span>
@@ -204,6 +219,45 @@ export function ImportAllControl({
         <p className="panel-error" role="alert">
           {error}
         </p>
+      )}
+    </>
+  );
+  return (
+    <section
+      className={`import-all-control ${compact ? "compact" : ""}`}
+      aria-label={t("批量导入项目和对话")}
+    >
+      {compact ? (
+        <details
+          className="sidebar-import"
+          open={expanded}
+          onToggle={(event) => setExpanded(event.currentTarget.open)}
+        >
+          <summary>
+            {active ? (
+              <LoaderCircle size={15} className="spin" />
+            ) : (
+              <Download size={15} />
+            )}
+            <span>{t("导入项目与对话")}</span>
+            <span className="import-summary-status" aria-live="polite">
+              {active ? (
+                `${progress.processed}/${progress.total || "…"}`
+              ) : needsAttention ? (
+                <TriangleAlert
+                  size={13}
+                  aria-label={t("导入未完成，请查看详情")}
+                />
+              ) : progress.phase === "completed" ? (
+                <Check size={13} aria-label={phase} />
+              ) : null}
+            </span>
+            <ChevronDown size={12} className="disclosure-chevron" />
+          </summary>
+          <div className="sidebar-import-content">{content}</div>
+        </details>
+      ) : (
+        content
       )}
     </section>
   );

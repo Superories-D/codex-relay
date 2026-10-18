@@ -1,6 +1,6 @@
 import { t, useI18n, setLanguage, errorText } from "./i18n";
 import { CopyButton } from "./CopyButton";
-import React, { useEffect, useRef, useState, useMemo } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState, useMemo } from "react";
 import type {
   Approval,
   ChatAttachment,
@@ -112,6 +112,10 @@ const jobLabel = (j: Job) =>
     ? "等待模型账户"
     : names[j.state];
 const basename = (p: string) => p.split(/[\\/]/).filter(Boolean).at(-1) || p;
+function fitComposer(input: HTMLTextAreaElement) {
+  input.style.height = "auto";
+  input.style.height = `${Math.min(200, Math.max(44, input.scrollHeight))}px`;
+}
 export function AgentApp({
   management,
   approval,
@@ -326,12 +330,21 @@ export function AgentApp({
     }, 300);
     return () => clearTimeout(timer);
   }, [drafts]);
+  useLayoutEffect(() => {
+    if (messageInput.current) fitComposer(messageInput.current);
+  }, [draft, key, screen, manage, desktop.preferences?.uiFont]);
   useEffect(() => {
-    if (messageInput.current) {
-      messageInput.current.style.height = "auto";
-      messageInput.current.style.height = `${Math.min(240, Math.max(83, messageInput.current.scrollHeight))}px`;
-    }
-  }, [draft]);
+    const input = messageInput.current;
+    if (!input) return;
+    let width = input.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (input.clientWidth === width) return;
+      width = input.clientWidth;
+      fitComposer(input);
+    });
+    observer.observe(input);
+    return () => observer.disconnect();
+  }, [screen, manage]);
   useEffect(() => {
     if (modelDirty.current || !job) return;
     setModel(job.model);
@@ -807,7 +820,7 @@ export function AgentApp({
             aria-label={t("账户轮换")}
             onClick={() => setManage("accounts")}
           >
-            <Circle size={21} />
+            <Network size={21} />
           </button>
           <button
             title={t("任务队列")}
@@ -859,7 +872,7 @@ export function AgentApp({
               title="Codex Relay"
               onClick={() => setThreadMenu(!threadMenu)}
             >
-              Codex <ChevronDown size={15} />
+              Codex <span className="product-edition">Relay</span>
             </button>
             <div>
               <button
@@ -879,7 +892,8 @@ export function AgentApp({
             </div>
           </div>
           <button className="agent-new" onClick={() => select()}>
-            <SquarePen size={18} /> {t("新聊天")}
+            <SquarePen size={17} /> {t("新聊天")}
+            <Plus size={14} className="new-chat-plus" />
           </button>
           <input
             className="agent-search"
@@ -923,12 +937,20 @@ export function AgentApp({
               );
               const group = all.filter((j) => !background.includes(j));
               return (
-                <details key={dir} open className="agent-project">
+                <details
+                  key={dir}
+                  open
+                  className={`agent-project ${dir === (job?.projectCwd || job?.cwd || cwd) ? "current-project" : ""}`}
+                >
                   <summary title={dir}>
-                    <Folder size={17} />{" "}
-                    {desktop.projects?.find((p) => p.cwd === dir)?.name ||
-                      basename(dir) ||
-                      t("未关联项目")}
+                    <ChevronRight size={12} className="project-chevron" />
+                    <Folder size={16} />
+                    <span className="project-name">
+                      {desktop.projects?.find((p) => p.cwd === dir)?.name ||
+                        basename(dir) ||
+                        t("未关联项目")}
+                    </span>
+                    <small className="project-count">{group.length || ""}</small>
                     <button
                       className="project-new-chat"
                       title={t("在此项目新建聊天")}
@@ -1057,13 +1079,12 @@ export function AgentApp({
               </p>
             )}
           </div>
-          <ImportAllControl compact call={call} changed={refreshDesktop} />
-          <button
-            className="agent-sidebar-link"
-            onClick={() => setHistory(true)}
-          >
-            <Download size={15} /> {t("导入 CLI / Desktop 对话")}
-          </button>
+          <ImportAllControl
+            compact
+            call={call}
+            changed={refreshDesktop}
+            browse={() => setHistory(true)}
+          />
           <button
             className="agent-sidebar-link"
             onClick={() => setArchived(!archived)}
@@ -1071,19 +1092,14 @@ export function AgentApp({
             <Archive size={15} />{" "}
             {archived ? t("返回进行中的会话") : t("已归档会话")}
           </button>
-          <div
+          <button
             className="agent-account"
             onClick={() => setManage("accounts")}
-            role="button"
-            tabIndex={0}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") setManage("accounts");
-            }}
           >
             <span className="agent-avatar">
               <Network size={17} />
             </span>
-            <div>
+            <span className="account-caption">
               {t("自动账户接力")}
               <small>
                 <span
@@ -1091,8 +1107,9 @@ export function AgentApp({
                 />
                 {ready} {t("个账户可用")}
               </small>
-            </div>
-          </div>
+            </span>
+            <ChevronRight size={14} className="account-chevron" />
+          </button>
         </aside>
         {manage && snapshot ? (
           <SettingsPage
@@ -1130,11 +1147,38 @@ export function AgentApp({
         ) : (
           <main className="agent-main">
             <header className="agent-header">
-              <div>
-                <Folder size={17} />
-                <strong>{job?.title || t("新聊天")}</strong>
+              <div className="conversation-heading">
+                <div className="conversation-titles">
+                  <span className="conversation-project" title={currentCwd}>
+                    <Folder size={13} />
+                    {desktop.projects?.find(
+                      (p) => p.cwd === (job?.projectCwd || currentCwd),
+                    )?.name || basename(currentCwd) || t("未关联项目")}
+                  </span>
+                  {job ? (
+                    <button
+                      className="conversation-name"
+                      title={job.title}
+                      aria-label={t("重命名会话")}
+                      onClick={() => {
+                        setTitle(job.title);
+                        setRename(true);
+                      }}
+                    >
+                      <strong>{job.title}</strong>
+                      <Pencil size={12} />
+                    </button>
+                  ) : (
+                    <strong>{t("新聊天")}</strong>
+                  )}
+                </div>
                 {job && (
-                  <small className={running(job) ? "working" : ""}>
+                  <small className={`conversation-state ${running(job) ? "working" : ""}`}>
+                    {running(job) ? (
+                      <LoaderCircle size={11} className="spin" />
+                    ) : job.state === "completed" ? (
+                      <Check size={11} />
+                    ) : null}
                     {t(jobLabel(job))}
                   </small>
                 )}
@@ -1142,22 +1186,6 @@ export function AgentApp({
               <div>
                 {job && (
                   <>
-                    <button
-                      title={t("重命名会话")}
-                      aria-label={t("重命名会话")}
-                      onClick={() => {
-                        setTitle(job.title);
-                        setRename(true);
-                      }}
-                    >
-                      <Pencil size={16} />
-                    </button>
-                    <button
-                      title={t("CLI 能力")}
-                      onClick={() => setOperations(true)}
-                    >
-                      <Command size={16} />
-                    </button>
                     <button
                       aria-label={t("会话菜单")}
                       title={t("更多操作")}
@@ -1170,6 +1198,8 @@ export function AgentApp({
                 <button
                   title={t("会话信息")}
                   aria-label={t("会话信息")}
+                  aria-pressed={inspector}
+                  className={inspector ? "selected" : ""}
                   onClick={() => setInspector(!inspector)}
                 >
                   <PanelRight size={18} />
@@ -1177,6 +1207,7 @@ export function AgentApp({
                 <button
                   title={t("项目文件")}
                   aria-label={t("项目文件")}
+                  className={inspector && workspaceTab === "files" ? "selected" : ""}
                   onClick={() => {
                     setWorkspaceTab("files");
                     setPreviewFile("");
@@ -1188,6 +1219,7 @@ export function AgentApp({
                 <button
                   title={t("Git 更改")}
                   aria-label={t("Git 更改")}
+                  className={inspector && workspaceTab === "changes" ? "selected" : ""}
                   onClick={() => {
                     setWorkspaceTab("changes");
                     setPreviewFile("");
@@ -1550,6 +1582,7 @@ export function AgentApp({
                     </MotionRegion>
                     <textarea
                       ref={messageInput}
+                      rows={1}
                       aria-label={t("消息")}
                       placeholder={
                         job?.archived

@@ -840,6 +840,9 @@ export const english: Record<string, string> = {
     "Paste files here. Open folders using the project picker",
   "复制时原文件已更改，请重新粘贴":
     "The file changed while copying. Please paste it again",
+  "导入项目与对话": "Import projects & chats",
+  "选择历史来源…": "Choose history sources…",
+  "工具活动": "Tool activity",
   语言: "Language",
   "选择界面语言，聊天内容、代码和终端输出会保留原文。":
     "Choose the interface language. Your messages, code, and terminal output keep their original language.",

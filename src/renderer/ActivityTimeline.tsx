@@ -4,6 +4,7 @@ import {
   FilePenLine,
   LoaderCircle,
   SquareTerminal,
+  Wrench,
 } from "lucide-react";
 import type { ChatItem } from "../shared/types";
 import { RichMessage } from "./RichMessage";
@@ -23,15 +24,11 @@ function ActivityGroup({ items, ...props }: Props & { items: ChatItem[] }) {
   const failed = items.filter(
     (item) => item.status === "failed" || item.status === "declined",
   ).length;
-  const edited = items.some((item) =>
-    ["fileChange", "diff"].includes(item.kind),
-  );
-  const commands = items.some(
-    (item) => !["fileChange", "diff"].includes(item.kind),
-  );
+  const edited = items.some((item) => ["fileChange", "diff"].includes(item.kind));
+  const commands = items.some((item) => item.kind === "commandExecution");
   return (
     <details
-      className="activity-group"
+      className={`activity-group ${executing ? "is-running" : ""} ${failed ? "has-failures" : ""}`}
       onToggle={(event) => {
         setExpanded(event.currentTarget.open);
       }}
@@ -41,15 +38,19 @@ function ActivityGroup({ items, ...props }: Props & { items: ChatItem[] }) {
           <LoaderCircle size={16} className="spin" />
         ) : edited ? (
           <FilePenLine size={16} />
-        ) : (
+        ) : commands ? (
           <SquareTerminal size={16} />
+        ) : (
+          <Wrench size={16} />
         )}
         <span>
           {edited && commands
             ? t("编辑了文件并运行了命令")
             : edited
               ? t("编辑了文件")
-              : t("运行了命令")}
+              : commands
+                ? t("运行了命令")
+                : t("工具活动")}
         </span>
         <small>{t("{p0} 项操作", { p0: items.length })}</small>
         {executing && <small className="activity-running">{t("进行中")}</small>}

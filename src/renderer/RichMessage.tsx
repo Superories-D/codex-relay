@@ -288,7 +288,7 @@ function RichMessageView({
     const status = item.status === "running";
     return (
       <div
-        className={`activity-item ${files ? "change-card" : ""} ${agent ? "agent-card" : ""}`}
+        className={`activity-item ${files ? "change-card" : ""} ${agent ? "agent-card" : ""} ${reasoning ? "reasoning-activity" : ""}`}
       >
         <details>
           <summary>
