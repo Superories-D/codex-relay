@@ -26,6 +26,7 @@ async function until(check) {
     second = path.join(fixture, "second");
   const git = async (cwd, ...args) =>
     (await execute("git", ["-C", cwd, ...args], { windowsHide: true })).stdout;
+  const hunkBase = Array.from({ length: 32 }, (_, i) => `line ${i + 1}`).join("\n") + "\n";
   for (const cwd of [first, second]) {
     await fs.mkdir(path.join(cwd, "nested"), { recursive: true });
     await git(cwd, "init", "-b", "main");
@@ -34,6 +35,7 @@ async function until(check) {
     await git(cwd, "config", "core.autocrlf", "false");
     await fs.writeFile(path.join(cwd, "mixed.txt"), "base\n");
     await fs.writeFile(path.join(cwd, "old name.txt"), "rename content\n");
+    await fs.writeFile(path.join(cwd, "hunks.txt"), hunkBase);
     await git(cwd, "add", ".");
     await git(cwd, "commit", "-m", "initial");
   }
@@ -433,6 +435,44 @@ async function until(check) {
     await until(async () => (await panel.locator(".diff-lines").innerText()).includes("+new work must survive"));
     await until(async () => await panel.getByRole("button", { name: "ファイルをステージ", exact: true }).isEnabled());
     report.checks.push("Japanese UI rejects a stale staged commit, retains the draft, commits after refresh/review, and rejects discarding newer working text while clearing the obsolete confirmation");
+    const bothHunks = hunkBase.replace("line 2\n", "first hunk\nextra line\n").replace("line 29\n", "second hunk\n");
+    await fs.writeFile(path.join(second, "hunks.txt"), bothHunks);
+    await panel.getByTitle("変更を更新", { exact: true }).click();
+    await file("hunks.txt").click();
+    const stageHunk = (n) => panel.getByRole("button", { name: `変更 ${n} をステージ`, exact: true });
+    const unstageHunk = (n) => panel.getByRole("button", { name: `変更 ${n} をアンステージ`, exact: true });
+    await stageHunk(2).click();
+    await until(async () => (await git(second, "show", ":hunks.txt")) === hunkBase.replace("line 29\n", "second hunk\n"));
+    assert.equal(await fs.readFile(path.join(second, "hunks.txt"), "utf8"), bothHunks);
+    assert.equal(await panel.getByRole("checkbox", { name: "ステージ済み", exact: true }).isChecked(), false);
+    await until(async () => await stageHunk(1).isEnabled());
+    await stageHunk(1).focus();
+    assert.ok(await stageHunk(1).evaluate((button) => button === document.activeElement));
+    await page.keyboard.press("Enter");
+    await unstageHunk(2).waitFor();
+    assert.equal(await git(second, "show", ":hunks.txt"), bothHunks);
+    await unstageHunk(1).click();
+    await until(async () => (await git(second, "show", ":hunks.txt")) === hunkBase.replace("line 29\n", "second hunk\n"));
+    assert.equal(await fs.readFile(path.join(second, "hunks.txt"), "utf8"), bothHunks);
+    await until(async () => await unstageHunk(1).isEnabled() &&
+      await panel.locator(".hunk-control").count() === 1 &&
+      !(await panel.locator(".diff-lines").innerText()).includes("+first hunk"));
+    await page.screenshot({ path: path.join(output, "git-hunks-native-ja.png") });
+    const controlBox = await unstageHunk(1).boundingBox();
+    const diffBox = await panel.locator(".diff-lines").boundingBox();
+    assert.ok(controlBox.x >= diffBox.x && controlBox.x + controlBox.width <= diffBox.x + diffBox.width, "hunk action fits inside the visible diff panel");
+    await openJob("Git fixture 1");
+    await openJob("Git fixture 2");
+    await file("hunks.txt").click();
+    await until(async () => await stageHunk(1).isEnabled());
+    const newerHunks = bothHunks.replace("first hunk", "new unseen hunk");
+    await fs.writeFile(path.join(second, "hunks.txt"), newerHunks);
+    await stageHunk(1).click();
+    await panel.getByRole("alert").filter({ hasText: "ファイルの差分が変更されました" }).waitFor();
+    assert.equal(await git(second, "show", ":hunks.txt"), hunkBase.replace("line 29\n", "second hunk\n"));
+    assert.equal(await fs.readFile(path.join(second, "hunks.txt"), "utf8"), newerHunks);
+    assert.equal(await page.locator(".agent-error").count(), 0);
+    report.checks.push("Japanese hunk buttons stage the second block, support keyboard activation, unstage only the first block, preserve the working file and refuse a stale hunk after external edits");
     const snapshot = await page.evaluate(() => window.relay.snapshot());
     assert.equal(snapshot.accounts.length, 0);
     assert.equal(snapshot.jobs.length, 2);

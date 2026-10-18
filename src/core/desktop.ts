@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { atomicWrite } from "./store";
 import { normalizeLocalPath } from "../shared/file-reference";
 import { readHead, readBranches, switchBranch } from "./git-branches";
+import { gitHunkPatch } from "../shared/git-hunks";
 import {
   parseGitStatus,
   gitConflict,
@@ -194,13 +195,19 @@ export class Desktop {
     await atomicWrite(file, text);
     return this.read(cwd, relative);
   }
-  async git(cwd: string, args: string[]) {
-    const { stdout } = await execute("git", ["-C", cwd, ...args], {
+  async git(cwd: string, args: string[], input?: string) {
+    const execution = execute("git", ["-C", cwd, ...args], {
       windowsHide: true,
       timeout: 60000,
       maxBuffer: 4 * 1024 * 1024,
       env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
     });
+    if (input !== undefined) {
+      // Git may reject a patch before consuming stdin; report its process error.
+      execution.child.stdin?.on("error", () => {});
+      execution.child.stdin?.end(input, "utf8");
+    }
+    const { stdout } = await execution;
     return stdout;
   }
   async changes(cwd: string): Promise<GitChanges> {
@@ -260,6 +267,11 @@ export class Desktop {
       "--no-textconv",
       "--no-color",
       "--find-renames",
+      "--src-prefix=a/",
+      "--dst-prefix=b/",
+      "--no-relative",
+      "--unified=3",
+      "--inter-hunk-context=0",
       ...(staged ? ["--cached"] : []),
       "--",
       relative,
@@ -267,6 +279,34 @@ export class Desktop {
         ? [entry.original]
         : []),
     ]);
+  }
+  async gitHunk(
+    cwd: string,
+    relative: string,
+    staged: boolean,
+    hunk: number,
+    expectedRevision: string,
+    expectedDiff: string,
+  ) {
+    return this.inRepository(cwd, async (root) => {
+      const state = await this.readChanges(root);
+      if (state.revision !== expectedRevision)
+        throw new Error("Git 状态已变化，请刷新更改列表后重试");
+      const entry = state.files.find((file) => file.path === relative);
+      if (!entry || gitConflict(entry))
+        throw new Error("此差异仅支持整文件操作");
+      const diff = await this.readDiff(state, relative, staged);
+      if (diff !== expectedDiff)
+        throw new Error("文件差异已变化，请刷新后重新检查");
+      // Build only from the freshly generated Git patch, never renderer input.
+      const patch = gitHunkPatch(diff, hunk);
+      if (!patch) throw new Error("此差异仅支持整文件操作");
+      await this.git(root, [
+        "apply", "--cached", "--whitespace=nowarn",
+        ...(staged ? ["--reverse"] : []), "-",
+      ], patch);
+      return this.readChanges(root);
+    });
   }
   async gitAction(
     cwd: string,

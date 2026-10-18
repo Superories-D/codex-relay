@@ -11,6 +11,12 @@ and explicitly resumed the long-term goal. The existing release now contains
 verified binary volumes, instructions and checksums. Further iteration is active;
 the incomplete gates below remain open and are not achieved by publication.
 
+Shutdown constraint: at 2026-10-18 23:32 (Asia/Shanghai), the user allowed another
+160 minutes and instructed stopping if the objective remains unfinished. Stop by
+2026-10-19 02:12 local time, reserving the final five minutes for verified commits,
+pushes and handoff. This deadline does not authorize quota-consuming tests or
+turn unverified requirements into completed work.
+
 This is an acceptance ledger, not a claim of release readiness. Existing handoff,
 `DESKTOP-PARITY.md` and live-validation documents remain evidence; a green mock
 test cannot replace actual CLI or installed-client evidence.
@@ -24,7 +30,7 @@ test cannot replace actual CLI or installed-client evidence.
 | Real CLI execution and task outputs | Real execution exists. Previous completed live task's output is still pending acceptance; completion status is not output correctness |
 | Goals | Existing lifecycle evidence retained. Cross-account and deep subagent combinations remain open |
 | History and files | Paginated import and original-record integrity verified. 632 imported histories lack source/ancestors and remain explicitly read-only; never invent recoverable context |
-| Git/Worktree | Real-Git and Japanese Electron file/index/commit/local-remote-push checks passed; see `GIT-WORKSPACE-20261018.md`. Branch search/switch/create, explicit remote tracking, Worktree occupancy and stale-request rejection passed real Git and packaged UI checks; see `GIT-BRANCHES-20261018.md`. Source after v0.6.17 serializes managed operations per canonical Worktree and rejects stale branch/index/text-diff mutations, with 389 tests and native Japanese rejection/retry checks; see `GIT-CONCURRENCY-20261018.md`. Unrestricted concurrent external edits, hunk staging, advanced branch/conflict operations, PR workflows and remote-error recovery remain open |
+| Git/Worktree | Real-Git and Japanese Electron file/index/commit/local-remote-push checks passed; see `GIT-WORKSPACE-20261018.md`. Branch search/switch/create, explicit remote tracking, Worktree occupancy and stale-request rejection passed real Git and packaged UI checks; see `GIT-BRANCHES-20261018.md`. Source after v0.6.17 serializes managed operations per canonical Worktree and rejects stale branch/index/text-diff mutations; see `GIT-CONCURRENCY-20261018.md`. Text-hunk stage/unstage now passes real Git, Japanese keyboard/mouse UI and the 397-test suite; see `GIT-HUNKS-20261018.md`. Individual-line staging, unrestricted concurrent external edits, advanced branch/conflict operations, PR workflows and remote-error recovery remain open |
 | Terminal | Concurrent admission, pending-start shutdown, close retry, input isolation and translated lifecycle state implemented after v0.6.16. Six lifecycle tests and real account-free CLI/Electron two-PTY Japanese UI, simultaneous close and process-exit checks passed; see `TERMINALS-20261018.md`. Arbitrary detached user processes remain outside this evidence |
 | Plugins/MCP | Persistent catalog, account-free local Skills/MCP management, OAuth completion and safe shutdown implemented after v0.6.16. Actual CLI 0.162.1 + Electron + local MCP/OAuth fixture passed tool/resource calls, UI lifecycle, callback/token exchange and separate-home authorization discovery. Remote plugins, provider-specific OAuth/refresh and model-driven usage remain open; see `EXTENSIONS-20261018.md` |
 | Scheduled tasks | Source after v0.6.16 adds admission deduplication, durable restart recovery and worktree reuse. Ten targeted tests and real account-free Electron admission/Japanese UI lifecycle passed; actual scheduled inference/output and sleep/clock behavior remain open. See `SCHEDULES-20261018.md`; existing packages are unchanged |

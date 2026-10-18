@@ -275,7 +275,7 @@ export function AgentApp({
       // Git controls retain actionable errors beside the affected draft/diff.
       if (![
         "workspace.branchList", "workspace.switchBranch", "workspace.changes",
-        "workspace.diff", "workspace.git",
+        "workspace.diff", "workspace.git", "workspace.gitHunk",
       ].includes(name))
         setError(errorText(e));
       throw e;

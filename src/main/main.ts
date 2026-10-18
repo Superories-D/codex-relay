@@ -525,6 +525,17 @@ async function boot() {
         }
         return shell.openPath(await desktop.resolve(a.cwd, a.path));
       }
+      case "workspace.gitHunk": {
+        const a = z.object({
+          cwd: z.string().refine(path.isAbsolute),
+          path: z.string().min(1).max(32700),
+          staged: z.boolean(),
+          hunk: z.number().int().min(0).max(100000),
+          expectedRevision: z.string().regex(/^[a-f0-9]{64}$/),
+          expectedDiff: z.string().max(4 * 1024 * 1024),
+        }).strict().parse(args);
+        return desktop.gitHunk(a.cwd, a.path, a.staged, a.hunk, a.expectedRevision, a.expectedDiff);
+      }
       case "workspace.branchList":
       case "workspace.switchBranch": {
         const a = z

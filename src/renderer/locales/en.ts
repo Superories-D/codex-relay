@@ -923,6 +923,11 @@ export const english: Record<string, string> = {
     "Create a local tracking branch for this remote branch",
   请选择分支: "Select a branch",
   远程: "Remote",
+  暂存此块: "Stage hunk",
+  取消暂存此块: "Unstage hunk",
+  "暂存第 {p0} 块": "Stage hunk {p0}",
+  "取消暂存第 {p0} 块": "Unstage hunk {p0}",
+  此差异仅支持整文件操作: "This diff supports whole-file operations only",
   "Git 状态已变化，请刷新更改列表后重试":
     "Git state changed. Refresh the changes list and try again.",
   "文件差异已变化，请刷新后重新检查":

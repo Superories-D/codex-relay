@@ -1,5 +1,6 @@
 import { t, useI18n, errorText } from "./i18n";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { gitHunks } from "../shared/git-hunks";
 import {
   ArrowLeft,
   Check,
@@ -820,6 +821,9 @@ function Changes({
   const hasStaged = !!entry && gitStaged(entry),
     hasUnstaged = !!entry && gitUnstaged(entry);
   const showingStaged = hasStaged && (!hasUnstaged || staged);
+  const hunkAtLine = useMemo(() => new Map(
+    gitHunks(diff).map((hunk, index) => [hunk.line, index]),
+  ), [diff]);
   const diffReady = !!diffSnapshot &&
     diffSnapshot.revision === state?.revision &&
     diffSnapshot.path === selected && diffSnapshot.staged === showingStaged;
@@ -863,11 +867,12 @@ function Changes({
   const action = async (
     kind: string,
     branch?: { ref: string; expectedHead: string; name?: string },
+    hunk?: number,
   ) => {
     if (mutating.current) return false;
     if (
       !branch && (!state?.revision ||
-        (["stage", "unstage", "restore"].includes(kind) && !diffReady))
+        (["stage", "unstage", "restore", "hunk"].includes(kind) && !diffReady))
     ) return false;
     mutating.current = true;
     const request = ++revision.current;
@@ -876,6 +881,11 @@ function Changes({
     try {
       const result = branch
         ? await call("workspace.switchBranch", { cwd, ...branch })
+        : hunk !== undefined
+        ? await call("workspace.gitHunk", {
+            cwd, path: selected, staged: showingStaged, hunk,
+            expectedRevision: state!.revision, expectedDiff: diff,
+          })
         : await call("workspace.git", {
             cwd,
             action: kind,
@@ -890,6 +900,7 @@ function Changes({
       setDiffSnapshot(undefined);
       if (kind === "stage") setStaged(true);
       if (kind === "unstage") setStaged(false);
+      if (kind === "hunk") setStaged(showingStaged);
       if (kind === "commit") {
         setCommit(false);
         setMessage("");
@@ -907,7 +918,7 @@ function Changes({
     } catch (e) {
       if (request === revision.current) {
         setError(errorText(e));
-        if (["stage", "unstage", "restore"].includes(kind)) {
+        if (["stage", "unstage", "restore", "hunk"].includes(kind)) {
           setDiffSnapshot(undefined);
           setConfirmRestore(false);
         }
@@ -1114,6 +1125,9 @@ function Changes({
                   </button>
                 </div>
               )}
+              {diffReady && !!diff && !hunkAtLine.size && (
+                <p className="diff-note">{t("此差异仅支持整文件操作")}</p>
+              )}
               <div className="diff-lines">
                 {diff.split("\n").map((line, index) => (
                   <div
@@ -1141,6 +1155,19 @@ function Changes({
                     >
                       <Plus size={10} />
                     </button>
+                    {hunkAtLine.has(index) && !gitConflict(entry) && (
+                      <button
+                        className="hunk-control"
+                        disabled={busy || !diffReady}
+                        aria-label={t(showingStaged ? "取消暂存第 {p0} 块" : "暂存第 {p0} 块", {
+                          p0: hunkAtLine.get(index)! + 1,
+                        })}
+                        onClick={() => void action("hunk", undefined, hunkAtLine.get(index))}
+                      >
+                        {showingStaged ? <Minus size={12} /> : <Plus size={12} />}
+                        {showingStaged ? t("取消暂存此块") : t("暂存此块")}
+                      </button>
+                    )}
                     <code>{line || " "}</code>
                   </div>
                 ))}
