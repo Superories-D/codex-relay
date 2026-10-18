@@ -929,6 +929,10 @@ export const english: Record<string, string> = {
   "取消暂存第 {p0} 块": "Unstage hunk {p0}",
   此差异仅支持整文件操作: "This diff supports whole-file operations only",
   按最近一次用量更新: "Based on the latest usage update",
+  "无法按 UTF-8 读取此文件，请在外部编辑器中打开以保留原始编码":
+    "This file cannot be read as UTF-8. Open it in an external editor to preserve its encoding.",
+  "内置编辑器仅支持 UTF-8 文本，请在外部编辑器中修改此文件":
+    "The built-in editor supports UTF-8 text only. Edit this file in an external editor.",
   "每天和每周任务跟随系统本地时间。休眠期间错过的运行合并为一次，唤醒后检查。":
     "Daily and weekly tasks follow system local time. Missed runs during sleep are combined into one and checked on wake.",
   当前上下文用量暂不可用: "Current context usage is unavailable",

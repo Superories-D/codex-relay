@@ -710,6 +710,8 @@ function FilePreview({
         </div>
       ) : data.kind === "binary" ? (
         <PanelEmpty text={t("此文件使用二进制格式，请在默认应用中打开")} />
+      ) : data.kind === "encoded" ? (
+        <PanelEmpty text={t("无法按 UTF-8 读取此文件，请在外部编辑器中打开以保留原始编码")} />
       ) : edit ? (
         <textarea
           className="file-editor"

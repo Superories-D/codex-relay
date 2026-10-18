@@ -197,19 +197,29 @@ export class Desktop {
         mtime: stat.mtimeMs,
         size: stat.size,
       };
+    let content: string;
+    try {
+      // A forgiving decode turns legacy encodings into replacement characters;
+      // saving that preview would silently destroy bytes. Retain UTF-8 BOMs.
+      content = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(buffer);
+    } catch {
+      return { path: relative, kind: "encoded", content: "", mtime: stat.mtimeMs, size: stat.size };
+    }
     return {
       path: relative,
       kind: "text",
-      content: buffer.toString("utf8"),
+      content,
       mtime: stat.mtimeMs,
       size: stat.size,
     };
   }
   async write(cwd: string, relative: string, text: string, mtime: number) {
-    const file = await this.resolve(cwd, relative),
-      stat = await fs.stat(file);
-    if (stat.mtimeMs !== mtime)
+    const file = await this.resolve(cwd, relative);
+    const preview = await this.read(cwd, relative);
+    if (preview.mtime !== mtime)
       throw new Error("文件已被其他程序修改，请重新读取后保存");
+    if (preview.kind !== "text")
+      throw new Error("内置编辑器仅支持 UTF-8 文本，请在外部编辑器中修改此文件");
     await atomicWrite(file, text);
     return this.read(cwd, relative);
   }

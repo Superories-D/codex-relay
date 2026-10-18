@@ -49,6 +49,32 @@ it("opens slash-prefixed Windows drive references while keeping percent filename
     desktop.read(project, `/${outside.replaceAll("\\", "/")}`),
   ).rejects.toThrow("超出");
 });
+
+it("does not turn legacy or binary file bytes into editable replacement characters", async () => {
+  const cases = [
+    ["shift-jis.txt", Buffer.from([0x93, 0xfa, 0x96, 0x7b, 0x8c, 0xea]), "encoded"],
+    ["truncated.txt", Buffer.from([0x61, 0xe3, 0x81]), "encoded"],
+    ["utf16.txt", Buffer.from([0xff, 0xfe, 0x61, 0x00]), "binary"],
+  ] as const;
+  for (const [name, bytes, kind] of cases) {
+    await fs.writeFile(path.join(project, name), bytes);
+    const preview = await desktop.read(project, name);
+    expect(preview.kind).toBe(kind);
+    expect(preview.content).toBe("");
+    await expect(desktop.write(project, name, "replacement", preview.mtime)).rejects.toThrow("UTF-8");
+    expect(await fs.readFile(path.join(project, name))).toEqual(bytes);
+  }
+});
+
+it("round-trips valid UTF-8 including a BOM, CRLF and a literal replacement character", async () => {
+  const text = "\ufeff日本語 中文 😀 \ufffd\r\n";
+  await fs.writeFile(path.join(project, "unicode.txt"), text);
+  const preview = await desktop.read(project, "unicode.txt");
+  expect(preview.kind).toBe("text");
+  expect(preview.content).toBe(text);
+  await desktop.write(project, "unicode.txt", text + "追加\r\n", preview.mtime);
+  expect(await fs.readFile(path.join(project, "unicode.txt"))).toEqual(Buffer.from(text + "追加\r\n"));
+});
 it("runs real Git staging, commit, diff and independent worktree operations in a fixture repository", async () => {
   await desktop.git(project, ["init"]);
   await desktop.git(project, ["config", "user.email", "test@example.invalid"]);
