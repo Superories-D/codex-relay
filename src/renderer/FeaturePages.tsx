@@ -25,6 +25,7 @@ import {
   X,
 } from "lucide-react";
 import type { DesktopData, ScheduledTask } from "../core/desktop";
+import { readExtensions } from "./extensions";
 type Call = (name: string, args?: unknown) => Promise<any>;
 export function ExtensionsPage({
   initial = "plugins",
@@ -45,38 +46,76 @@ export function ExtensionsPage({
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
     [selected, setSelected] = useState<any>(),
-    [mcp, setMcp] = useState(false);
+    [mcp, setMcp] = useState(false),
+    [loginPending, setLoginPending] = useState<Record<string, boolean>>({}),
+    [loginMessages, setLoginMessages] = useState<Record<string, string>>({});
+  const loadRevision = useRef(0);
   const operation = (method: string, params: unknown = {}) =>
     call("catalog.operation", { method, params });
   const load = async () => {
+    const revision = ++loadRevision.current;
     setBusy(true);
     setError("");
     try {
-      setData(
-        await operation(
-          tab === "skills"
-            ? "skills/list"
-            : tab === "mcp"
-              ? "mcpServerStatus/list"
-              : "plugin/list",
-          tab === "skills"
-            ? { cwds: cwd ? [cwd] : [] }
-            : tab === "mcp"
-              ? { limit: 100 }
-              : {},
-        ),
-      );
+      const result = await readExtensions(tab, cwd, operation);
+      if (revision === loadRevision.current) {
+        setData(result);
+        if (tab === "mcp")
+          setSelected(
+            (previous: any) =>
+              previous &&
+              result.data.find((entry: any) => entry.name === previous.name),
+          );
+      }
     } catch (e) {
-      setError(String(e));
+      if (revision === loadRevision.current) setError(errorText(e));
     } finally {
-      setBusy(false);
+      if (revision === loadRevision.current) setBusy(false);
     }
   };
   useEffect(() => {
     setData(undefined);
     setSelected(undefined);
+    setQuery("");
     void load();
+    return () => {
+      ++loadRevision.current;
+    };
   }, [tab, cwd]);
+  const loadRef = useRef(load);
+  loadRef.current = load;
+  useEffect(
+    () =>
+      window.relay.onCatalogLogin?.((update) => {
+        setLoginPending((previous) => ({ ...previous, [update.name]: false }));
+        setLoginMessages((previous) => ({
+          ...previous,
+          [update.name]: update.success
+            ? t("授权已完成")
+            : errorText(update.error || t("授权失败，请重试")),
+        }));
+        void loadRef.current();
+      }),
+    [],
+  );
+  const changeServer = async (remove = false) => {
+    setBusy(true);
+    setError("");
+    try {
+      await operation("config/value/write", {
+        keyPath: `mcp_servers.${selected.name}${remove ? "" : ".enabled"}`,
+        value: remove ? null : !selected.enabled,
+        mergeStrategy: "replace",
+      });
+      await operation("config/mcpServer/reload");
+      setSelected(undefined);
+      await loadRef.current();
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
   const skills = data?.data?.flatMap((d: any) => d.skills || []) || [];
   const plugins =
     data?.marketplaces?.flatMap((market: any) =>
@@ -176,8 +215,12 @@ export function ExtensionsPage({
             {entries.map((entry: any) => (
               <button
                 className="extension-card"
+                disabled={busy}
                 key={entry.id || entry.path || entry.name}
-                onClick={() => setSelected(entry)}
+                onClick={() => {
+                  setSelected(entry);
+                  setError("");
+                }}
               >
                 <span className="extension-icon">
                   {tab === "skills" ? (
@@ -196,7 +239,15 @@ export function ExtensionsPage({
                       (tab === "mcp"
                         ? t("{p0} 个工具 · {p1}", {
                             p0: Object.keys(entry.tools || {}).length,
-                            p1: entry.authStatus,
+                            p1:
+                              entry.authStatus === "notLoggedIn"
+                                ? t("需要登录")
+                                : entry.authStatus === "oAuth" ||
+                                    entry.authStatus === "bearerToken"
+                                  ? t("已授权")
+                                  : entry.authStatus === "unsupported"
+                                    ? t("无需授权")
+                                    : t("授权状态未知"),
                           })
                         : "")}
                   </p>
@@ -206,7 +257,13 @@ export function ExtensionsPage({
                         ? t("已启用")
                         : t("已停用")
                       : tab === "mcp"
-                        ? entry.runtimeStatus?.status || t("已配置")
+                        ? !entry.enabled
+                          ? t("已停用")
+                          : entry.toolsError || entry.runtimeStatus === "failed"
+                            ? t("连接失败")
+                            : entry.runtimeStatus === "connected"
+                              ? t("已连接")
+                              : t("已配置")
                         : entry.installed
                           ? t("已安装")
                           : entry.interface?.developerName || t("查看详情")}
@@ -288,6 +345,11 @@ export function ExtensionsPage({
                     t("本地工具进程")}
                 </small>
                 <h3>{t("工具")}</h3>
+                {selected.toolsError && (
+                  <p className="panel-error" role="alert">
+                    {selected.toolsError}
+                  </p>
+                )}
                 <div className="mcp-tools">
                   {Object.entries(selected.tools || {}).map(
                     ([name, tool]: [string, any]) => (
@@ -301,26 +363,64 @@ export function ExtensionsPage({
                     ),
                   )}
                 </div>
-                <button
-                  className="solid-button"
-                  onClick={async () => {
-                    try {
-                      setBusy(true);
-                      const result = await operation("mcpServer/oauth/login", {
-                        name: selected.name,
-                      });
-                      if (result.authorizationUrl)
-                        await call("link.open", result.authorizationUrl);
-                    } catch (e) {
-                      setError(String(e));
-                    } finally {
-                      setBusy(false);
-                    }
-                  }}
-                >
-                  {t("登录 / 重新授权")}
-                  <ArrowUpRight size={15} />
-                </button>
+                {selected.enabled &&
+                  ["notLoggedIn", "oAuth"].includes(selected.authStatus) && (
+                    <button
+                      className="solid-button"
+                      disabled={busy || loginPending[selected.name]}
+                      onClick={async () => {
+                        try {
+                          setBusy(true);
+                          setError("");
+                          setLoginMessages((previous) => ({
+                            ...previous,
+                            [selected.name]: "",
+                          }));
+                          setLoginPending((previous) => ({
+                            ...previous,
+                            [selected.name]: true,
+                          }));
+                          const result = await operation(
+                            "mcpServer/oauth/login",
+                            {
+                              name: selected.name,
+                            },
+                          );
+                          if (result.authorizationUrl)
+                            await call("link.open", result.authorizationUrl);
+                        } catch (e) {
+                          setLoginPending((previous) => ({
+                            ...previous,
+                            [selected.name]: false,
+                          }));
+                          setError(errorText(e));
+                        } finally {
+                          setBusy(false);
+                        }
+                      }}
+                    >
+                      {loginPending[selected.name]
+                        ? t("等待授权…")
+                        : t("登录 / 重新授权")}
+                      <ArrowUpRight size={15} />
+                    </button>
+                  )}
+                {loginMessages[selected.name] && (
+                  <p role="status">{loginMessages[selected.name]}</p>
+                )}
+                {selected.manageable && (
+                  <div className="schedule-form-actions">
+                    <button disabled={busy} onClick={() => void changeServer()}>
+                      {selected.enabled ? t("停用服务器") : t("启用服务器")}
+                    </button>
+                    <button
+                      disabled={busy}
+                      onClick={() => void changeServer(true)}
+                    >
+                      {t("移除服务器")}
+                    </button>
+                  </div>
+                )}
               </>
             ) : (
               <button
@@ -350,9 +450,9 @@ export function ExtensionsPage({
                             }),
                       });
                     setSelected(undefined);
-                    await load();
+                    await loadRef.current();
                   } catch (e) {
-                    setError(String(e));
+                    setError(errorText(e));
                   } finally {
                     setBusy(false);
                   }
@@ -380,13 +480,19 @@ export function ExtensionsPage({
         <McpForm
           close={() => setMcp(false)}
           save={async (value) => {
+            const current = await operation("config/read", {
+              includeLayers: false,
+            });
+            if (Object.hasOwn(current.config?.mcp_servers || {}, value.name))
+              throw new Error(t("同名服务器已存在，请使用其他名称"));
             await operation("config/value/write", {
               keyPath: `mcp_servers.${value.name}`,
               value: value.config,
               mergeStrategy: "replace",
             });
+            await operation("config/mcpServer/reload");
             setMcp(false);
-            await load();
+            await loadRef.current();
           }}
         />
       )}
@@ -433,7 +539,7 @@ function McpForm({
                     enabled: true,
                   },
           })
-            .catch((e) => setError(String(e)))
+            .catch((e) => setError(errorText(e)))
             .finally(() => setBusy(false));
         }}
       >

@@ -10,6 +10,14 @@ const bridge: Bridge = {
     ipcRenderer.on("relay:snapshot", listener);
     return () => ipcRenderer.removeListener("relay:snapshot", listener);
   },
+  onCatalogLogin: (fn) => {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      value: import("../shared/types").CatalogLoginUpdate,
+    ) => fn(value);
+    ipcRenderer.on("relay:catalog-login", listener);
+    return () => ipcRenderer.removeListener("relay:catalog-login", listener);
+  },
   onChat: (fn) => {
     const listener = (
       _event: Electron.IpcRendererEvent,

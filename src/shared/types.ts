@@ -364,10 +364,17 @@ export interface HistoryEntry {
   issue?: string;
   imported?: boolean;
 }
+export interface CatalogLoginUpdate {
+  name: string;
+  success: boolean;
+  error?: string;
+  loginId?: string;
+}
 export interface Bridge {
   filePath?: (file: File) => string;
   snapshot(): Promise<Snapshot>;
   command(name: string, args?: unknown): Promise<unknown>;
   onSnapshot(fn: (snapshot: Snapshot) => void): () => void;
   onChat?(fn: (update: { id: string; page: ChatPage }) => void): () => void;
+  onCatalogLogin?(fn: (update: CatalogLoginUpdate) => void): () => void;
 }

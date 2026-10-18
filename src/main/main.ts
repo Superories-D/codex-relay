@@ -54,6 +54,7 @@ import { findTranscript } from "../core/transcript";
 import { chatSendSchema } from "./validation";
 import { Desktop } from "../core/desktop";
 import { Schedules } from "../core/schedules";
+import { Catalog, localCatalogOperation } from "../core/catalog";
 import { Terminals } from "../core/terminals";
 import { randomUUID } from "node:crypto";
 import { normalizeLocalPath } from "../shared/file-reference";
@@ -86,6 +87,7 @@ else
   });
 let window: BrowserWindow | undefined;
 let quitting = false;
+let quitReady = false;
 let tray: Tray | undefined;
 async function boot() {
   startupTrace("wait for Electron");
@@ -285,7 +287,14 @@ async function boot() {
       sleepBlocker = undefined;
     }
   });
-  let catalogQueue: Promise<unknown> = Promise.resolve();
+  const catalog = new Catalog(
+    path.join(dataRoot, "cli-profile"),
+    () => store.data.settings.cliPath,
+    (update) => {
+      if (window && !window.isDestroyed())
+        window.webContents.send("relay:catalog-login", update);
+    },
+  );
   const command = async (name: string, args?: unknown): Promise<unknown> => {
     if (quitting) throw new Error("正在保存并退出");
     switch (name) {
@@ -334,42 +343,32 @@ async function boot() {
           .parse(args);
         if (
           !capabilities.some((c) => c.method === a.method) ||
-          /^(thread\/|command\/|gitDiff)/.test(a.method)
+          /^(thread\/|command\/|gitDiff|mcpServer\/tool\/call)/.test(a.method)
         )
           throw new Error("此操作需要打开会话");
-        const task = catalogQueue
-          .catch(() => {})
-          .then(async () => {
-            if (quitting) throw new Error("正在退出");
-            const account = store.data.accounts.find(
-              (a) =>
-                a.enabled && a.status === "ready" && !accounts.busy.has(a.id),
-            );
-            if (!account) throw new Error("请先添加一个已登录且可用的账户");
-            const prepared = await accounts.inspect(account.id);
-            const rpc = await Rpc.open(
-              store.data.settings.cliPath,
-              path.join(dataRoot, "cli-profile"),
-            );
-            try {
-              rpc.on("request", (m) =>
-                rpc.reject(m.id, "请在聊天中完成交互请求"),
-              );
-              await rpc.call("account/login/start", {
-                type: "chatgptAuthTokens",
-                accessToken: prepared.auth.tokens.access_token,
-                chatgptAccountId: account.identity,
-                chatgptPlanType: account.plan,
-              });
-              return JSON.parse(
-                redact(JSON.stringify(await rpc.call(a.method, a.params))),
-              );
-            } finally {
-              await rpc.close();
-            }
-          });
-        catalogQueue = task;
-        return task;
+        return catalog.operation(
+          a.method,
+          a.params,
+          localCatalogOperation(a.method)
+            ? undefined
+            : async (rpc) => {
+                if (quitting) throw new Error("正在退出");
+                const account = store.data.accounts.find(
+                  (a) =>
+                    a.enabled &&
+                    a.status === "ready" &&
+                    !accounts.busy.has(a.id),
+                );
+                if (!account) throw new Error("请先添加一个已登录且可用的账户");
+                const prepared = await accounts.inspect(account.id);
+                await rpc.call("account/login/start", {
+                  type: "chatgptAuthTokens",
+                  accessToken: prepared.auth.tokens.access_token,
+                  chatgptAccountId: account.identity,
+                  chatgptPlanType: account.plan,
+                });
+              },
+        );
       }
       case "window.menu": {
         const a = z
@@ -1470,9 +1469,9 @@ async function boot() {
   });
   app.on("activate", () => window?.show());
   window.on("close", (event) => {
-    if (!quitting) {
+    if (!quitReady) {
       event.preventDefault();
-      window?.hide();
+      if (!quitting) window?.hide();
     }
   });
   const pixels = Buffer.alloc(32 * 32 * 4);
@@ -1495,8 +1494,9 @@ async function boot() {
   applyDesktopPreferences();
   tray.on("double-click", () => window?.show());
   app.on("before-quit", (event) => {
-    if (!quitting) {
+    if (!quitReady) {
       event.preventDefault();
+      if (quitting) return;
       quitting = true;
       void existing
         .shutdown()
@@ -1507,17 +1507,19 @@ async function boot() {
             backgroundHistory.shutdown(),
             scheduler.shutdown(),
             terminals.shutdown(),
-            catalogQueue.catch(() => {}),
+            catalog.shutdown(),
           ]),
         )
         .then(() => {
           server.close();
+          quitReady = true;
           app.quit();
         })
         .catch((error) => {
           quitting = false;
           existing.start();
           schedules.start();
+          catalog.resume();
           dialog.showErrorBox("任务尚未安全停止", redact(error));
           window?.show();
         });

@@ -1,6 +1,22 @@
 import { legacyEnglish } from "./legacy-en";
 import { nativeEnglish } from "./native-en";
 export const english: Record<string, string> = {
+  "工具连接已断开，请重新授权":
+    "The tool connection closed. Please authorize again.",
+  "工具列表分页异常，请刷新后重试":
+    "The tool list returned an invalid cursor. Refresh and try again.",
+  授权已完成: "Authorization completed",
+  "授权失败，请重试": "Authorization failed. Please try again.",
+  已授权: "Authorized",
+  授权状态未知: "Authorization status unknown",
+  无需授权: "No authorization needed",
+  连接失败: "Connection failed",
+  "等待授权…": "Waiting for authorization…",
+  停用服务器: "Disable server",
+  启用服务器: "Enable server",
+  移除服务器: "Remove server",
+  "同名服务器已存在，请使用其他名称":
+    "A server with this name already exists. Choose a different name.",
   定时任务不存在: "Scheduled task no longer exists",
   此定时任务的上一次运行尚未结束:
     "The previous run is unfinished. Continue or cancel it before starting another run.",
