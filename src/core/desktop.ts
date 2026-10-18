@@ -1,11 +1,11 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { atomicWrite } from "./store";
 import { normalizeLocalPath } from "../shared/file-reference";
-import { readBranches, switchBranch } from "./git-branches";
+import { readHead, readBranches, switchBranch } from "./git-branches";
 import {
   parseGitStatus,
   gitConflict,
@@ -205,32 +205,42 @@ export class Desktop {
   }
   async changes(cwd: string): Promise<GitChanges> {
     try {
-      const root = (
-        await this.git(cwd, ["rev-parse", "--show-toplevel"])
-      ).trim();
-      const branch =
-        (await this.git(cwd, ["branch", "--show-current"])).trim() ||
-        "detached HEAD";
-      const raw = await this.git(root, [
-        "status",
-        "--porcelain=v1",
-        "-z",
-        "--untracked-files=all",
-      ]);
-      const files = parseGitStatus(raw);
-      return { root, branch, files, error: "" };
+      return await this.inRepository(cwd, (root) => this.readChanges(root));
     } catch (e: any) {
       return {
         root: cwd,
         branch: "",
+        revision: "",
         files: [],
         error: String(e.stderr || e.message).slice(0, 500),
       };
     }
   }
+  private async readChanges(root: string): Promise<GitChanges> {
+    const { current, head } = await readHead(this.git.bind(this), root);
+    const branch = current.replace(/^refs\/heads\//, "") || "detached HEAD";
+    const raw = await this.git(root, [
+      "status",
+      "--porcelain=v1",
+      "-z",
+      "--untracked-files=all",
+    ]);
+    const index = await this.git(root, [
+      "diff", "--cached", "--raw", "-z", "--no-abbrev", "--no-renames",
+      "--no-ext-diff", "--no-textconv", "--",
+    ]);
+    const revision = createHash("sha256")
+      .update(JSON.stringify([head, index, raw]))
+      .digest("hex");
+    const files = parseGitStatus(raw);
+    return { root, branch, revision, files, error: "" };
+  }
   async diff(cwd: string, relative: string, staged = false) {
-    const state = await this.changes(cwd);
-    if (state.error) throw new Error("当前目录不是 Git 仓库");
+    return this.inRepository(cwd, async (root) =>
+      this.readDiff(await this.readChanges(root), relative, staged),
+    );
+  }
+  private async readDiff(state: GitChanges, relative: string, staged: boolean) {
     const entry = state.files.find((f) => f.path === relative);
     if (!entry) throw new Error("文件不在当前变更列表中");
     if (entry.index === "?" && entry.worktree === "?") {
@@ -263,12 +273,32 @@ export class Desktop {
     action: string,
     relative?: string,
     message?: string,
+    expectedRevision?: string,
+    expectedDiff?: string,
   ) {
-    const state = await this.changes(cwd);
-    if (state.error) throw new Error("当前目录不是 Git 仓库");
+    return this.inRepository(cwd, (root) =>
+      this.applyGitAction(root, action, relative, message, expectedRevision, expectedDiff),
+    );
+  }
+  private async applyGitAction(
+    cwd: string,
+    action: string,
+    relative?: string,
+    message?: string,
+    expectedRevision?: string,
+    expectedDiff?: string,
+  ) {
+    const state = await this.readChanges(cwd);
+    if (expectedRevision !== undefined && state.revision !== expectedRevision)
+      throw new Error("Git 状态已变化，请刷新更改列表后重试");
     if (["stage", "unstage", "restore"].includes(action)) {
       const entry = state.files.find((f) => f.path === relative);
       if (!relative || !entry) throw new Error("请选择当前变更文件");
+      if (
+        expectedDiff !== undefined &&
+        (await this.readDiff(state, relative, action === "unstage")) !== expectedDiff
+      )
+        throw new Error("文件差异已变化，请刷新后重新检查");
       if (action === "stage")
         await this.git(state.root, [
           "--literal-pathspecs",
@@ -321,9 +351,14 @@ export class Desktop {
       await this.git(state.root, ["commit", "-m", message]);
     } else if (action === "push") await this.git(state.root, ["push"]);
     else throw new Error("未知 Git 操作");
-    return this.changes(cwd);
+    return this.readChanges(cwd);
   }
   async worktree(cwd: string, ref = "HEAD", reservationId?: string) {
+    return this.inRepository(cwd, (root) =>
+      this.createWorktree(root, ref, reservationId),
+    );
+  }
+  private async createWorktree(cwd: string, ref: string, reservationId?: string) {
     if (!ref || ref.startsWith("-") || !/^[\w./@{}~^+-]+$/.test(ref))
       throw new Error("起始分支格式无效");
     if (reservationId && !/^[a-f0-9-]{36}$/i.test(reservationId))
@@ -372,9 +407,29 @@ export class Desktop {
       .split("\n")
       .filter(Boolean);
   }
-  private branchChanges = new Map<string, Promise<unknown>>();
+  private gitOperations = new Map<string, Promise<unknown>>();
+  // Canonical worktree roots share a queue, including nested folders/junctions.
+  // Linked worktrees have separate indices and may operate independently.
+  private async inRepository<T>(
+    cwd: string,
+    operation: (root: string) => Promise<T>,
+  ): Promise<T> {
+    const root = await fs.realpath(
+      (await this.git(cwd, ["rev-parse", "--show-toplevel"])).trim(),
+    );
+    const key = process.platform === "win32" ? root.toLowerCase() : root;
+    const task = (this.gitOperations.get(key) ?? Promise.resolve())
+      .catch(() => {})
+      .then(() => operation(root));
+    this.gitOperations.set(key, task);
+    const release = () => {
+      if (this.gitOperations.get(key) === task) this.gitOperations.delete(key);
+    };
+    void task.then(release, release);
+    return task;
+  }
   async branchList(cwd: string) {
-    return readBranches(this.git.bind(this), cwd);
+    return this.inRepository(cwd, (root) => readBranches(this.git.bind(this), root));
   }
   async switchBranch(
     cwd: string,
@@ -382,20 +437,10 @@ export class Desktop {
     expectedHead: string,
     name?: string,
   ) {
-    const root = (await this.git(cwd, ["rev-parse", "--show-toplevel"])).trim();
-    const key = process.platform === "win32" ? root.toLowerCase() : root;
-    const task = (this.branchChanges.get(key) ?? Promise.resolve())
-      .catch(() => {})
-      .then(async () => {
-        await switchBranch(this.git.bind(this), root, ref, expectedHead, name);
-        return this.changes(root);
-      });
-    this.branchChanges.set(key, task);
-    const release = () => {
-      if (this.branchChanges.get(key) === task) this.branchChanges.delete(key);
-    };
-    void task.then(release, release);
-    return task;
+    return this.inRepository(cwd, async (root) => {
+      await switchBranch(this.git.bind(this), root, ref, expectedHead, name);
+      return this.readChanges(root);
+    });
   }
 }
 export function nextSchedule(

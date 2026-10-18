@@ -7,6 +7,7 @@ export interface GitChange {
 export interface GitChanges {
   root: string;
   branch: string;
+  revision: string;
   files: GitChange[];
   error: string;
 }

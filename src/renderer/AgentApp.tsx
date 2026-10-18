@@ -272,8 +272,11 @@ export function AgentApp({
     try {
       return await window.relay.command(name, args);
     } catch (e) {
-      // Branch controls retain their own actionable error beside the draft.
-      if (!["workspace.branchList", "workspace.switchBranch"].includes(name))
+      // Git controls retain actionable errors beside the affected draft/diff.
+      if (![
+        "workspace.branchList", "workspace.switchBranch", "workspace.changes",
+        "workspace.diff", "workspace.git",
+      ].includes(name))
         setError(errorText(e));
       throw e;
     }

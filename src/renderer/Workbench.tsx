@@ -780,6 +780,11 @@ function Changes({
   const [state, setState] = useState<GitChanges>(),
     [selected, setSelected] = useState(""),
     [diff, setDiff] = useState(""),
+    [diffSnapshot, setDiffSnapshot] = useState<{
+      revision: string;
+      path: string;
+      staged: boolean;
+    }>(),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
     [staged, setStaged] = useState(false),
@@ -815,10 +820,17 @@ function Changes({
   const hasStaged = !!entry && gitStaged(entry),
     hasUnstaged = !!entry && gitUnstaged(entry);
   const showingStaged = hasStaged && (!hasUnstaged || staged);
+  const diffReady = !!diffSnapshot &&
+    diffSnapshot.revision === state?.revision &&
+    diffSnapshot.path === selected && diffSnapshot.staged === showingStaged;
+  useEffect(() => {
+    setConfirmRestore(false);
+  }, [state?.revision]);
   useEffect(() => {
     if (selected && state && !entry) {
       setSelected("");
       setDiff("");
+      setDiffSnapshot(undefined);
       setConfirmRestore(false);
     }
   }, [selected, state, entry]);
@@ -827,11 +839,20 @@ function Changes({
     let alive = true;
     void call("workspace.diff", { cwd, path: selected, staged: showingStaged })
       .then((value) => {
-        if (alive) setDiff(value);
+        if (alive) {
+          if (value !== diff) setConfirmRestore(false);
+          setDiff(value);
+          setDiffSnapshot({
+            revision: state!.revision,
+            path: selected,
+            staged: showingStaged,
+          });
+        }
       })
       .catch((e) => {
         if (alive) {
           setDiff("");
+          setDiffSnapshot(undefined);
           setError(errorText(e));
         }
       });
@@ -844,6 +865,10 @@ function Changes({
     branch?: { ref: string; expectedHead: string; name?: string },
   ) => {
     if (mutating.current) return false;
+    if (
+      !branch && (!state?.revision ||
+        (["stage", "unstage", "restore"].includes(kind) && !diffReady))
+    ) return false;
     mutating.current = true;
     const request = ++revision.current;
     setBusy(true);
@@ -856,10 +881,13 @@ function Changes({
             action: kind,
             path: selected || undefined,
             message: message || undefined,
+            expectedRevision: state!.revision,
+            ...(["stage", "unstage", "restore"].includes(kind) ? { expectedDiff: diff } : {}),
           });
       if (request !== revision.current) return false;
       setState(result);
       setDiff("");
+      setDiffSnapshot(undefined);
       if (kind === "stage") setStaged(true);
       if (kind === "unstage") setStaged(false);
       if (kind === "commit") {
@@ -877,7 +905,13 @@ function Changes({
       }
       return true;
     } catch (e) {
-      if (request === revision.current) setError(errorText(e));
+      if (request === revision.current) {
+        setError(errorText(e));
+        if (["stage", "unstage", "restore"].includes(kind)) {
+          setDiffSnapshot(undefined);
+          setConfirmRestore(false);
+        }
+      }
       return false;
     } finally {
       mutating.current = false;
@@ -951,6 +985,7 @@ function Changes({
                 <button
                   disabled={
                     busy ||
+                    !state?.revision ||
                     !message.trim() ||
                     !state?.files.some(gitStaged) ||
                     state.files.some(gitConflict)
@@ -960,7 +995,7 @@ function Changes({
                   <Check size={14} />
                   {t("提交已暂存更改")}
                 </button>
-                <button disabled={busy} onClick={() => void action("push")}>
+                <button disabled={busy || !state?.revision} onClick={() => void action("push")}>
                   <Upload size={14} />
                   {t("推送")}
                 </button>
@@ -975,9 +1010,16 @@ function Changes({
                 disabled={busy}
                 title={f.original ? `${f.original} → ${f.path}` : f.path}
                 onClick={() => {
+                  if (selected === f.path) {
+                    setError("");
+                    setConfirmRestore(false);
+                    void refresh();
+                    return;
+                  }
                   setSelected(f.path);
                   setStaged(gitStaged(f) && !gitUnstaged(f));
                   setDiff("");
+                  setDiffSnapshot(undefined);
                   setError("");
                   setConfirmRestore(false);
                 }}
@@ -1033,7 +1075,7 @@ function Changes({
                 </label>
                 <button
                   title={showingStaged ? t("取消暂存文件") : t("暂存文件")}
-                  disabled={busy || !(showingStaged ? hasStaged : hasUnstaged)}
+                  disabled={busy || !diffReady || !(showingStaged ? hasStaged : hasUnstaged)}
                   onClick={() =>
                     void action(showingStaged ? "unstage" : "stage")
                   }
@@ -1044,6 +1086,7 @@ function Changes({
                   title={t("还原文件")}
                   disabled={
                     busy ||
+                    !diffReady ||
                     showingStaged ||
                     !hasUnstaged ||
                     entry.index === "?" ||
@@ -1058,7 +1101,7 @@ function Changes({
                 <div className="restore-confirm">
                   <p>{t("将丢弃此文件尚未暂存的更改。")}</p>
                   <button
-                    disabled={busy}
+                    disabled={busy || !diffReady}
                     onClick={() => void action("restore")}
                   >
                     {t("确认还原此文件")}

@@ -195,6 +195,7 @@ async function until(check) {
       .click();
     await file("nested/日本語 note.txt").click();
     assert.equal(await panel.locator(".restore-confirm").count(), 0);
+    assert.equal(await page.locator(".agent-error").count(), 0);
     assert.equal(
       await panel
         .getByRole("button", { name: "ファイルを元に戻す", exact: true })
@@ -376,6 +377,62 @@ async function until(check) {
     report.checks.push(
       "Japanese branch UI validates and preserves drafts after errors, creates Unicode branches, switches local branches, tracks remote refs, and disables branches held in another worktree",
     );
+    // Remount the panel so its next background poll is five seconds away.
+    // Replace the real index after the UI has displayed the reviewed version.
+    await fs.writeFile(path.join(second, "mixed.txt"), "reviewed staged content\n");
+    await git(second, "add", "mixed.txt");
+    await openJob("Git fixture 1");
+    await openJob("Git fixture 2");
+    await file("mixed.txt").click();
+    await until(async () => (await panel.locator(".diff-lines").innerText()).includes("+reviewed staged content"));
+    await panel.getByRole("button", { name: "変更をコミット", exact: true }).click();
+    const draft = panel.getByRole("textbox", { name: "コミットメッセージ", exact: true });
+    await draft.fill("review after concurrent change");
+    const previousHead = (await git(second, "rev-parse", "HEAD")).trim();
+    await fs.writeFile(path.join(second, "mixed.txt"), "another task staged this\n");
+    await git(second, "add", "mixed.txt");
+    await panel.getByRole("button", { name: "ステージ済みの変更をコミット", exact: true }).click();
+    await panel.getByRole("alert").filter({ hasText: "Git の状態が変更されました" }).waitFor();
+    assert.equal((await git(second, "rev-parse", "HEAD")).trim(), previousHead);
+    assert.equal(await git(second, "show", ":mixed.txt"), "another task staged this\n");
+    assert.equal(await draft.inputValue(), "review after concurrent change");
+    await panel.getByTitle("変更を更新", { exact: true }).click();
+    await until(async () => (await panel.locator(".diff-lines").innerText()).includes("+another task staged this"));
+    await panel.getByRole("button", { name: "ステージ済みの変更をコミット", exact: true }).click();
+    await until(async () => (await git(second, "log", "-1", "--format=%s")).trim() === "review after concurrent change");
+    await fs.writeFile(path.join(second, "mixed.txt"), "reviewed working content\n");
+    await openJob("Git fixture 1");
+    await openJob("Git fixture 2");
+    await file("mixed.txt").click();
+    await until(async () => (await panel.locator(".diff-lines").innerText()).includes("+reviewed working content"));
+    await panel.getByRole("button", { name: "ファイルを元に戻す", exact: true }).click();
+    await fs.writeFile(path.join(second, "mixed.txt"), "new work must survive\n");
+    await panel.getByRole("button", { name: "このファイルの復元を確認", exact: true }).click();
+    await panel.getByRole("alert").filter({ hasText: "ファイルの差分が変更されました" }).waitFor();
+    assert.equal(await fs.readFile(path.join(second, "mixed.txt"), "utf8"), "new work must survive\n");
+    assert.equal(await panel.locator(".restore-confirm").count(), 0);
+    assert.equal(await page.locator(".agent-error").count(), 0);
+    await page.screenshot({ path: path.join(output, "git-concurrency-native-ja.png") });
+    // The renderer cannot bypass the review requirement by omitting guards.
+    const missingGuards = await page.evaluate(async (cwd) => {
+      const errors = [];
+      for (const args of [
+        { cwd, action: "stage", path: "mixed.txt" },
+        { cwd, action: "stage", path: "mixed.txt", expectedRevision: (await window.relay.command("workspace.changes", { cwd })).revision },
+      ]) {
+        try { await window.relay.command("workspace.git", args); }
+        catch (error) { errors.push(String(error)); }
+      }
+      return errors;
+    }, second);
+    assert.equal(missingGuards.length, 2);
+    assert.match(missingGuards[0], /Git 状态已变化/);
+    assert.match(missingGuards[1], /文件差异已变化/);
+    assert.equal(await git(second, "show", ":mixed.txt"), "another task staged this\n");
+    await file("mixed.txt").click();
+    await until(async () => (await panel.locator(".diff-lines").innerText()).includes("+new work must survive"));
+    await until(async () => await panel.getByRole("button", { name: "ファイルをステージ", exact: true }).isEnabled());
+    report.checks.push("Japanese UI rejects a stale staged commit, retains the draft, commits after refresh/review, and rejects discarding newer working text while clearing the obsolete confirmation");
     const snapshot = await page.evaluate(() => window.relay.snapshot());
     assert.equal(snapshot.accounts.length, 0);
     assert.equal(snapshot.jobs.length, 2);

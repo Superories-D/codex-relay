@@ -148,7 +148,11 @@ async function until(fn, timeout = 20000) {
       await call("workspace.diff", { cwd, path: "README.md" }),
       /Edited in Electron/,
     );
-    await call("workspace.git", { cwd, path: "README.md", action: "stage" });
+    await call("workspace.git", {
+      cwd, path: "README.md", action: "stage",
+      expectedRevision: (await call("workspace.changes", { cwd })).revision,
+      expectedDiff: await call("workspace.diff", { cwd, path: "README.md" }),
+    });
     assert.equal(
       (await call("workspace.changes", { cwd })).files[0].index,
       "M",
@@ -157,6 +161,7 @@ async function until(fn, timeout = 20000) {
       cwd,
       action: "commit",
       message: "native editor fixture",
+      expectedRevision: (await call("workspace.changes", { cwd })).revision,
     });
     assert.equal((await call("workspace.changes", { cwd })).files.length, 0);
     const worktree = await call("workspace.worktree", { cwd });

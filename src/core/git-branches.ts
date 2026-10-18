@@ -2,10 +2,7 @@ import type { GitBranchList } from "../shared/git";
 
 type Git = (cwd: string, args: string[]) => Promise<string>;
 
-export async function readBranches(
-  git: Git,
-  cwd: string,
-): Promise<GitBranchList> {
+export async function readHead(git: Git, cwd: string) {
   let current = "",
     oid = "";
   try {
@@ -18,6 +15,14 @@ export async function readBranches(
   } catch (error: any) {
     if (error.code !== 1) throw error;
   }
+  return { current, head: `${current}:${oid}` };
+}
+
+export async function readBranches(
+  git: Git,
+  cwd: string,
+): Promise<GitBranchList> {
+  const head = await readHead(git, cwd);
   const raw = await git(cwd, [
     "for-each-ref",
     "--sort=refname",
@@ -26,8 +31,7 @@ export async function readBranches(
     "refs/remotes",
   ]);
   return {
-    current,
-    head: `${current}:${oid}`,
+    ...head,
     branches: raw
       .split("\n")
       .filter(Boolean)

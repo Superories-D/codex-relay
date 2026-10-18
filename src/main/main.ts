@@ -554,6 +554,8 @@ async function boot() {
               .optional(),
             path: z.string().max(32700).optional(),
             message: z.string().max(10000).optional(),
+            expectedRevision: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+            expectedDiff: z.string().max(4 * 1024 * 1024).optional(),
           })
           .strict()
           .parse(args);
@@ -562,7 +564,11 @@ async function boot() {
         if (name === "workspace.worktree")
           return desktop.worktree(a.cwd, a.ref);
         if (!a.action) throw new Error("缺少 Git 操作");
-        return desktop.gitAction(a.cwd, a.action, a.path, a.message);
+        if (!a.expectedRevision)
+          throw new Error("Git 状态已变化，请刷新更改列表后重试");
+        if (["stage", "unstage", "restore"].includes(a.action) && a.expectedDiff === undefined)
+          throw new Error("文件差异已变化，请刷新后重新检查");
+        return desktop.gitAction(a.cwd, a.action, a.path, a.message, a.expectedRevision, a.expectedDiff);
       }
       case "terminal.list":
         return terminals.list();
