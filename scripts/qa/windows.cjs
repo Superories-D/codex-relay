@@ -94,6 +94,7 @@ const { _electron } = require(
     );
     console.log(JSON.stringify(report));
   } finally {
+    await app.evaluate(({ app }) => app.quit()).catch(() => {});
     await app.close();
   }
 })().catch((error) => {

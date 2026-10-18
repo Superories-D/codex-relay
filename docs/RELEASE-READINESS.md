@@ -12,7 +12,7 @@ test cannot replace actual CLI or installed-client evidence.
 
 | Requirement | Current evidence / next acceptance gate |
 | --- | --- |
-| UI and input ergonomics | v0.6.15 packaged startup verified; screenshot follow-up fixes validated in source, awaiting next package |
+| UI and input ergonomics | v0.6.16 packages screenshot follow-up fixes; native image draft/clipboard and packaged scroll checks passed |
 | Concurrent independent tasks | Implemented 1–8 slots (default 3), family exclusion, per-task control/approvals and shutdown. Unit and real local JSONL-process checks passed; see `CONCURRENCY-20261018.md`. Real-account concurrent inference/refresh/relay remains unverified |
 | Account refresh and relay | Existing real same-thread single-task relay observed. Concurrent refresh/rotation and full reset-cycle behavior still require evidence |
 | Subagents | Existing live parent/child flows verified; deep hierarchy, cross-account recovery and Goal combinations remain incomplete. Related threads sharing a runtime home must not race |
@@ -22,7 +22,7 @@ test cannot replace actual CLI or installed-client evidence.
 | Git/Worktree and terminal | Existing basic native checks; isolation of concurrent projects/worktrees, fuller Git workflows and terminal lifecycle require broader acceptance |
 | Plugins/MCP and schedules | Configuration/UI exist; end-to-end plugin calls and full schedule lifecycle remain open |
 | Multilingual/accessibility | Japanese added with 1,044 catalog entries; four-language switching/persistence and Japanese native menu construction verified. Narrow/zoomed light/dark Japanese layouts passed; see `JAPANESE-20261018.md` |
-| Packaging | v0.6.15 NSIS wizard loading + packaged app + ZIP integrity verified. User performs installation. Future builds must verify resources and actual app; signing/release distribution remain separate gaps |
+| Packaging | v0.6.16 NSIS wizard loading + packaged app + ZIP integrity verified; includes concurrency and Japanese. User performs installation. Signing/release distribution remain separate gaps; see `RELEASE-0616.md` |
 
 Operational constraints: inspect the real installed profile only through the
 documented Explorer Desktop Shell helper because of MSIX AppData dual views.

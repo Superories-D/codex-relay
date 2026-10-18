@@ -44,6 +44,7 @@ const output = path.join(root, "qa-output");
     });
     const page = await app.firstWindow();
     page.setDefaultTimeout(15000);
+    report.runtime = await app.evaluate(({ app }) => ({ packaged: app.isPackaged, version: app.getVersion() }));
     page.on("pageerror", (error) => report.errors.push(error.message));
     await page.getByRole("button", { name: "Settings", exact: true }).click();
     const limit = page.getByLabel("Concurrent task limit", { exact: true });
