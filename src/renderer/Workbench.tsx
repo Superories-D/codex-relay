@@ -19,6 +19,7 @@ import {
   Network,
   Pencil,
   Plus,
+  Minus,
   RefreshCw,
   RotateCcw,
   Save,
@@ -41,6 +42,12 @@ import { ImageThumbnail } from "./ChatImages";
 import { GoalCard } from "./GoalCard";
 import { QuestionPanel } from "./QuestionPanel";
 import { mergePage, agentRows } from "./chat-view";
+import {
+  gitConflict,
+  gitStaged,
+  gitUnstaged,
+  type GitChanges,
+} from "../shared/git";
 type Call = (name: string, args?: unknown) => Promise<any>;
 function readAgentDrafts(): Record<string, string> {
   try {
@@ -195,6 +202,16 @@ export function Workbench({
   onOpenConversation?: (job: Job) => void;
 }) {
   const { language } = useI18n();
+  const [gitPreview, setGitPreview] = useState<{
+    cwd: string;
+    root: string;
+    file: string;
+  }>();
+  useEffect(() => {
+    if (!file) setGitPreview(undefined);
+  }, [file]);
+  const repositoryPreview =
+    tab === "changes" && gitPreview?.cwd === cwd && gitPreview.file === file;
   const tabs = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const list = tabs.current;
@@ -274,11 +291,11 @@ export function Workbench({
       </header>
       {file ? (
         <FilePreview
-          cwd={cwd}
+          cwd={repositoryPreview ? gitPreview.root : cwd}
           file={file}
           call={call}
           close={() => setFile("")}
-          jobId={job?.id}
+          jobId={repositoryPreview ? undefined : job?.id}
         />
       ) : tab === "files" ? (
         cwd ? (
@@ -292,7 +309,16 @@ export function Workbench({
           <PanelEmpty text={t("选择一个项目来浏览文件")} />
         )
       ) : tab === "changes" ? (
-        <Changes cwd={cwd} call={call} openFile={setFile} comment={setDraft} />
+        <Changes
+          key={cwd}
+          cwd={cwd}
+          call={call}
+          openFile={(file, root) => {
+            setGitPreview({ cwd, root, file });
+            setFile(file);
+          }}
+          comment={setDraft}
+        />
       ) : tab === "agents" ? (
         <Agents
           job={job}
@@ -745,12 +771,12 @@ function Changes({
 }: {
   cwd: string;
   call: Call;
-  openFile: (path: string) => void;
+  openFile: (path: string, root: string) => void;
   comment: (text: string) => void;
 }) {
   useI18n();
 
-  const [state, setState] = useState<any>(),
+  const [state, setState] = useState<GitChanges>(),
     [selected, setSelected] = useState(""),
     [diff, setDiff] = useState(""),
     [error, setError] = useState(""),
@@ -759,43 +785,76 @@ function Changes({
     [commit, setCommit] = useState(false),
     [message, setMessage] = useState(""),
     [confirmRestore, setConfirmRestore] = useState(false);
-  const refresh = () =>
-    cwd &&
-    void call("workspace.changes", { cwd })
-      .then(setState)
-      .catch((e) => setError(String(e)));
+  const revision = useRef(0),
+    mutating = useRef(false),
+    refreshing = useRef(false);
+  const refresh = async () => {
+    if (!cwd || mutating.current || refreshing.current) return;
+    refreshing.current = true;
+    const request = ++revision.current;
+    try {
+      const result = await call("workspace.changes", { cwd });
+      if (request === revision.current) setState(result);
+    } catch (e) {
+      if (request === revision.current) setError(errorText(e));
+    } finally {
+      refreshing.current = false;
+    }
+  };
   useEffect(() => {
-    refresh();
+    void refresh();
     const timer = setInterval(refresh, 5000);
-    return () => clearInterval(timer);
+    return () => {
+      clearInterval(timer);
+      ++revision.current;
+    };
   }, [cwd]);
+  const entry = state?.files.find((file) => file.path === selected);
+  const hasStaged = !!entry && gitStaged(entry),
+    hasUnstaged = !!entry && gitUnstaged(entry);
+  const showingStaged = hasStaged && (!hasUnstaged || staged);
   useEffect(() => {
-    if (!selected) return;
+    if (selected && state && !entry) {
+      setSelected("");
+      setDiff("");
+      setConfirmRestore(false);
+    }
+  }, [selected, state, entry]);
+  useEffect(() => {
+    if (!entry) return;
     let alive = true;
-    setDiff("");
-    void call("workspace.diff", { cwd, path: selected, staged })
+    void call("workspace.diff", { cwd, path: selected, staged: showingStaged })
       .then((value) => {
         if (alive) setDiff(value);
       })
       .catch((e) => {
-        if (alive) setError(String(e));
+        if (alive) {
+          setDiff("");
+          setError(errorText(e));
+        }
       });
     return () => {
       alive = false;
     };
-  }, [cwd, selected, staged, state]);
+  }, [cwd, selected, showingStaged, state]);
   const action = async (kind: string) => {
+    if (mutating.current) return;
+    mutating.current = true;
+    const request = ++revision.current;
     setBusy(true);
     setError("");
     try {
-      setState(
-        await call("workspace.git", {
-          cwd,
-          action: kind,
-          path: selected || undefined,
-          message: message || undefined,
-        }),
-      );
+      const result = await call("workspace.git", {
+        cwd,
+        action: kind,
+        path: selected || undefined,
+        message: message || undefined,
+      });
+      if (request !== revision.current) return;
+      setState(result);
+      setDiff("");
+      if (kind === "stage") setStaged(true);
+      if (kind === "unstage") setStaged(false);
       if (kind === "commit") {
         setCommit(false);
         setMessage("");
@@ -805,9 +864,10 @@ function Changes({
         setSelected("");
       }
     } catch (e) {
-      setError(String(e));
+      if (request === revision.current) setError(errorText(e));
     } finally {
-      setBusy(false);
+      mutating.current = false;
+      if (request === revision.current) setBusy(false);
     }
   };
   if (!cwd) return <PanelEmpty text={t("选择项目以查看 Git 更改")} />;
@@ -816,10 +876,21 @@ function Changes({
       <div className="changes-heading">
         <GitBranch size={15} />
         <span>{state?.branch || "Git"}</span>
-        <button title={t("刷新变更")} onClick={refresh}>
+        <button
+          title={t("刷新变更")}
+          disabled={busy}
+          onClick={() => {
+            setError("");
+            void refresh();
+          }}
+        >
           <RefreshCw size={14} />
         </button>
-        <button title={t("提交更改")} onClick={() => setCommit(!commit)}>
+        <button
+          title={t("提交更改")}
+          disabled={busy || !state || !!state.error}
+          onClick={() => setCommit(!commit)}
+        >
           <GitCommitHorizontal size={16} />
         </button>
       </div>
@@ -829,7 +900,10 @@ function Changes({
         </p>
       )}
       {state?.error ? (
-        <PanelEmpty text={t("当前项目尚未初始化 Git 仓库")} />
+        <div>
+          <PanelEmpty text={t("无法读取 Git 状态")} />
+          <p className="panel-error">{state.error}</p>
+        </div>
       ) : (
         <>
           {commit && (
@@ -842,7 +916,12 @@ function Changes({
               />
               <div>
                 <button
-                  disabled={busy || !message.trim()}
+                  disabled={
+                    busy ||
+                    !message.trim() ||
+                    !state?.files.some(gitStaged) ||
+                    state.files.some(gitConflict)
+                  }
                   onClick={() => void action("commit")}
                 >
                   <Check size={14} />
@@ -856,53 +935,87 @@ function Changes({
             </div>
           )}
           <div className="changed-files">
-            {state?.files.map((f: any) => (
+            {state?.files.map((f) => (
               <button
                 key={f.path}
                 className={selected === f.path ? "selected" : ""}
+                disabled={busy}
+                title={f.original ? `${f.original} → ${f.path}` : f.path}
                 onClick={() => {
                   setSelected(f.path);
+                  setStaged(gitStaged(f) && !gitUnstaged(f));
+                  setDiff("");
+                  setError("");
                   setConfirmRestore(false);
                 }}
               >
                 <FileCode2 size={14} />
                 <span>{f.path}</span>
-                <small>
-                  {f.index === "?" ? "U" : f.worktree.trim() || f.index}
-                </small>
+                {gitConflict(f) ? (
+                  <small title={t("合并冲突")}>!</small>
+                ) : (
+                  <>
+                    {gitStaged(f) && (
+                      <small title={t("已暂存")}>{f.index}</small>
+                    )}
+                    {gitUnstaged(f) && (
+                      <small title={t("未暂存")}>
+                        {f.worktree === "?" ? "?" : f.worktree}
+                      </small>
+                    )}
+                  </>
+                )}
               </button>
             ))}
             {state && !state.files.length && (
               <PanelEmpty text={t("工作区没有未提交的更改")} />
             )}
           </div>
-          {selected && (
+          {entry && (
             <>
               <div className="diff-toolbar">
                 <button
                   title={t("打开文件")}
-                  onClick={() => openFile(selected)}
+                  disabled={
+                    busy ||
+                    (entry.index === "D" && entry.worktree === " ") ||
+                    entry.worktree === "D"
+                  }
+                  onClick={() => openFile(selected, state!.root)}
                 >
                   {selected.split("/").at(-1)}
                 </button>
                 <label>
                   <input
                     type="checkbox"
-                    checked={staged}
-                    onChange={(e) => setStaged(e.target.checked)}
+                    checked={showingStaged}
+                    disabled={busy || !hasStaged || !hasUnstaged}
+                    onChange={(e) => {
+                      setStaged(e.target.checked);
+                      setDiff("");
+                      setConfirmRestore(false);
+                    }}
                   />
                   {t("已暂存")}
                 </label>
                 <button
-                  title={t("暂存文件")}
-                  disabled={busy}
-                  onClick={() => void action(staged ? "unstage" : "stage")}
+                  title={showingStaged ? t("取消暂存文件") : t("暂存文件")}
+                  disabled={busy || !(showingStaged ? hasStaged : hasUnstaged)}
+                  onClick={() =>
+                    void action(showingStaged ? "unstage" : "stage")
+                  }
                 >
-                  <Plus size={14} />
+                  {showingStaged ? <Minus size={14} /> : <Plus size={14} />}
                 </button>
                 <button
                   title={t("还原文件")}
-                  disabled={busy}
+                  disabled={
+                    busy ||
+                    showingStaged ||
+                    !hasUnstaged ||
+                    entry.index === "?" ||
+                    gitConflict(entry)
+                  }
                   onClick={() => setConfirmRestore(true)}
                 >
                   <RotateCcw size={14} />
@@ -911,10 +1024,16 @@ function Changes({
               {confirmRestore && (
                 <div className="restore-confirm">
                   <p>{t("将丢弃此文件尚未暂存的更改。")}</p>
-                  <button onClick={() => void action("restore")}>
+                  <button
+                    disabled={busy}
+                    onClick={() => void action("restore")}
+                  >
                     {t("确认还原此文件")}
                   </button>
-                  <button onClick={() => setConfirmRestore(false)}>
+                  <button
+                    disabled={busy}
+                    onClick={() => setConfirmRestore(false)}
+                  >
                     {t("取消")}
                   </button>
                 </div>
@@ -952,7 +1071,7 @@ function Changes({
               </div>
             </>
           )}
-          {!selected && state?.files.length > 0 && (
+          {!selected && !!state?.files.length && (
             <PanelEmpty
               text={t("选择文件查看差异，点击行号旁的加号添加审查意见")}
             />

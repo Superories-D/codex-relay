@@ -5,6 +5,13 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { atomicWrite } from "./store";
 import { normalizeLocalPath } from "../shared/file-reference";
+import {
+  parseGitStatus,
+  gitConflict,
+  gitStaged,
+  gitUnstaged,
+  type GitChanges,
+} from "../shared/git";
 
 export interface Project {
   id: string;
@@ -195,7 +202,7 @@ export class Desktop {
     });
     return stdout;
   }
-  async changes(cwd: string) {
+  async changes(cwd: string): Promise<GitChanges> {
     try {
       const root = (
         await this.git(cwd, ["rev-parse", "--show-toplevel"])
@@ -203,32 +210,13 @@ export class Desktop {
       const branch =
         (await this.git(cwd, ["branch", "--show-current"])).trim() ||
         "detached HEAD";
-      const raw = (
-        await this.git(root, [
-          "status",
-          "--porcelain=v1",
-          "-z",
-          "--untracked-files=normal",
-        ])
-      ).split("\0");
-      const files: {
-        path: string;
-        index: string;
-        worktree: string;
-        original?: string;
-      }[] = [];
-      for (let i = 0; i < raw.length; i++)
-        if (raw[i]) {
-          const row = raw[i],
-            entry = {
-              path: row.slice(3),
-              index: row[0],
-              worktree: row[1],
-              original: undefined as string | undefined,
-            };
-          if (/[RC]/.test(row.slice(0, 2))) entry.original = raw[++i];
-          files.push(entry);
-        }
+      const raw = await this.git(root, [
+        "status",
+        "--porcelain=v1",
+        "-z",
+        "--untracked-files=all",
+      ]);
+      const files = parseGitStatus(raw);
       return { root, branch, files, error: "" };
     } catch (e: any) {
       return {
@@ -245,6 +233,7 @@ export class Desktop {
     const entry = state.files.find((f) => f.path === relative);
     if (!entry) throw new Error("文件不在当前变更列表中");
     if (entry.index === "?" && entry.worktree === "?") {
+      if (staged) return "";
       const file = await this.read(state.root, relative);
       return file.kind === "text"
         ? file.content
@@ -254,12 +243,18 @@ export class Desktop {
         : "Binary file";
     }
     return this.git(state.root, [
+      "--literal-pathspecs",
       "diff",
       "--no-ext-diff",
+      "--no-textconv",
       "--no-color",
+      "--find-renames",
       ...(staged ? ["--cached"] : []),
       "--",
       relative,
+      ...(staged && entry.index === "R" && entry.original
+        ? [entry.original]
+        : []),
     ]);
   }
   async gitAction(
@@ -271,16 +266,54 @@ export class Desktop {
     const state = await this.changes(cwd);
     if (state.error) throw new Error("当前目录不是 Git 仓库");
     if (["stage", "unstage", "restore"].includes(action)) {
-      if (!relative || !state.files.some((f) => f.path === relative))
-        throw new Error("请选择当前变更文件");
+      const entry = state.files.find((f) => f.path === relative);
+      if (!relative || !entry) throw new Error("请选择当前变更文件");
       if (action === "stage")
-        await this.git(state.root, ["add", "--", relative]);
-      if (action === "unstage")
-        await this.git(state.root, ["restore", "--staged", "--", relative]);
+        await this.git(state.root, [
+          "--literal-pathspecs",
+          "add",
+          "--",
+          relative,
+          ...(entry.worktree === "R" && entry.original ? [entry.original] : []),
+        ]);
+      if (action === "unstage") {
+        if (!gitStaged(entry)) throw new Error("此文件没有已暂存的更改");
+        const paths = [
+          relative,
+          ...(entry.index === "R" && entry.original ? [entry.original] : []),
+        ];
+        let hasHead = true;
+        try {
+          await this.git(state.root, [
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            "HEAD",
+          ]);
+        } catch (error: any) {
+          if (error.code !== 1) throw error;
+          hasHead = false;
+        }
+        await this.git(state.root, [
+          "--literal-pathspecs",
+          ...(hasHead
+            ? ["restore", "--staged", "--", ...paths]
+            : ["rm", "--cached", "--force", "--", ...paths]),
+        ]);
+      }
       if (action === "restore") {
-        if (state.files.find((f) => f.path === relative)?.index === "?")
+        if (entry.index === "?")
           throw new Error("未跟踪文件不自动删除，请在文件管理器中处理");
-        await this.git(state.root, ["restore", "--worktree", "--", relative]);
+        if (gitConflict(entry))
+          throw new Error("文件存在合并冲突，请先解决冲突");
+        if (!gitUnstaged(entry)) throw new Error("此文件没有未暂存的更改");
+        await this.git(state.root, [
+          "--literal-pathspecs",
+          "restore",
+          "--worktree",
+          "--",
+          relative,
+        ]);
       }
     } else if (action === "commit") {
       if (!message?.trim()) throw new Error("请输入提交信息");

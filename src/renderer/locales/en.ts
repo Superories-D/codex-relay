@@ -1,6 +1,13 @@
 import { legacyEnglish } from "./legacy-en";
 import { nativeEnglish } from "./native-en";
 export const english: Record<string, string> = {
+  此文件没有已暂存的更改: "This file has no staged changes",
+  此文件没有未暂存的更改: "This file has no unstaged changes",
+  "文件存在合并冲突，请先解决冲突": "Resolve this file's merge conflicts first",
+  "无法读取 Git 状态": "Unable to read Git status",
+  合并冲突: "Merge conflict",
+  未暂存: "Unstaged",
+  取消暂存文件: "Unstage file",
   "工具连接已断开，请重新授权":
     "The tool connection closed. Please authorize again.",
   "工具列表分页异常，请刷新后重试":
