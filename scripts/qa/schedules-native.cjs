@@ -232,7 +232,7 @@ const output = path.join(root, "qa-output");
       fs.promises.rename = async (from, to) => {
         if (path.basename(String(to)) === "desktop.json") {
           fs.promises.rename = original;
-          throw Object.assign(Error("fixture schedule write denied"), { code: "EPERM" });
+          throw Object.assign(Error("fixture schedule write denied\nAuthorization: Bearer fixture-opaque-secret\nhttps://fixture-user:fixture-password@host.invalid/repo"), { code: "EPERM" });
         }
         return original(from, to);
       };
@@ -246,6 +246,10 @@ const output = path.join(root, "qa-output");
     const error = page.locator(".schedule-form [role='alert']");
     await save();
     await error.filter({ hasText: "fixture schedule write denied" }).waitFor();
+    const diagnostic = await error.innerText();
+    for (const hidden of ["fixture-opaque-secret", "fixture-user", "fixture-password"])
+      assert.ok(!diagnostic.includes(hidden), "IPC error exposed synthetic authentication data");
+    assert.ok(diagnostic.includes("host.invalid/repo"));
     assert.equal((await call("desktop.read")).schedules.length, 0);
     assert.equal(await page.getByLabel("タスクの内容").inputValue(), "Saved original prompt");
     await save();
@@ -272,6 +276,7 @@ const output = path.join(root, "qa-output");
     assert.equal((await call("desktop.read")).schedules.length, 0);
     assert.deepEqual(report.errors, []);
     report.checks.push("actual Electron save/edit/delete disk failures retain saved state, keep the draft visible and permit retry without duplication; successful deletion survives reload");
+    report.checks.push("actual IPC diagnostic redacts the full Authorization value and URL user information while preserving the destination");
     report.status = "passed";
   } catch (error) {
     report.failure = String(error);
