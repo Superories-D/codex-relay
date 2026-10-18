@@ -23,6 +23,8 @@ import type {
   ThreadGoal,
 } from "../shared/types";
 import { ensureWindowsSandbox } from "./windows-sandbox";
+import { ProcessSafetyError } from "./process-safety-error";
+import { redact } from "./redact";
 const activeAgentStatuses = new Set([
   "running",
   "pendingInit",
@@ -46,6 +48,7 @@ export class CliWorker extends EventEmitter implements Worker {
   private terminal = false;
   private completing = false;
   private stopping?: Promise<void>;
+  private confirmingStop = false;
   private stopRequested = false;
   private submissionPending = false;
   private deferredOutcome?: Outcome;
@@ -434,6 +437,7 @@ export class CliWorker extends EventEmitter implements Worker {
     };
   }
   private finish(result: Outcome) {
+    if (this.confirmingStop) return;
     if (!this.terminal) {
       if (result.kind === "completed" && this.quotaSeen)
         result = { kind: "quota", error: this.lastError };
@@ -533,8 +537,7 @@ export class CliWorker extends EventEmitter implements Worker {
       this.emit("quota", quotas);
       if (isExhausted(quotas[this.ctx.job.bucket])) {
         this.quotaSeen = true;
-        if (this.turnId && !this.terminal)
-          void this.stop().catch((error) => this.emit("stopError", error));
+        if (this.turnId && !this.terminal) void this.stop().catch(() => {});
       }
       return;
     }
@@ -599,9 +602,10 @@ export class CliWorker extends EventEmitter implements Worker {
       if (msg.method === "turn/started") {
         this.activeAgentTurns.set(p.threadId, p.turn.id);
         this.agent(p.threadId, { turnId: p.turn.id, status: "running" });
-        if (this.stopRequested)
+        if (this.stopRequested && !this.confirmingStop)
           void this.interruptAgent(this.agents.get(p.threadId)!).catch(
             (error) => {
+              if (this.confirmingStop) return;
               this.emit("stopError", error);
               this.finish({ kind: "error", error });
             },
@@ -987,16 +991,43 @@ export class CliWorker extends EventEmitter implements Worker {
         this.done,
         new Promise<never>((_, reject) => {
           const t = setTimeout(
-            () => reject(new Error("未收到 turn/completed；拒绝自动切号")),
+            () => reject(new Error("未收到 turn/completed")),
             20_000,
           );
           this.done.finally(() => clearTimeout(t));
         }),
       ]);
-    })().catch((error) => {
-      this.emit("stopError", error);
-      this.finish({ kind: "error", error });
-      throw error;
+    })().catch(async (error) => {
+      // An interrupt acknowledgement is not proof of termination, but a
+      // missing terminal event is not proof that process cleanup failed either.
+      // Keep the old owner until Rpc.close confirms process-tree termination.
+      this.confirmingStop = true;
+      this.emit(
+        "log",
+        `中断回执未完成，正在确认受管进程停止：${redact(error)}`,
+      );
+      try {
+        await this.close();
+      } catch (cleanupError) {
+        this.confirmingStop = false;
+        const failure = new ProcessSafetyError(
+          `中断后未能确认受管进程停止：${redact(cleanupError)}`,
+          cleanupError,
+        );
+        this.emit("stopError", failure);
+        this.finish({ kind: "error", error: failure });
+        throw failure;
+      }
+      this.confirmingStop = false;
+      this.emit("log", "已确认受管进程停止，保留原会话继续处理任务");
+      this.finish(
+        this.goalStopOutcome && !this.quotaSeen
+          ? this.goalStopOutcome
+          : {
+              kind: this.quotaSeen ? "quota" : "interrupted",
+              error: this.lastError,
+            },
+      );
     });
     return this.stopping;
   }

@@ -917,6 +917,7 @@ export class Scheduler extends EventEmitter {
       } catch (error) {
         active.failedStop = true;
         outcome = { kind: "error", error };
+        this.log(`任务进程清理失败：${redact(error)}`, "error", job.id);
       }
       for (const a of this.approvals.filter(
         (a) => a.jobId === job.id && a.kind === "input",

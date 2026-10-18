@@ -1309,6 +1309,14 @@ it("failed close persists the global recovery gate across restart", async () => 
   const restored = new Store(root);
   await restored.load();
   expect(restored.data.jobs[0].recoveryRequired).toBe(true);
+  expect(
+    restored.data.logs.some(
+      (entry) =>
+        entry.jobId === job.id &&
+        entry.level === "error" &&
+        entry.message.includes("Still running"),
+    ),
+  ).toBe(true);
   workers[0].failClose = false;
 });
 it("an unconfirmed process left by preparation freezes the entire queue", async () => {

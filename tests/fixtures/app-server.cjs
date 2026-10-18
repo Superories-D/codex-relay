@@ -5,6 +5,7 @@ const readline = require("node:readline");
 const home = process.env.RELAY_TEST_HOME;
 const saved = path.join(home, "synthetic-thread.json");
 const parallel = fs.existsSync(path.join(home, "parallel-fixture.json"));
+const missingEvent = process.env.RELAY_TEST_MISSING_EVENT === "1";
 let thread = parallel ? `synthetic-${path.basename(home)}` : "synthetic-thread",
   account = "";
 let runningTurn;
@@ -87,6 +88,19 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
               text: "Original task completed.",
             },
           });
+        if (missingEvent && account === "a") {
+          notify("account/rateLimits/updated", {
+            rateLimits: {
+              limitId: "codex",
+              primary: {
+                usedPercent: 100,
+                windowDurationMins: 300,
+                resetsAt: Math.floor(Date.now() / 1000) + 3600,
+              },
+            },
+          });
+          return;
+        }
         notify("turn/completed", {
           threadId: thread,
           turn: { id: runningTurn, status: "completed", error: null },
@@ -100,7 +114,7 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
         }, 20);
       } else setTimeout(complete, 5);
     }
-    if (m.method === "turn/interrupt")
+    if (m.method === "turn/interrupt" && !missingEvent)
       notify("turn/completed", {
         threadId: thread,
         turn: { id: runningTurn, status: "interrupted" },

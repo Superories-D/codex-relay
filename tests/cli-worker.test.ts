@@ -1194,10 +1194,11 @@ describe("CLI completion and interruption protocol", () => {
     await stop;
     expect((await w.done).kind).toBe("interrupted");
   });
-  it("fails closed when interruption is acknowledged but never completes", async () => {
+  it("fails closed when the interrupt event is missing and process cleanup also fails", async () => {
     const w = worker();
     await w.start(auth);
     rpc.interruptEmits = false;
+    rpc.close.mockRejectedValueOnce(new Error("process tree still alive"));
     const errors = vi.fn();
     w.on("stopError", errors);
     const stop = w.stop().catch((e) => e);
@@ -1205,6 +1206,62 @@ describe("CLI completion and interruption protocol", () => {
     expect(await stop).toBeInstanceOf(Error);
     expect((await w.done).kind).toBe("error");
     expect(errors).toHaveBeenCalledOnce();
+  });
+  it("waits for confirmed process shutdown before settling a missing interrupt event", async () => {
+    const w = worker();
+    await w.start(auth);
+    rpc.interruptEmits = false;
+    let release!: () => void;
+    rpc.close.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+    );
+    const done = vi.fn(),
+      errors = vi.fn();
+    w.done.then(done);
+    w.on("stopError", errors);
+    const stop = w.stop();
+    await vi.advanceTimersByTimeAsync(21000);
+    expect(rpc.close).toHaveBeenCalledOnce();
+    expect(done).not.toHaveBeenCalled();
+    rpc.notify("turn/completed", {
+      threadId: "thread-1",
+      turn: { id: "turn-2", status: "interrupted" },
+    });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(done).not.toHaveBeenCalled();
+    release();
+    await stop;
+    expect((await w.done).kind).toBe("interrupted");
+    expect(errors).not.toHaveBeenCalled();
+    await w.close();
+    expect(rpc.close).toHaveBeenCalledOnce();
+  });
+  it("retains quota recovery and the same thread after a missing interrupt event and confirmed close", async () => {
+    const w = worker();
+    await w.start(auth);
+    rpc.notify("thread/goal/updated", {
+      threadId: "thread-1",
+      goal: {
+        threadId: "thread-1",
+        objective: "Finish work",
+        status: "active",
+        tokenBudget: null,
+      },
+    });
+    rpc.interruptEmits = false;
+    const errors = vi.fn();
+    w.on("stopError", errors);
+    rpc.used = 100;
+    await w.quota();
+    await vi.advanceTimersByTimeAsync(21000);
+    expect((await w.done).kind).toBe("quota");
+    expect(rpc.close).toHaveBeenCalledOnce();
+    expect(job.threadId).toBe("thread-1");
+    expect(job.goalResumeAfterQuota).toBe(true);
+    expect(errors).not.toHaveBeenCalled();
   });
   it("uses the same thread and a continuation prompt after rotation", async () => {
     job.threadId = "thread-1";

@@ -14,7 +14,7 @@ test cannot replace actual CLI or installed-client evidence.
 | --- | --- |
 | UI and input ergonomics | v0.6.16 packages screenshot follow-up fixes; native image draft/clipboard and packaged scroll checks passed |
 | Concurrent independent tasks | Implemented 1–8 slots (default 3), family exclusion, per-task control/approvals and shutdown. Unit and real local JSONL-process checks passed; see `CONCURRENCY-20261018.md`. Real-account concurrent inference/refresh/relay remains unverified |
-| Account refresh and relay | Existing real same-thread single-task relay observed. Concurrent refresh/rotation and full reset-cycle behavior still require evidence |
+| Account refresh and relay | Existing real same-thread single-task relay observed. Missing CLI interrupt events now fall back to confirmed process close before relay, preserving the failure gate on unsuccessful cleanup; deterministic real subprocess verification passed (not real-account inference). See `STOP-RECOVERY-20261018.md`. Concurrent refresh/rotation, the exact earlier installed stop failure and full reset-cycle behavior still require evidence |
 | Subagents | Existing live parent/child flows verified; deep hierarchy, cross-account recovery and Goal combinations remain incomplete. Related threads sharing a runtime home must not race |
 | Real CLI execution and task outputs | Real execution exists. Previous completed live task's output is still pending acceptance; completion status is not output correctness |
 | Goals | Existing lifecycle evidence retained. Cross-account and deep subagent combinations remain open |

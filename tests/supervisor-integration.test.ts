@@ -18,104 +18,124 @@ vi.mock("../src/core/process", async (importOriginal) => {
         process.execPath,
         [path.join(process.cwd(), "tests/fixtures/app-server.cjs")],
         {
-          env: { ...process.env, RELAY_TEST_HOME: home },
+          env: {
+            ...process.env,
+            RELAY_TEST_HOME: home,
+            RELAY_TEST_MISSING_EVENT:
+              _cli === "fixture-missing-event" ? "1" : "",
+          },
           stdio: ["pipe", "pipe", "pipe"],
           windowsHide: true,
         },
       ),
   };
 });
-it("real JSONL child processes rotate on error and resume the same persisted thread", async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "relay-integration-"));
-  const store = new Store(root);
-  store.data.accounts = ["a", "b"].map((id) => ({
-    id,
-    identity: id,
-    label: id,
-    email: id,
-    plan: "test",
-    enabled: true,
-    status: "ready",
-    blockedUntil: null,
-    failureCount: 0,
-    quotas: {
-      codex: {
-        limitId: "codex",
-        primary: {
-          usedPercent: 10,
-          windowDurationMins: 300,
-          resetsAt: Date.now() + 1000000,
+it.each([false, true])(
+  "real JSONL processes confirm shutdown before same-thread quota relay (missing interrupt event: %s)",
+  async (missingEvent) => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "relay-integration-"));
+    const store = new Store(root);
+    if (missingEvent) store.data.settings.cliPath = "fixture-missing-event";
+    store.data.accounts = ["a", "b"].map((id) => ({
+      id,
+      identity: id,
+      label: id,
+      email: id,
+      plan: "test",
+      enabled: true,
+      status: "ready",
+      blockedUntil: null,
+      failureCount: 0,
+      quotas: {
+        codex: {
+          limitId: "codex",
+          primary: {
+            usedPercent: 10,
+            windowDurationMins: 300,
+            resetsAt: Date.now() + 1000000,
+          },
+          secondary: null,
+          observedAt: Date.now(),
+          reached: false,
         },
-        secondary: null,
-        observedAt: Date.now(),
-        reached: false,
       },
-    },
-  }));
-  const accounts: any = {
-    busy: new Set(),
-    inspect: async (id: string) => ({
-      auth: { tokens: { access_token: "synthetic" } },
-      models: [],
-      quotas: store.data.accounts.find((a) => a.id === id)!.quotas,
-    }),
-    cancelLogin: async () => {},
-  };
-  const scheduler = new Scheduler(store, accounts, {
-    cli: (ctx) => new CliWorker(ctx),
-    desktop: () => {
-      throw Error("not used");
-    },
-  });
-  try {
-    const job = await scheduler.add({
-      title: "test",
-      prompt: "Original goal",
-      cwd: root,
-      mode: "cli",
-      model: "",
-      effort: "",
-      bucket: "codex",
-      approvalPolicy: "on-request",
-      sandbox: "workspaceWrite",
+    }));
+    const accounts: any = {
+      busy: new Set(),
+      inspect: async (id: string) => ({
+        auth: { tokens: { access_token: "synthetic" } },
+        models: [],
+        quotas: store.data.accounts.find((a) => a.id === id)!.quotas,
+      }),
+      cancelLogin: async () => {},
+    };
+    const scheduler = new Scheduler(store, accounts, {
+      cli: (ctx) => new CliWorker(ctx),
+      desktop: () => {
+        throw Error("not used");
+      },
     });
-    await vi.waitFor(() => expect(job.rotations).toBe(1), {
-      timeout: 5000,
-      interval: 10,
-    });
-    await (scheduler as any).currentRun;
-    expect(job.state).toBe("queued");
-    expect(job.threadId).toBe("synthetic-thread");
-    await (scheduler as any).tick();
-    await vi.waitFor(() => expect(job.state).toBe("completed"), {
-      timeout: 5000,
-      interval: 10,
-    });
-    await (scheduler as any).currentRun;
-    const journal = (
-      await fs.readFile(
-        path.join(store.jobHome(job.id), "synthetic-journal.jsonl"),
-        "utf8",
+    try {
+      const job = await scheduler.add({
+        title: "test",
+        prompt: "Original goal",
+        cwd: root,
+        mode: "cli",
+        model: "",
+        effort: "",
+        bucket: "codex",
+        approvalPolicy: "on-request",
+        sandbox: "workspaceWrite",
+      });
+      await vi.waitFor(() => expect(job.rotations).toBe(1), {
+        timeout: missingEvent ? 30000 : 5000,
+        interval: 10,
+      });
+      await (scheduler as any).currentRun;
+      expect(job.state).toBe("queued");
+      expect(job.threadId).toBe("synthetic-thread");
+      const firstRun = JSON.parse(
+        (
+          await fs.readFile(
+            path.join(store.jobHome(job.id), "synthetic-journal.jsonl"),
+            "utf8",
+          )
+        ).trim(),
+      );
+      expect(() => process.kill(firstRun.pid, 0)).toThrow();
+      expect(job.recoveryRequired).not.toBe(true);
+      await (scheduler as any).tick();
+      await vi.waitFor(() => expect(job.state).toBe("completed"), {
+        timeout: 5000,
+        interval: 10,
+      });
+      await (scheduler as any).currentRun;
+      const journal = (
+        await fs.readFile(
+          path.join(store.jobHome(job.id), "synthetic-journal.jsonl"),
+          "utf8",
+        )
       )
-    )
-      .trim()
-      .split("\n")
-      .map((s) => JSON.parse(s));
-    expect(journal.map((j) => j.account)).toEqual(["a", "b"]);
-    expect(journal.map((j) => j.threadId)).toEqual([
-      "synthetic-thread",
-      "synthetic-thread",
-    ]);
-    expect(journal[0].input).toBe("Original goal");
-    expect(journal[1].input).toBe(store.data.settings.resumePrompt);
-    await expect(
-      fs.stat(path.join(store.jobHome(job.id), "relay-owner.json")),
-    ).rejects.toMatchObject({ code: "ENOENT" });
-  } finally {
-    await scheduler.shutdown();
-    await fs.rm(root, { recursive: true, force: true });
-  }
-}, 15000);
+        .trim()
+        .split("\n")
+        .map((s) => JSON.parse(s));
+      expect(journal.map((j) => j.account)).toEqual(["a", "b"]);
+      expect(journal.map((j) => j.threadId)).toEqual([
+        "synthetic-thread",
+        "synthetic-thread",
+      ]);
+      expect(journal[0].input).toBe("Original goal");
+      expect(journal[1].input).toBe(store.data.settings.resumePrompt);
+      await expect(
+        fs.stat(path.join(store.jobHome(job.id), "relay-owner.json")),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await scheduler.shutdown();
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  },
+  45000,
+);
 it("hands off an existing rollout and drives the real worker to completion with the same thread", async () => {
   const root = await fs.mkdtemp(
     path.join(os.tmpdir(), "relay-adopt-integration-"),
