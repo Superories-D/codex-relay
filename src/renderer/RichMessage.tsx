@@ -330,7 +330,14 @@ function RichMessageView({
           ) : null}
           {reasoning || plan ? (
             <MarkdownText
-              text={item.text || item.detail || ""}
+              text={
+                reasoning
+                  ? item.text.trim() ||
+                    (status
+                      ? t("正在等待思考摘要…")
+                      : t("此条记录未提供可显示的思考摘要。"))
+                  : item.text || item.detail || ""
+              }
               onOpen={onOpen}
             />
           ) : (

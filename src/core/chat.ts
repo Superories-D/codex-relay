@@ -148,6 +148,9 @@ export class Chats {
               ? {
                   id: old.id,
                   at: old.at,
+                  ...(item.kind === "reasoning" && !item.text.trim()
+                    ? { text: old.text }
+                    : {}),
                   ...(old.images?.length && !item.images?.length
                     ? { images: old.images }
                     : {}),
@@ -257,6 +260,11 @@ export class Chats {
       const item = p.item;
       if (!item || item.type === "userMessage") return;
       const converted = protocolItem(item, key);
+      if (item.type === "reasoning" && !converted.text.trim()) {
+        // Completion frames may omit a summary that was already streamed.
+        // Preserve only the public summary, never raw/encrypted reasoning.
+        converted.text = live.get(key)?.text || "";
+      }
       converted.turnId = p.turnId;
       converted.status =
         method === "item/completed" ? (item.status ?? "completed") : "running";
@@ -265,9 +273,40 @@ export class Chats {
         live.delete(key);
       } else live.set(key, converted);
     } else if (
+      method === "item/reasoning/summaryTextDelta" ||
+      method === "item/reasoning/summaryPartAdded"
+    ) {
+      const item =
+        live.get(key) ??
+        ({
+          id: key,
+          role: "tool",
+          kind: "reasoning",
+          text: "",
+          at: Date.now(),
+          status: "running",
+          turnId: p.turnId,
+        } as ChatItem);
+      const parts: Record<string, string> =
+        item.data?.summaryParts || (item.text ? { "0": item.text } : {});
+      const index =
+        Number.isSafeInteger(p.summaryIndex) && p.summaryIndex >= 0
+          ? p.summaryIndex
+          : 0;
+      if (method.endsWith("summaryTextDelta"))
+        parts[index] = (parts[index] || "") + String(p.delta ?? "");
+      else parts[index] ??= "";
+      item.data = { summaryParts: parts };
+      item.text = Object.keys(parts)
+        .sort((a, b) => Number(a) - Number(b))
+        .map((part) => parts[part])
+        .filter(Boolean)
+        .join("\n\n");
+      item.detail = undefined;
+      live.set(key, item);
+    } else if (
       method === "item/agentMessage/delta" ||
-      method === "item/commandExecution/outputDelta" ||
-      method === "item/reasoning/summaryTextDelta"
+      method === "item/commandExecution/outputDelta"
     ) {
       const item =
         live.get(key) ??
@@ -460,10 +499,22 @@ export function protocolItem(p: any, id: string): ChatItem {
             : p.type === "mcpToolCall"
               ? `${p.server} / ${p.tool}`
               : p.type === "reasoning"
-                ? (p.summary ?? []).join("\n")
+                ? (Array.isArray(p.summary) ? p.summary : [])
+                    .map((part: any) =>
+                      typeof part === "string"
+                        ? part
+                        : part?.type === "summary_text"
+                          ? part.text
+                          : "",
+                    )
+                    .filter(
+                      (part: unknown) =>
+                        typeof part === "string" && part.length,
+                    )
+                    .join("\n\n")
                 : p.type);
   const detail =
-    p.type === "agentMessage"
+    p.type === "agentMessage" || p.type === "reasoning"
       ? undefined
       : (p.aggregatedOutput ?? JSON.stringify(p, null, 2));
   return {

@@ -1,6 +1,9 @@
 import { legacyEnglish } from "./legacy-en";
 import { nativeEnglish } from "./native-en";
 export const english: Record<string, string> = {
+  "正在等待思考摘要…": "Waiting for a reasoning summary…",
+  "此条记录未提供可显示的思考摘要。":
+    "No displayable reasoning summary was provided for this item.",
   终端正在启动: "Starting terminal",
   终端正在关闭: "Closing terminal",
   "终端已退出（代码 {code}）": "Terminal exited (code {code})",
