@@ -1,9 +1,11 @@
 # v0.6.17 — branch workflow and runtime reliability
 
-Publication outcome: source release and verified text attachments are published;
-remote binary uploads failed. The complete verified EXE/ZIP remain available
-locally. Release notes explicitly state that program downloads are unavailable
-on the remote page. This is a delivery limitation, not a passed upload gate.
+Publication outcome: the existing v0.6.17 release now includes all four binary
+volumes plus installation instructions and checksums. Initial public-endpoint
+uploads failed; the user-provided HTTP origin subsequently accepted the existing
+verified artifacts. All six attachments were downloaded independently from both
+the origin and public HTTPS domain and SHA256-verified. Full EXE/ZIP files also
+remain available locally.
 
 Windows x64 update requested by the user after the current verified milestone.
 This packages all source changes since v0.6.16. Installation remains the user's
@@ -54,8 +56,9 @@ Detailed evidence: `GIT-BRANCHES-20261018.md`, `REASONING-SUMMARY-20261018.md`,
 The application and installer are not publisher-signed. Broader readiness gaps
 remain documented in `RELEASE-READINESS.md`, including the earlier live task's
 output acceptance, full quota-reset cycle and deeper real-account combinations.
-Publishing this update does not claim those gaps are complete. The user requested
-pausing further iteration after this release.
+Publishing this update does not claim those gaps are complete. The user initially
+requested stopping after this release, then explicitly reactivated the long-term
+goal while providing the alternative upload origin.
 
 ## Artifacts
 
@@ -73,7 +76,8 @@ fully if using the alternative distribution. Binaries remain outside Git.
 The release server advertises a 100 MB attachment limit; direct installation-EXE
 upload returned a Cloudflare 502 and created no asset. Distribution therefore
 was prepared as two standard ZIP volumes per option, each at most 90 MiB. Both
-sets remain local because uploading them also failed. When available, download both
+sets initially remained local because uploading them also failed. They are now
+attached to the existing release. Download both
 `.001` and `.002` for the Installer or Unpacked option into the same folder and
 open `.001` using 7-Zip. The installer option contains the original verified EXE;
 the unpacked option contains the complete application directory. Original full
@@ -82,17 +86,17 @@ EXE/ZIP files remain available locally at the paths above.
 Both sets passed direct `7za t` from their `.001` volume. Reassembled ZIP CRC and
 content hashes match the original EXE/app.asar. `SHA256SUMS.txt` includes whole
 file and volume hashes; updated `INSTALL.txt` explains the download procedure.
-The draft was initially held for all binary uploads. Direct, alternate resolved
+The draft was initially held for all binary uploads. Public-domain, alternate resolved
 address, existing system-proxy, multipart and documented octet-stream attempts
 failed or timed out; server metadata confirmed no binary attachments. A 1 MiB
 diagnostic upload succeeded and was removed. The final raw upload transferred
 30,852,995 bytes but returned no HTTP response and ended with curl exit 28 after
 180 seconds below the response-speed threshold. No transport was left running.
 
-To honor the user's instruction to publish this version and then stop, publication
-was limited to source and text attachments, with the missing binaries stated
+To honor the user's initial instruction to publish this version and then stop,
+publication was initially limited to source and text attachments, with the missing binaries stated
 prominently. Every published text attachment was downloaded again and its SHA256
-verified. This does not count as successful remote binary distribution.
+verified. That initial publication did not count as successful binary distribution.
 Failed uploads were checked against server metadata
 before retrying, so they did not create duplicate releases or attachments.
 
@@ -116,3 +120,24 @@ Published page: https://code.taiko.im/Superories/codex-go/releases/tag/v0.6.17
 (`draft=false`). The immutable tag targets application commit `9523a89`;
 later documentation commits record upload limitations without retagging or
 rebuilding the verified application.
+
+## Origin upload recovery
+
+The user supplied `192.168.1.124:8443` and confirmed HTTP. An unauthenticated
+version probe identified Gitea 1.27.1; authenticated metadata confirmed the same
+repository and release ID 1. The origin still advertises the 100 MB attachment
+limit, so the existing four volumes were reused without rebuilding or retagging.
+All four uploads returned HTTP 201. Downloaded hashes matched the table above;
+the existing checksum attachment was retained, installation instructions updated,
+and the existing release body corrected to describe available downloads.
+
+Public-domain verification subsequently downloaded all six attachments through
+`https://code.taiko.im` and matched every hash, establishing the normal download
+route as well as origin storage. The release still has ID 1, tag `v0.6.17`,
+`draft=false`, and exactly six named assets with no duplicates.
+
+Evidence: `qa-output/release-origin-publish-0617.log`,
+`qa-output/release-public-verify-0617.log`, and
+`qa-output/release-0617-origin-verification.jsonl`. Credentials were read only
+through the existing Git credential helper and never written to logs or files.
+No new release was created and no installation or real-profile changes occurred.

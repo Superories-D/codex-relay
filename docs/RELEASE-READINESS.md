@@ -6,9 +6,9 @@ scope: a usable Codex Desktop-style client backed by the real Codex CLI, account
 relay, subagents, multilingual interaction and responsive UI. The user additionally
 requires concurrent tasks across multiple threads.
 
-The latest user instruction is to publish v0.6.17 after this milestone and then
-stop. The source release is published; remote binary uploads failed despite
-verified local EXE/ZIP artifacts. Further iteration is paused after this delivery;
+The user supplied an HTTP origin after the initial v0.6.17 binary uploads failed
+and explicitly resumed the long-term goal. The existing release now contains
+verified binary volumes, instructions and checksums. Further iteration is active;
 the incomplete gates below remain open and are not achieved by publication.
 
 This is an acceptance ledger, not a claim of release readiness. Existing handoff,
@@ -29,7 +29,7 @@ test cannot replace actual CLI or installed-client evidence.
 | Plugins/MCP | Persistent catalog, account-free local Skills/MCP management, OAuth completion and safe shutdown implemented after v0.6.16. Actual CLI 0.162.1 + Electron + local MCP/OAuth fixture passed tool/resource calls, UI lifecycle, callback/token exchange and separate-home authorization discovery. Remote plugins, provider-specific OAuth/refresh and model-driven usage remain open; see `EXTENSIONS-20261018.md` |
 | Scheduled tasks | Source after v0.6.16 adds admission deduplication, durable restart recovery and worktree reuse. Ten targeted tests and real account-free Electron admission/Japanese UI lifecycle passed; actual scheduled inference/output and sleep/clock behavior remain open. See `SCHEDULES-20261018.md`; existing packages are unchanged |
 | Multilingual/accessibility | Japanese added with 1,044 catalog entries; four-language switching/persistence and Japanese native menu construction verified. Narrow/zoomed light/dark Japanese layouts passed; see `JAPANESE-20261018.md` |
-| Packaging | v0.6.17 NSIS wizard + packaged app + ZIP integrity verified, including branch workflow, summary display and four-language concurrency settings; see `RELEASE-0617.md`. Source release published; remote binary uploads failed and local complete artifacts are delivered instead. User performs installation. Remote binary distribution and publisher signing remain open |
+| Packaging | v0.6.17 NSIS wizard + packaged app + ZIP integrity verified, including branch workflow, summary display and four-language concurrency settings; see `RELEASE-0617.md`. Existing release now includes binary volumes uploaded through the user-provided HTTP origin and downloaded with matching SHA256. User performs installation. Publisher signing remains open |
 
 Operational constraints: inspect the real installed profile only through the
 documented Explorer Desktop Shell helper because of MSIX AppData dual views.
