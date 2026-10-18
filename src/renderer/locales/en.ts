@@ -1,6 +1,13 @@
 import { legacyEnglish } from "./legacy-en";
 import { nativeEnglish } from "./native-en";
 export const english: Record<string, string> = {
+  定时任务不存在: "Scheduled task no longer exists",
+  此定时任务的上一次运行尚未结束:
+    "The previous run is unfinished. Continue or cancel it before starting another run.",
+  "客户端正在退出，请稍后再操作定时任务":
+    "The client is shutting down. Try again after reopening it.",
+  "预留的 Worktree 目录已存在但未注册，请检查后再运行":
+    "The reserved worktree directory exists but is not registered. Check it before running again.",
   并发任务: "Concurrent tasks",
   并发任务上限: "Concurrent task limit",
   "允许多个独立会话同时运行。同组父子会话依次执行；调低上限不会中断正在运行的任务。":

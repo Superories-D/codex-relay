@@ -74,6 +74,7 @@ export interface ResetWarmup {
   error?: string;
 }
 export interface Job {
+  schedule?: { taskId: string; runId: string; requestedAt: number };
   projectCwd?: string;
   agentOrigin?: { jobId: string; parentThreadId: string };
   preserveNativePermissions?: boolean;

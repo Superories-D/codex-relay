@@ -27,6 +27,7 @@ export interface ScheduledTask {
   lastRun?: number;
   lastJobId?: string;
   lastError?: string;
+  pendingRun?: { id: string; requestedAt: number };
   worktree: boolean;
 }
 export interface DesktopData {
@@ -288,10 +289,38 @@ export class Desktop {
     else throw new Error("未知 Git 操作");
     return this.changes(cwd);
   }
-  async worktree(cwd: string, ref = "HEAD") {
+  async worktree(cwd: string, ref = "HEAD", reservationId?: string) {
     if (!ref || ref.startsWith("-") || !/^[\w./@{}~^+-]+$/.test(ref))
       throw new Error("起始分支格式无效");
-    const target = path.join(this.root, "worktrees", randomUUID());
+    if (reservationId && !/^[a-f0-9-]{36}$/i.test(reservationId))
+      throw new Error("Worktree reservation ID is invalid");
+    const target = path.join(
+      this.root,
+      "worktrees",
+      reservationId || randomUUID(),
+    );
+    if (reservationId) {
+      const normalize = (value: string) =>
+        process.platform === "win32"
+          ? path.resolve(value).toLowerCase()
+          : path.resolve(value);
+      const registered = (
+        await this.git(cwd, ["worktree", "list", "--porcelain", "-z"])
+      )
+        .split("\0")
+        .some(
+          (field) =>
+            field.startsWith("worktree ") &&
+            normalize(field.slice(9)) === normalize(target),
+        );
+      if (registered) return this.project(target);
+      try {
+        await fs.lstat(target);
+        throw new Error("预留的 Worktree 目录已存在但未注册，请检查后再运行");
+      } catch (error: any) {
+        if (error.code !== "ENOENT") throw error;
+      }
+    }
     await fs.mkdir(path.dirname(target), { recursive: true });
     await this.git(cwd, ["worktree", "add", "--detach", target, ref]);
     return this.project(target);

@@ -52,7 +52,8 @@ import { History } from "../core/history";
 import { rolloutRecords } from "../core/chat";
 import { findTranscript } from "../core/transcript";
 import { chatSendSchema } from "./validation";
-import { Desktop, nextSchedule } from "../core/desktop";
+import { Desktop } from "../core/desktop";
+import { Schedules } from "../core/schedules";
 import { Terminals } from "../core/terminals";
 import { randomUUID } from "node:crypto";
 import { normalizeLocalPath } from "../shared/file-reference";
@@ -200,6 +201,9 @@ async function boot() {
         await rebaseNativeHome(home);
       }
     },
+  );
+  const schedules = new Schedules(desktop, scheduler, () =>
+    scheduler.changed(),
   );
   const existing = new ExistingSessions(
     store,
@@ -419,7 +423,9 @@ async function boot() {
           z
             .object({
               theme: z.enum(["dark", "light", "system"]).optional(),
-              language: z.enum(["auto", "zh-CN", "zh-TW", "en", "ja"]).optional(),
+              language: z
+                .enum(["auto", "zh-CN", "zh-TW", "en", "ja"])
+                .optional(),
               notifications: z.boolean().optional(),
               textSize: z.number().int().min(12).max(20).optional(),
               codeSize: z.number().int().min(10).max(20).optional(),
@@ -593,32 +599,12 @@ async function boot() {
           })
           .strict()
           .parse(args);
-        const previous = desktop.data.schedules.find((t) => t.id === a.id);
-        const task = {
-          ...previous,
-          ...a,
-          id: a.id || randomUUID(),
-          nextRun: nextSchedule(a),
-        };
-        if (previous) Object.assign(previous, task);
-        else desktop.data.schedules.push(task);
-        await desktop.save();
-        return desktop.data;
+        return schedules.save(a);
       }
-      case "schedule.remove": {
-        const id = idSchema.parse(args);
-        desktop.data.schedules = desktop.data.schedules.filter(
-          (t) => t.id !== id,
-        );
-        await desktop.save();
-        return desktop.data;
-      }
-      case "schedule.run": {
-        const id = idSchema.parse(args),
-          task = desktop.data.schedules.find((t) => t.id === id);
-        if (!task) throw new Error("定时任务不存在");
-        return runScheduled(task);
-      }
+      case "schedule.remove":
+        return schedules.remove(idSchema.parse(args));
+      case "schedule.run":
+        return schedules.run(idSchema.parse(args));
       case "chat.questions.read": {
         const a = z
           .object({ id: idSchema, before: z.number().int().min(0).optional() })
@@ -1435,58 +1421,6 @@ async function boot() {
     }
   };
   const server = await startCommandServer(dataRoot, scheduler, command);
-  async function runScheduled(task: (typeof desktop.data.schedules)[number]) {
-    const working =
-      task.lastJobId && store.data.jobs.find((j) => j.id === task.lastJobId);
-    if (
-      working &&
-      !["completed", "cancelled", "paused", "needs_attention"].includes(
-        working.state,
-      )
-    )
-      throw new Error("此定时任务的上一次运行尚未结束");
-    const cwd = task.worktree
-      ? (await desktop.worktree(task.cwd)).cwd
-      : task.cwd;
-    const job = await scheduler.add({
-      title: task.title,
-      prompt: task.prompt,
-      cwd,
-      mode: "cli",
-      model: "",
-      effort: "",
-      bucket: "codex",
-      approvalPolicy: "on-request",
-      sandbox: "workspaceWrite",
-      interactive: true,
-      multiAgent: true,
-    });
-    task.lastRun = Date.now();
-    task.lastJobId = job.id;
-    task.lastError = undefined;
-    task.nextRun = nextSchedule(task);
-    await desktop.save();
-    return job;
-  }
-  let checkingSchedules = false;
-  const scheduleTimer = setInterval(() => {
-    if (checkingSchedules || quitting) return;
-    checkingSchedules = true;
-    void (async () => {
-      for (const task of desktop.data.schedules)
-        if (task.enabled && task.nextRun <= Date.now()) {
-          try {
-            await runScheduled(task);
-          } catch (e) {
-            task.lastError = redact(e);
-            task.nextRun = nextSchedule(task);
-            await desktop.save();
-          }
-        }
-    })().finally(() => {
-      checkingSchedules = false;
-    });
-  }, 15000);
   startupTrace("create window");
   const rendererPath = path.join(__dirname, "..", "renderer", "index.html");
   const available = screen.getPrimaryDisplay().workAreaSize;
@@ -1566,6 +1500,7 @@ async function boot() {
       quitting = true;
       void existing
         .shutdown()
+        .then(() => schedules.shutdown())
         .then(() =>
           Promise.all([
             importer.drain(),
@@ -1576,13 +1511,13 @@ async function boot() {
           ]),
         )
         .then(() => {
-          clearInterval(scheduleTimer);
           server.close();
           app.quit();
         })
         .catch((error) => {
           quitting = false;
           existing.start();
+          schedules.start();
           dialog.showErrorBox("任务尚未安全停止", redact(error));
           window?.show();
         });
@@ -1595,6 +1530,7 @@ async function boot() {
     scheduler.changed();
   });
   scheduler.start();
+  schedules.start();
   existing.start();
 }
 async function openAuth(value: string) {

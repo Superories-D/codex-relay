@@ -1,0 +1,271 @@
+import { promises as fs } from "node:fs";
+import path from "node:path";
+import os from "node:os";
+import { randomUUID } from "node:crypto";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { Desktop } from "../src/core/desktop";
+import { Store } from "../src/core/store";
+import { Scheduler } from "../src/core/scheduler";
+import { Schedules, type ScheduleInput } from "../src/core/schedules";
+
+let root: string,
+  desktop: Desktop,
+  store: Store,
+  scheduler: Scheduler,
+  schedules: Schedules;
+let now: number;
+const input = (): ScheduleInput => ({
+  title: "Scheduled fixture",
+  prompt: "Only a synthetic fixture",
+  cwd: root,
+  enabled: true,
+  cadence: "interval",
+  minutes: 5,
+  hour: 9,
+  minute: 30,
+  weekday: 1,
+  worktree: false,
+});
+async function create(due = false) {
+  await schedules.save(input());
+  const task = desktop.data.schedules.at(-1)!;
+  if (due) {
+    task.nextRun = now - 86400000;
+    await desktop.save();
+  }
+  return task;
+}
+beforeEach(async () => {
+  root = await fs.mkdtemp(path.join(os.tmpdir(), "relay-schedules-"));
+  desktop = new Desktop(root);
+  store = new Store(root);
+  now = Date.now();
+  scheduler = new Scheduler(
+    store,
+    { busy: new Set(), cancelLogin: async () => {} } as any,
+    {
+      cli: () => {
+        throw Error("No inference is permitted in this fixture");
+      },
+      desktop: () => {
+        throw Error("No Desktop worker expected");
+      },
+    },
+  );
+  schedules = new Schedules(
+    desktop,
+    scheduler,
+    () => {},
+    () => now,
+  );
+});
+afterEach(async () => {
+  vi.restoreAllMocks();
+  await schedules.shutdown();
+  await scheduler.shutdown();
+  await fs.rm(root, { recursive: true, force: true });
+});
+
+it("coalesces manual and timer admission into one persisted job and one occurrence", async () => {
+  const task = await create(true);
+  const [a, b] = await Promise.all([
+    schedules.run(task.id),
+    schedules.run(task.id),
+    schedules.tick(),
+  ]);
+  expect(a!.id).toBe(b!.id);
+  expect(store.data.jobs).toHaveLength(1);
+  expect(a!.schedule).toMatchObject({ taskId: task.id, requestedAt: now });
+  expect(task.pendingRun).toBeUndefined();
+  expect(task.lastJobId).toBe(a!.id);
+  expect(task.nextRun).toBe(now + 300000);
+  await schedules.tick();
+  expect(store.data.jobs).toHaveLength(1);
+  const restored = new Desktop(root);
+  await restored.load();
+  expect(restored.data.schedules[0].lastJobId).toBe(a!.id);
+});
+
+it("does not postpone a future cadence when run manually", async () => {
+  const task = await create();
+  const due = task.nextRun;
+  now += 60000;
+  await schedules.run(task.id);
+  expect(task.nextRun).toBe(due);
+});
+
+it("does not accumulate jobs behind an unfinished, paused or unsafe previous run", async () => {
+  const task = await create(true);
+  const job = (await schedules.run(task.id))!;
+  for (const state of ["waiting", "paused", "needs_attention"] as const) {
+    job.state = state;
+    now = task.nextRun;
+    await schedules.tick();
+    expect(store.data.jobs).toHaveLength(1);
+    expect(task.lastError).toContain("上一次运行");
+    expect(task.nextRun).toBeGreaterThan(now);
+  }
+  job.state = "completed";
+  job.recoveryRequired = true;
+  await expect(schedules.run(task.id)).rejects.toThrow("上一次运行");
+  job.recoveryRequired = false;
+  await schedules.run(task.id);
+  expect(store.data.jobs).toHaveLength(2);
+});
+
+it("does not resurrect a deleted schedule from a stale editor or start disabled due work", async () => {
+  const task = await create(true);
+  await schedules.save({ ...input(), id: task.id, enabled: false });
+  task.nextRun = now - 1;
+  await schedules.tick();
+  expect(store.data.jobs).toHaveLength(0);
+  await schedules.remove(task.id);
+  await expect(schedules.save({ ...input(), id: task.id })).rejects.toThrow(
+    "不存在",
+  );
+  await expect(schedules.run(task.id)).rejects.toThrow("不存在");
+  expect(desktop.data.schedules).toHaveLength(0);
+});
+
+it("recovers a job admitted before the desktop bookkeeping write failed without resubmission", async () => {
+  const task = await create(true);
+  const save = desktop.save.bind(desktop);
+  let saves = 0;
+  vi.spyOn(desktop, "save").mockImplementation(() =>
+    ++saves === 2
+      ? Promise.reject(Error("simulated bookkeeping failure"))
+      : save(),
+  );
+  await expect(schedules.run(task.id)).rejects.toThrow("bookkeeping");
+  await (scheduler as any).tickInFlight;
+  expect(store.data.jobs).toHaveLength(1);
+  const job = store.data.jobs[0];
+  expect(task.pendingRun?.id).toBe(job.schedule?.runId);
+  const restoredDesktop = new Desktop(root);
+  await restoredDesktop.load();
+  const restoredStore = new Store(root);
+  await restoredStore.load();
+  expect(restoredStore.data.jobs[0].schedule).toEqual(job.schedule);
+  // The manager reconciles the durable identity, not lastJobId or task title.
+  restoredDesktop.data.schedules[0].lastJobId = undefined;
+  restoredDesktop.data.schedules[0].enabled = false;
+  await schedules.shutdown();
+  await scheduler.shutdown();
+  scheduler = new Scheduler(
+    restoredStore,
+    { busy: new Set(), cancelLogin: async () => {} } as any,
+    {
+      cli: () => {
+        throw Error("No inference is permitted in this fixture");
+      },
+      desktop: () => {
+        throw Error("No Desktop worker expected");
+      },
+    },
+  );
+  const recovered = new Schedules(
+    restoredDesktop,
+    scheduler,
+    () => {},
+    () => now,
+  );
+  await recovered.tick();
+  expect(restoredDesktop.data.schedules[0].pendingRun).toBeUndefined();
+  expect(restoredDesktop.data.schedules[0].lastJobId).toBe(job.id);
+  expect(restoredStore.data.jobs).toHaveLength(1);
+  await recovered.shutdown();
+});
+
+it("honors a manual run concurrent with an automatic no-op", async () => {
+  const task = await create();
+  const [automatic, manual] = await Promise.all([
+    schedules.run(task.id, true),
+    schedules.run(task.id),
+  ]);
+  expect(automatic).toBeUndefined();
+  expect(manual?.schedule?.taskId).toBe(task.id);
+  expect(store.data.jobs).toHaveLength(1);
+});
+
+it("resumes a durable reservation that crashed before admission, using the original occurrence identity", async () => {
+  const task = await create();
+  task.pendingRun = { id: randomUUID(), requestedAt: now - 1000 };
+  const identity = task.pendingRun.id;
+  await desktop.save();
+  const restored = new Desktop(root);
+  await restored.load();
+  const recovered = new Schedules(
+    restored,
+    scheduler,
+    () => {},
+    () => now,
+  );
+  await recovered.tick();
+  expect(store.data.jobs).toHaveLength(1);
+  expect(store.data.jobs[0].schedule?.runId).toBe(identity);
+  await recovered.tick();
+  expect(store.data.jobs).toHaveLength(1);
+  await recovered.shutdown();
+});
+
+it("never creates a job before the reservation is durable", async () => {
+  const task = await create();
+  vi.spyOn(desktop, "save").mockRejectedValueOnce(Error("disk unavailable"));
+  await expect(schedules.run(task.id)).rejects.toThrow("disk unavailable");
+  expect(store.data.jobs).toHaveLength(0);
+  const id = task.pendingRun!.id;
+  await schedules.run(task.id);
+  expect(store.data.jobs).toHaveLength(1);
+  expect(store.data.jobs[0].schedule?.runId).toBe(id);
+});
+
+it("reuses the reserved real Git worktree after interruption between creation and job admission", async () => {
+  await desktop.git(root, ["init"]);
+  await desktop.git(root, ["config", "user.email", "qa@example.invalid"]);
+  await desktop.git(root, ["config", "user.name", "Relay QA"]);
+  await fs.writeFile(path.join(root, "note.txt"), "initial");
+  await desktop.git(root, ["add", "note.txt"]);
+  await desktop.git(root, ["commit", "-m", "fixture"]);
+  const task = await create(true);
+  task.worktree = true;
+  vi.spyOn(desktop, "project").mockRejectedValueOnce(
+    Error("interrupted after worktree creation"),
+  );
+  await expect(schedules.run(task.id)).rejects.toThrow("interrupted");
+  const reservation = task.pendingRun!.id;
+  expect(store.data.jobs).toHaveLength(0);
+  const recovered = (await schedules.run(task.id))!;
+  expect(recovered.cwd).toBe(path.join(root, "worktrees", reservation));
+  expect(await fs.readdir(path.join(root, "worktrees"))).toEqual([reservation]);
+  expect(await fs.readFile(path.join(recovered.cwd, "note.txt"), "utf8")).toBe(
+    "initial",
+  );
+  await desktop.git(root, ["worktree", "remove", recovered.cwd]);
+}, 20000);
+
+it("drains preparation on shutdown and does not enqueue a new job after closing begins", async () => {
+  const task = await create();
+  task.worktree = true;
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const worktree = vi
+    .spyOn(desktop, "worktree")
+    .mockImplementation(async () => {
+      await gate;
+      return { id: "fixture", name: "fixture", cwd: root, pinned: false };
+    });
+  const run = schedules.run(task.id).catch((error) => error);
+  await vi.waitFor(() => expect(worktree).toHaveBeenCalledTimes(1));
+  let closed = false;
+  const shutdown = schedules.shutdown().then(() => {
+    closed = true;
+  });
+  expect(closed).toBe(false);
+  release();
+  expect(await run).toBeInstanceOf(Error);
+  await shutdown;
+  expect(store.data.jobs).toHaveLength(0);
+  expect(task.pendingRun).toBeDefined();
+});

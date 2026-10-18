@@ -1,5 +1,5 @@
-import { t, useI18n, formatDate } from "./i18n";
-import React, { useEffect, useState } from "react";
+import { t, useI18n, formatDate, errorText } from "./i18n";
+import React, { useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
   ArrowUpRight,
@@ -522,6 +522,12 @@ export function SchedulesPage({
   select: (id: string) => void;
 }) {
   useI18n();
+  const refreshRef = useRef(refresh);
+  refreshRef.current = refresh;
+  useEffect(() => {
+    const timer = setInterval(() => refreshRef.current(), 3000);
+    return () => clearInterval(timer);
+  }, []);
 
   const [form, setForm] = useState<Partial<ScheduledTask>>(),
     [error, setError] = useState(""),
@@ -573,16 +579,19 @@ export function SchedulesPage({
               [
                 t("每天检查项目"),
                 t("检查项目的新变更、构建状态和潜在问题，给出简短报告。"),
+                "daily",
               ],
               [
                 t("定期整理待办"),
                 t("查看项目中的 TODO 与待处理事项，整理下一步的工作建议。"),
+                "daily",
               ],
               [
                 t("每周代码回顾"),
                 t("回顾本周提交，概括变更和需要进一步测试的部分。"),
+                "weekly",
               ],
-            ].map(([title, prompt]) => (
+            ].map(([title, prompt, cadence]) => (
               <button
                 key={title}
                 onClick={() =>
@@ -591,7 +600,7 @@ export function SchedulesPage({
                     prompt,
                     cwd,
                     enabled: true,
-                    cadence: title.includes("每周") ? "weekly" : "daily",
+                    cadence: cadence as ScheduledTask["cadence"],
                     minutes: 60,
                     hour: 9,
                     minute: 0,
@@ -623,9 +632,15 @@ export function SchedulesPage({
                       ? t("每 {p0} 分钟", { p0: task.minutes })
                       : task.cadence === "weekly"
                         ? t("每周 {p0} {p1}:{p2}", {
-                            p0: ["日", "一", "二", "三", "四", "五", "六"][
-                              task.weekday
-                            ],
+                            p0: [
+                              t("日"),
+                              t("一"),
+                              t("二"),
+                              t("三"),
+                              t("四"),
+                              t("五"),
+                              t("六"),
+                            ][task.weekday],
                             p1: String(task.hour).padStart(2, "0"),
                             p2: String(task.minute).padStart(2, "0"),
                           })
@@ -639,7 +654,7 @@ export function SchedulesPage({
                       : t("已暂停")}
                   </p>
                   {task.lastError && (
-                    <p className="panel-error">{task.lastError}</p>
+                    <p className="panel-error">{t(task.lastError)}</p>
                   )}
                   {task.lastJobId && (
                     <button
@@ -660,6 +675,7 @@ export function SchedulesPage({
                         lastJobId,
                         lastRun,
                         lastError,
+                        pendingRun,
                         ...saved
                       } = task;
                       await call("schedule.save", {
@@ -668,7 +684,7 @@ export function SchedulesPage({
                       });
                       refresh();
                     } catch (e) {
-                      setError(String(e));
+                      setError(errorText(e));
                     }
                   }}
                 >
@@ -684,7 +700,7 @@ export function SchedulesPage({
                       refresh();
                       select(job.id);
                     } catch (e) {
-                      setError(String(e));
+                      setError(errorText(e));
                     } finally {
                       setBusy(false);
                     }
@@ -707,13 +723,20 @@ export function SchedulesPage({
               e.preventDefault();
               setBusy(true);
               setError("");
-              const { nextRun, lastRun, lastJobId, lastError, ...value } = form;
+              const {
+                nextRun,
+                lastRun,
+                lastJobId,
+                lastError,
+                pendingRun,
+                ...value
+              } = form;
               void call("schedule.save", value)
                 .then(() => {
                   setForm(undefined);
                   refresh();
                 })
-                .catch((e) => setError(String(e)))
+                .catch((e) => setError(errorText(e)))
                 .finally(() => setBusy(false));
             }}
           >
@@ -864,7 +887,7 @@ export function SchedulesPage({
                         setForm(undefined);
                         refresh();
                       })
-                      .catch((e) => setError(String(e)))
+                      .catch((e) => setError(errorText(e)))
                   }
                 >
                   <Trash2 size={16} />

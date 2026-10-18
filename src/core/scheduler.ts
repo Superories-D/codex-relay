@@ -279,7 +279,19 @@ export class Scheduler extends EventEmitter {
   async add(
     input: NewJob,
     existing?: { link: ExistingLink; threadId: string; turnId?: string },
+    schedule?: Job["schedule"],
   ) {
+    if (schedule) {
+      const admitted = this.store.data.jobs.find(
+        (job) =>
+          job.schedule?.taskId === schedule.taskId &&
+          job.schedule.runId === schedule.runId,
+      );
+      if (admitted) {
+        await this.store.save();
+        return admitted;
+      }
+    }
     const stat = await fs.stat(input.cwd);
     if (!stat.isDirectory()) throw new Error("工作目录不存在");
     if (
@@ -302,6 +314,7 @@ export class Scheduler extends EventEmitter {
       throw new Error("另一任务已开始，请先暂停它再接入原会话");
     const job: Job = {
       ...input,
+      ...(schedule ? { schedule } : {}),
       ...(input.interactive ? { pendingMessage: input.prompt } : {}),
       id: randomUUID(),
       state: existing ? "watching" : "queued",

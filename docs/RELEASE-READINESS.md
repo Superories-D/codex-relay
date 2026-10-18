@@ -20,7 +20,8 @@ test cannot replace actual CLI or installed-client evidence.
 | Goals | Existing lifecycle evidence retained. Cross-account and deep subagent combinations remain open |
 | History and files | Paginated import and original-record integrity verified. 632 imported histories lack source/ancestors and remain explicitly read-only; never invent recoverable context |
 | Git/Worktree and terminal | Existing basic native checks; isolation of concurrent projects/worktrees, fuller Git workflows and terminal lifecycle require broader acceptance |
-| Plugins/MCP and schedules | Configuration/UI exist; end-to-end plugin calls and full schedule lifecycle remain open |
+| Plugins/MCP | Configuration/UI exist; end-to-end plugin calls remain open |
+| Scheduled tasks | Source after v0.6.16 adds admission deduplication, durable restart recovery and worktree reuse. Ten targeted tests and real account-free Electron admission/Japanese UI lifecycle passed; actual scheduled inference/output and sleep/clock behavior remain open. See `SCHEDULES-20261018.md`; existing packages are unchanged |
 | Multilingual/accessibility | Japanese added with 1,044 catalog entries; four-language switching/persistence and Japanese native menu construction verified. Narrow/zoomed light/dark Japanese layouts passed; see `JAPANESE-20261018.md` |
 | Packaging | v0.6.16 NSIS wizard loading + packaged app + ZIP integrity verified; includes concurrency and Japanese. User performs installation. Signing/release distribution remain separate gaps; see `RELEASE-0616.md` |
 
