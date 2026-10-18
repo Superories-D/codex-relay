@@ -65,6 +65,28 @@ Install notes and SHA256SUMS accompany the binaries. Exit the client before
 upgrading; keep the original installation scope and directory. Extract the ZIP
 fully if using the alternative distribution. Binaries remain outside Git.
 
+The release server advertises a 100 MB attachment limit; direct installation-EXE
+upload returned a Cloudflare 502 and created no asset. Distribution therefore
+uses two standard ZIP volumes per option, each at most 90 MiB. Download both
+`.001` and `.002` for the Installer or Unpacked option into the same folder and
+open `.001` using 7-Zip. The installer option contains the original verified EXE;
+the unpacked option contains the complete application directory. Original full
+EXE/ZIP files remain available locally at the paths above.
+
+Both sets passed direct `7za t` from their `.001` volume. Reassembled ZIP CRC and
+content hashes match the original EXE/app.asar. `SHA256SUMS.txt` includes whole
+file and volume hashes; updated `INSTALL.txt` explains the download procedure.
+The release is kept as a draft until every attachment is downloaded again and
+its SHA256 matches locally. Failed uploads are checked against server metadata
+before retrying, so they do not create duplicate releases or attachments.
+
+| Volume | Bytes | SHA256 |
+| --- | ---: | --- |
+| `Codex-Relay-Installer-0.6.17-x64.zip.001` | 94371840 | `d1d204ad78d66c6e0f827aa00c6445458b4fc19d7a54c7e64df24b6f8eaa7b1a` |
+| `Codex-Relay-Installer-0.6.17-x64.zip.002` | 30852995 | `367d06911e99b627652291ed89d302b8c781518840acab98c94aa7952d8594d1` |
+| `Codex-Relay-Unpacked-0.6.17-x64.zip.001` | 94371840 | `7b47ec5b2b3dfdeea61a2666e9f83e396e88d5ab571ad595a9d7819346a4e84d` |
+| `Codex-Relay-Unpacked-0.6.17-x64.zip.002` | 72868330 | `969a8b029d83d1ff0b8346350a14530627007f87c31f6ff1daf20bd198e30e4b` |
+
 Ignored evidence under `qa-output/`: `release-0617-tests.log`,
 `package-0617-final.log`, `package-0617-integrity.json`,
 `zip-0617-integrity.json`, `installer-probe-0617.json`, `windows-0617.log`,
