@@ -1864,6 +1864,11 @@ body:lang(ja) {
   flex: 1;
   text-align: left;
 }
+.schedule-time-note {
+  color: var(--subtle);
+  font-size: 12px;
+  line-height: 1.6;
+}
 .usage-card {
   font-size: 10px;
   display: flex;

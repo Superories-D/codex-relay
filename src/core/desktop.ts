@@ -33,6 +33,7 @@ export interface ScheduledTask {
   minute: number;
   weekday: number;
   nextRun: number;
+  nextRunZone?: string;
   lastRun?: number;
   lastJobId?: string;
   lastError?: string;
@@ -492,12 +493,14 @@ export function nextSchedule(
 ) {
   if (task.cadence === "interval") return now + task.minutes * 60000;
   const date = new Date(now);
-  date.setHours(task.hour, task.minute, 0, 0);
-  if (task.cadence === "weekly") {
-    const diff = (task.weekday - date.getDay() + 7) % 7;
-    date.setDate(date.getDate() + diff);
-  }
-  if (date.getTime() <= now)
-    date.setDate(date.getDate() + (task.cadence === "weekly" ? 7 : 1));
-  return date.getTime();
+  const offset = task.cadence === "weekly"
+    ? (task.weekday - date.getDay() + 7) % 7 : 0;
+  // Construct each target date with the requested wall time. Mutating a date
+  // already shifted through a DST gap carries that shifted hour into tomorrow.
+  const at = (days: number) => new Date(
+    date.getFullYear(), date.getMonth(), date.getDate() + days,
+    task.hour, task.minute, 0, 0,
+  ).getTime();
+  const candidate = at(offset);
+  return candidate > now ? candidate : at(offset + (task.cadence === "weekly" ? 7 : 1));
 }

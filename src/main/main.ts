@@ -1564,6 +1564,7 @@ async function boot() {
     for (const j of store.data.jobs)
       if (j.state === "waiting") j.nextWakeAt = Date.now();
     scheduler.changed();
+    void schedules.tick().catch((error) => scheduler.log(error, "warning"));
   });
   scheduler.start();
   schedules.start();

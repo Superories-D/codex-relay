@@ -3,7 +3,7 @@ import path from "node:path";
 import os from "node:os";
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { Desktop } from "../src/core/desktop";
+import { Desktop, nextSchedule } from "../src/core/desktop";
 import { Store } from "../src/core/store";
 import { Scheduler } from "../src/core/scheduler";
 import { Schedules, type ScheduleInput } from "../src/core/schedules";
@@ -268,4 +268,74 @@ it("drains preparation on shutdown and does not enqueue a new job after closing 
   await shutdown;
   expect(store.data.jobs).toHaveLength(0);
   expect(task.pendingRun).toBeDefined();
+});
+
+it("collapses a long sleep/forward clock jump into one occurrence and never repeats it on rollback", async () => {
+  const task = await create();
+  now = task.nextRun + 3 * 86400000;
+  await Promise.all([schedules.tick(), schedules.tick(), schedules.tick()]);
+  expect(store.data.jobs).toHaveLength(1);
+  const job = store.data.jobs[0];
+  job.state = "completed";
+  const due = task.nextRun;
+  now -= 7 * 86400000;
+  await schedules.tick();
+  expect(store.data.jobs).toHaveLength(1);
+  now = due - 1;
+  await schedules.tick();
+  expect(store.data.jobs).toHaveLength(1);
+  now = due;
+  await schedules.tick();
+  expect(store.data.jobs).toHaveLength(2);
+  expect(store.data.jobs[0].schedule?.runId).not.toBe(store.data.jobs[1].schedule?.runId);
+});
+
+it("recalculates a saved calendar schedule when the system zone changes, including while disabled", async () => {
+  await schedules.save({ ...input(), cadence: "daily", enabled: false });
+  const task = desktop.data.schedules[0];
+  task.nextRunZone = "Previous/SystemZone";
+  task.nextRun = now - 1000;
+  await schedules.tick();
+  expect(store.data.jobs).toHaveLength(0);
+  expect(task.nextRunZone).toBe(Intl.DateTimeFormat().resolvedOptions().timeZone);
+  expect(task.nextRun).toBe(nextSchedule(task, now));
+  const loaded = new Desktop(root);
+  await loaded.load();
+  expect(loaded.data.schedules[0].nextRun).toBe(task.nextRun);
+  expect(loaded.data.schedules[0].nextRunZone).toBe(task.nextRunZone);
+  const unchanged = task.nextRun;
+  now += 1000;
+  await schedules.tick();
+  expect(task.nextRun).toBe(unchanged);
+});
+
+it("does not skip legacy overdue calendar work when adopting time-zone metadata", async () => {
+  await schedules.save({ ...input(), cadence: "daily" });
+  const task = desktop.data.schedules[0];
+  task.nextRun = now - 1000;
+  delete task.nextRunZone;
+  await schedules.tick();
+  expect(store.data.jobs).toHaveLength(1);
+  expect(task.nextRun).toBe(nextSchedule(task, now));
+  expect(task.nextRunZone).toBeTruthy();
+});
+
+it("preserves a pending occurrence across time-zone changes and rolls back failed metadata writes", async () => {
+  await schedules.save({ ...input(), cadence: "weekly" });
+  const task = desktop.data.schedules[0];
+  task.nextRunZone = "Previous/SystemZone";
+  task.nextRun = now + 1234;
+  task.pendingRun = { id: randomUUID(), requestedAt: now - 10000 };
+  const reservation = { ...task.pendingRun }, oldDue = task.nextRun;
+  vi.spyOn(desktop, "save").mockRejectedValueOnce(Error("zone write unavailable"));
+  await expect(schedules.run(task.id, true)).rejects.toThrow("zone write");
+  expect(task.nextRunZone).toBe("Previous/SystemZone");
+  expect(task.nextRun).toBe(oldDue);
+  expect(store.data.jobs).toHaveLength(0);
+  await schedules.run(task.id, true);
+  expect(store.data.jobs).toHaveLength(1);
+  expect(store.data.jobs[0].schedule).toEqual({ taskId: task.id, runId: reservation.id, requestedAt: reservation.requestedAt });
+  expect(task.nextRun).toBe(nextSchedule(task, now));
+  await schedules.tick();
+  expect(store.data.jobs).toHaveLength(1);
 });

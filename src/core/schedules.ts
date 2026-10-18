@@ -32,6 +32,7 @@ export class Schedules {
     private scheduler: Scheduler,
     private changed: () => void = () => {},
     private now = Date.now,
+    private timeZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone,
   ) {}
 
   private serial<T>(id: string, fn: () => Promise<T>): Promise<T> {
@@ -61,6 +62,7 @@ export class Schedules {
         ...input,
         id,
         nextRun: nextSchedule(input, this.now()),
+        nextRunZone: input.cadence === "interval" ? undefined : this.timeZone(),
       };
       if (previous) Object.assign(previous, task);
       else this.desktop.data.schedules.push(task);
@@ -124,6 +126,23 @@ export class Schedules {
         return this.finish(task, admitted);
       }
     }
+    if (task.cadence !== "interval" && task.nextRunZone !== this.timeZone()) {
+      const nextRun = task.nextRun, previousZone = task.nextRunZone;
+      // Calendar schedules follow system local time. Legacy records have no
+      // known source zone: preserve their existing due time on first adoption.
+      // A reserved occurrence retains its identity and requestedAt across travel.
+      if (previousZone)
+        task.nextRun = nextSchedule(task, now);
+      task.nextRunZone = this.timeZone();
+      try {
+        await this.desktop.save();
+      } catch (error) {
+        task.nextRun = nextRun;
+        task.nextRunZone = previousZone;
+        throw error;
+      }
+      this.changed();
+    }
     if (
       automatic &&
       (!task.enabled ||
@@ -144,7 +163,10 @@ export class Schedules {
         task.pendingRun = { id: randomUUID(), requestedAt: now };
       // Collapse missed intervals to one occurrence. A manual run only consumes
       // a due occurrence, and does not postpone a future scheduled execution.
-      if (task.nextRun <= now) task.nextRun = nextSchedule(task, now);
+      if (task.nextRun <= now) {
+        task.nextRun = nextSchedule(task, now);
+        if (task.cadence !== "interval") task.nextRunZone = this.timeZone();
+      }
       task.lastError = undefined;
       await this.desktop.save();
       const reservation = task.pendingRun;
@@ -190,7 +212,8 @@ export class Schedules {
       this.desktop.data.schedules
         .filter(
           (task) =>
-            task.pendingRun || (task.enabled && task.nextRun <= this.now()),
+            task.pendingRun || (task.enabled && task.nextRun <= this.now()) ||
+            (task.cadence !== "interval" && task.nextRunZone !== this.timeZone()),
         )
         .map((task) =>
           this.run(task.id, true).catch((error) =>

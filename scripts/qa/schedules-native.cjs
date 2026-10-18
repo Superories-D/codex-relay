@@ -14,6 +14,7 @@ const output = path.join(root, "qa-output");
   await fs.mkdir(output, { recursive: true });
   const profile = await fs.mkdtemp(path.join(output, "schedules-native-"));
   const taskId = randomUUID();
+  const wakeId = randomUUID(), wakeAt = Date.now() + 7000;
   await fs.writeFile(
     path.join(profile, "state.json"),
     JSON.stringify({
@@ -43,6 +44,11 @@ const output = path.join(root, "qa-output");
           weekday: 1,
           worktree: false,
           nextRun: Date.now() - 86400000,
+        },
+        {
+          id: wakeId, title: "Wake schedule fixture", prompt: "No inference",
+          cwd: profile, enabled: true, cadence: "interval", minutes: 5,
+          hour: 9, minute: 0, weekday: 1, worktree: false, nextRun: wakeAt,
         },
       ],
       preferences: { language: "ja", theme: "dark", notifications: false },
@@ -133,6 +139,27 @@ const output = path.join(root, "qa-output");
     report.checks.push(
       "unfinished run blocks duplicates; simultaneous manual requests admit one after cancellation",
     );
+    // The first periodic tick is 15 seconds after startup. Exercise the actual
+    // Electron resume listener before that tick, without suspending the user's PC.
+    await new Promise((resolve) => setTimeout(resolve, Math.max(0, wakeAt - Date.now() + 10)));
+    assert.equal((await call("desktop.read")).schedules.find((task) => task.id === wakeId).lastJobId, undefined);
+    const resumedAt = Date.now();
+    await app.evaluate(({ powerMonitor }) => {
+      powerMonitor.emit("resume");
+      powerMonitor.emit("resume");
+      powerMonitor.emit("resume");
+    });
+    let wake;
+    while (!(wake = (await call("desktop.read")).schedules.find((task) => task.id === wakeId)).lastJobId) {
+      assert.ok(Date.now() - resumedAt < 3000, "resume did not admit overdue work promptly");
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    snapshot = await page.evaluate(() => window.relay.snapshot());
+    assert.equal(snapshot.jobs.filter((job) => job.schedule?.taskId === wakeId).length, 1);
+    report.resumeAdmissionMs = Date.now() - resumedAt;
+    report.checks.push("three actual Electron resume notifications admit one overdue occurrence before the periodic timer; physical OS sleep not performed");
+    await call("job.control", { id: wake.lastJobId, action: "cancel" });
+    await call("schedule.remove", wakeId);
     await call("schedule.remove", taskId);
     await page
       .getByRole("button", { name: "スケジュールタスク", exact: true })
@@ -142,6 +169,7 @@ const output = path.join(root, "qa-output");
       .filter({ hasText: "毎週のコードレビュー" })
       .click();
     assert.equal(await page.getByLabel("頻度").inputValue(), "weekly");
+    await page.locator(".schedule-time-note").getByText("毎日・毎週のタスクはシステムの現地時刻に従います。スリープ中に実行できなかった分は1回にまとめ、復帰時に確認します。", { exact: true }).waitFor();
     await page.getByLabel("プロジェクトディレクトリ").fill(profile);
     await page
       .getByRole("button", { name: "スケジュールタスクを保存", exact: true })
@@ -155,6 +183,7 @@ const output = path.join(root, "qa-output");
     const weekly = (await call("desktop.read")).schedules[0];
     assert.equal(weekly.cadence, "weekly");
     assert.equal(weekly.title, "毎週のコードレビュー");
+    assert.ok(weekly.nextRunZone);
     await page
       .getByRole("button", {
         name: "スケジュールタスクを一時停止",
@@ -191,7 +220,7 @@ const output = path.join(root, "qa-output");
     assert.equal(disk.schedules.length, 0);
     snapshot = await page.evaluate(() => window.relay.snapshot());
     assert.equal(snapshot.accounts.length, 0);
-    assert.equal(snapshot.jobs.length, 2);
+    assert.equal(snapshot.jobs.length, 3);
     assert.ok(snapshot.jobs.every((job) => !job.threadId));
     assert.deepEqual(report.errors, []);
     report.checks.push(

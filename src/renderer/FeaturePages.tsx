@@ -778,6 +778,7 @@ export function SchedulesPage({
                     try {
                       const {
                         nextRun,
+                        nextRunZone,
                         lastJobId,
                         lastRun,
                         lastError,
@@ -831,6 +832,7 @@ export function SchedulesPage({
               setError("");
               const {
                 nextRun,
+                nextRunZone,
                 lastRun,
                 lastJobId,
                 lastError,
@@ -967,6 +969,9 @@ export function SchedulesPage({
                 </>
               )}
             </div>
+            <p className="schedule-time-note">
+              {t("每天和每周任务跟随系统本地时间。休眠期间错过的运行合并为一次，唤醒后检查。")}
+            </p>
             <label className="checkbox-line">
               <input
                 type="checkbox"

@@ -110,14 +110,21 @@ it("rejects invalid, missing and stale branch operations, including simultaneous
     desktop.switchBranch(repo, "HEAD", before.head, "first"),
     desktop.switchBranch(repo, "HEAD", before.head, "second"),
   ]);
-  expect(results.map((r) => r.status)).toEqual(["fulfilled", "rejected"]);
-  expect((results[1] as PromiseRejectedResult).reason.message).toContain(
+  // Canonical-root discovery is asynchronous; either concurrent request may
+  // enter the Worktree queue first. Exactly one may mutate the reviewed HEAD.
+  expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+  const rejected = results.filter((r) => r.status === "rejected");
+  expect(rejected).toHaveLength(1);
+  expect(rejected[0].reason.message).toContain(
     "当前分支或提交已变化",
   );
-  expect(
-    (await desktop.branchList(repo)).branches.map((b) => b.name),
-  ).not.toContain("second");
+  const winner = results[0].status === "fulfilled" ? "first" : "second";
+  const loser = winner === "first" ? "second" : "first";
   const current = await desktop.branchList(repo);
+  expect(current.current).toBe(`refs/heads/${winner}`);
+  expect(current.branches.map((b) => b.name)).toContain(winner);
+  expect(current.branches.map((b) => b.name)).not.toContain(loser);
+  expect(await fs.readFile(path.join(repo, "file.txt"), "utf8")).toBe("base\n");
   await desktop.git(repo, ["commit", "--allow-empty", "-m", "external commit"]);
   await expect(
     desktop.switchBranch(repo, "refs/heads/main", current.head),

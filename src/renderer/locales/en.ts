@@ -929,6 +929,8 @@ export const english: Record<string, string> = {
   "取消暂存第 {p0} 块": "Unstage hunk {p0}",
   此差异仅支持整文件操作: "This diff supports whole-file operations only",
   按最近一次用量更新: "Based on the latest usage update",
+  "每天和每周任务跟随系统本地时间。休眠期间错过的运行合并为一次，唤醒后检查。":
+    "Daily and weekly tasks follow system local time. Missed runs during sleep are combined into one and checked on wake.",
   当前上下文用量暂不可用: "Current context usage is unavailable",
   线程累计用量: "Thread total",
   "{used} / {limit} tokens": "{used} / {limit} tokens",
