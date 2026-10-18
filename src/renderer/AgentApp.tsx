@@ -272,7 +272,9 @@ export function AgentApp({
     try {
       return await window.relay.command(name, args);
     } catch (e) {
-      setError(errorText(e));
+      // Branch controls retain their own actionable error beside the draft.
+      if (!["workspace.branchList", "workspace.switchBranch"].includes(name))
+        setError(errorText(e));
       throw e;
     }
   };

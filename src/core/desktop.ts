@@ -5,6 +5,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { atomicWrite } from "./store";
 import { normalizeLocalPath } from "../shared/file-reference";
+import { readBranches, switchBranch } from "./git-branches";
 import {
   parseGitStatus,
   gitConflict,
@@ -370,6 +371,31 @@ export class Desktop {
       .trim()
       .split("\n")
       .filter(Boolean);
+  }
+  private branchChanges = new Map<string, Promise<unknown>>();
+  async branchList(cwd: string) {
+    return readBranches(this.git.bind(this), cwd);
+  }
+  async switchBranch(
+    cwd: string,
+    ref: string,
+    expectedHead: string,
+    name?: string,
+  ) {
+    const root = (await this.git(cwd, ["rev-parse", "--show-toplevel"])).trim();
+    const key = process.platform === "win32" ? root.toLowerCase() : root;
+    const task = (this.branchChanges.get(key) ?? Promise.resolve())
+      .catch(() => {})
+      .then(async () => {
+        await switchBranch(this.git.bind(this), root, ref, expectedHead, name);
+        return this.changes(root);
+      });
+    this.branchChanges.set(key, task);
+    const release = () => {
+      if (this.branchChanges.get(key) === task) this.branchChanges.delete(key);
+    };
+    void task.then(release, release);
+    return task;
   }
 }
 export function nextSchedule(

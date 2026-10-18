@@ -40,6 +40,7 @@ import { MarkdownText, UserText } from "./RichMessage";
 import { ActivityTimeline } from "./ActivityTimeline";
 import { ImageThumbnail } from "./ChatImages";
 import { GoalCard } from "./GoalCard";
+import { GitBranchPicker } from "./GitBranchPicker";
 import { QuestionPanel } from "./QuestionPanel";
 import { mergePage, agentRows } from "./chat-view";
 import {
@@ -784,6 +785,7 @@ function Changes({
     [staged, setStaged] = useState(false),
     [commit, setCommit] = useState(false),
     [message, setMessage] = useState(""),
+    [branches, setBranches] = useState(false),
     [confirmRestore, setConfirmRestore] = useState(false);
   const revision = useRef(0),
     mutating = useRef(false),
@@ -837,20 +839,25 @@ function Changes({
       alive = false;
     };
   }, [cwd, selected, showingStaged, state]);
-  const action = async (kind: string) => {
-    if (mutating.current) return;
+  const action = async (
+    kind: string,
+    branch?: { ref: string; expectedHead: string; name?: string },
+  ) => {
+    if (mutating.current) return false;
     mutating.current = true;
     const request = ++revision.current;
     setBusy(true);
     setError("");
     try {
-      const result = await call("workspace.git", {
-        cwd,
-        action: kind,
-        path: selected || undefined,
-        message: message || undefined,
-      });
-      if (request !== revision.current) return;
+      const result = branch
+        ? await call("workspace.switchBranch", { cwd, ...branch })
+        : await call("workspace.git", {
+            cwd,
+            action: kind,
+            path: selected || undefined,
+            message: message || undefined,
+          });
+      if (request !== revision.current) return false;
       setState(result);
       setDiff("");
       if (kind === "stage") setStaged(true);
@@ -863,8 +870,15 @@ function Changes({
         setConfirmRestore(false);
         setSelected("");
       }
+      if (branch) {
+        setSelected("");
+        setConfirmRestore(false);
+        setCommit(false);
+      }
+      return true;
     } catch (e) {
       if (request === revision.current) setError(errorText(e));
+      return false;
     } finally {
       mutating.current = false;
       if (request === revision.current) setBusy(false);
@@ -876,6 +890,14 @@ function Changes({
       <div className="changes-heading">
         <GitBranch size={15} />
         <span>{state?.branch || "Git"}</span>
+        <button
+          title={t("切换或创建分支")}
+          aria-expanded={branches}
+          disabled={busy || !state || !!state.error}
+          onClick={() => setBranches(!branches)}
+        >
+          <ChevronDown size={14} />
+        </button>
         <button
           title={t("刷新变更")}
           disabled={busy}
@@ -894,6 +916,17 @@ function Changes({
           <GitCommitHorizontal size={16} />
         </button>
       </div>
+      {branches && (
+        <GitBranchPicker
+          cwd={cwd}
+          call={call}
+          busy={busy}
+          close={() => setBranches(false)}
+          change={(ref, expectedHead, name) =>
+            action("branch", { ref, expectedHead, name })
+          }
+        />
+      )}
       {error && (
         <p role="alert" className="panel-error">
           {error}

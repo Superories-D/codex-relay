@@ -525,6 +525,22 @@ async function boot() {
         }
         return shell.openPath(await desktop.resolve(a.cwd, a.path));
       }
+      case "workspace.branchList":
+      case "workspace.switchBranch": {
+        const a = z
+          .object({
+            cwd: z.string().refine(path.isAbsolute),
+            ref: z.string().max(1000).optional(),
+            expectedHead: z.string().max(1200).optional(),
+            name: z.string().max(200).optional(),
+          })
+          .strict()
+          .parse(args);
+        if (name === "workspace.branchList") return desktop.branchList(a.cwd);
+        if (!a.ref || a.expectedHead === undefined)
+          throw new Error("请选择分支");
+        return desktop.switchBranch(a.cwd, a.ref, a.expectedHead, a.name);
+      }
       case "workspace.changes":
       case "workspace.branches":
       case "workspace.worktree":

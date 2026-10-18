@@ -99,11 +99,10 @@ async function until(check) {
     const env = { ...process.env, CODEX_RELAY_DATA_DIR: profile };
     delete env.ELECTRON_RUN_AS_NODE;
     app = await _electron.launch({
-      executablePath: path.join(
-        root,
-        "node_modules/electron/dist/electron.exe",
-      ),
-      args: [root],
+      executablePath:
+        process.env.RELAY_EXECUTABLE ||
+        path.join(root, "node_modules/electron/dist/electron.exe"),
+      args: process.env.RELAY_EXECUTABLE ? [] : [root],
       env,
       timeout: 60000,
     });
@@ -285,6 +284,97 @@ async function until(check) {
     await page.screenshot({ path: path.join(output, "git-native-ja.png") });
     report.checks.push(
       "project switch clears selected file and commit draft; actual UI stage/commit/push changes only second repository and local bare remote",
+    );
+    const picker = panel.locator(".git-branch-picker");
+    const openBranches = async () => {
+      await panel
+        .getByTitle("ブランチの切り替え・作成", { exact: true })
+        .click();
+      await picker.getByRole("button", { name: "main", exact: true }).waitFor();
+    };
+    await openBranches();
+    await picker
+      .getByRole("button", {
+        name: "現在のリビジョンからブランチを作成",
+        exact: true,
+      })
+      .click();
+    await picker
+      .getByLabel("新しいブランチ名", { exact: true })
+      .fill("bad..name");
+    await picker
+      .getByRole("button", { name: "作成して切り替え", exact: true })
+      .click();
+    await panel
+      .getByRole("alert")
+      .filter({ hasText: "新しいブランチ名が無効です" })
+      .waitFor();
+    assert.equal(
+      (await git(second, "branch", "--show-current")).trim(),
+      "main",
+    );
+    await picker
+      .getByLabel("新しいブランチ名", { exact: true })
+      .fill("機能/UI検証");
+    await picker
+      .getByRole("button", { name: "作成して切り替え", exact: true })
+      .click();
+    await picker.waitFor({ state: "detached" });
+    assert.equal(
+      (await git(second, "branch", "--show-current")).trim(),
+      "機能/UI検証",
+    );
+    await openBranches();
+    await picker.getByRole("button", { name: "main", exact: true }).click();
+    await picker
+      .getByRole("button", { name: "ブランチを切り替え", exact: true })
+      .click();
+    await picker.waitFor({ state: "detached" });
+    assert.equal(
+      (await git(second, "branch", "--show-current")).trim(),
+      "main",
+    );
+    await openBranches();
+    await picker
+      .locator(".branch-picker-list button")
+      .filter({ hasText: /^origin\/main/ })
+      .click();
+    await picker
+      .getByLabel("新しいブランチ名", { exact: true })
+      .fill("tracking-ui");
+    await picker
+      .getByRole("button", { name: "作成して切り替え", exact: true })
+      .click();
+    await picker.waitFor({ state: "detached" });
+    assert.equal(
+      (await git(second, "rev-parse", "--abbrev-ref", "@{upstream}")).trim(),
+      "origin/main",
+    );
+    await git(second, "worktree", "add", path.join(fixture, "held"), "main");
+    await panel.getByTitle("ブランチの切り替え・作成", { exact: true }).click();
+    const held = picker
+      .locator(".branch-picker-list button")
+      .filter({ hasText: /^main/ });
+    await held.waitFor();
+    assert.equal(await held.isDisabled(), true);
+    await picker.getByLabel("ブランチを検索", { exact: true }).fill("機能");
+    assert.equal(await picker.locator(".branch-picker-list button").count(), 2);
+    const checkbox = await picker
+      .locator(".branch-create-toggle input")
+      .boundingBox();
+    assert.ok(
+      checkbox.width <= 20,
+      "checkbox stays compact instead of stretching its label",
+    );
+    assert.equal(await panel.getByRole("alert").count(), 0);
+    await page.screenshot({
+      path: path.join(output, "git-branches-native-ja.png"),
+    });
+    await picker
+      .getByRole("button", { name: "キャンセル", exact: true })
+      .click();
+    report.checks.push(
+      "Japanese branch UI validates and preserves drafts after errors, creates Unicode branches, switches local branches, tracks remote refs, and disables branches held in another worktree",
     );
     const snapshot = await page.evaluate(() => window.relay.snapshot());
     assert.equal(snapshot.accounts.length, 0);

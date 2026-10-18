@@ -82,11 +82,11 @@ const root = path.resolve(__dirname, "../.."),
     const env = { ...process.env, CODEX_RELAY_DATA_DIR: profile };
     delete env.ELECTRON_RUN_AS_NODE;
     app = await _electron.launch({
-      executablePath: path.join(
+      executablePath: process.env.RELAY_EXECUTABLE || path.join(
         root,
         "node_modules/electron/dist/electron.exe",
       ),
-      args: [root],
+      args: process.env.RELAY_EXECUTABLE ? [] : [root],
       env,
       timeout: 60000,
     });

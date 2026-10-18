@@ -901,4 +901,26 @@ export const english: Record<string, string> = {
   语言: "Language",
   "选择界面语言，聊天内容、代码和终端输出会保留原文。":
     "Choose the interface language. Your messages, code, and terminal output keep their original language.",
+  切换或创建分支: "Switch or create branch",
+  刷新分支列表: "Refresh branches",
+  搜索分支: "Search branches",
+  分支列表: "Branches",
+  从当前版本创建分支: "Create branch from current revision",
+  "其他 Worktree 正在使用": "In another worktree",
+  创建新分支: "Create a new branch",
+  新分支名称: "New branch name",
+  "将创建跟踪此远程分支的本地分支。":
+    "Creates a local branch tracking this remote branch.",
+  "正在切换…": "Switching…",
+  创建并切换: "Create and switch",
+  切换分支: "Switch branch",
+  "当前分支或提交已变化，请刷新分支列表后重试":
+    "The current branch or commit changed. Refresh the branch list and try again.",
+  "所选分支已不存在，请刷新分支列表":
+    "The selected branch no longer exists. Refresh the branch list.",
+  新分支名称无效: "Invalid new branch name",
+  请为远程分支创建本地跟踪分支:
+    "Create a local tracking branch for this remote branch",
+  请选择分支: "Select a branch",
+  远程: "Remote",
 };

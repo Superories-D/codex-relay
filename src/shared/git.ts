@@ -10,6 +10,18 @@ export interface GitChanges {
   files: GitChange[];
   error: string;
 }
+export interface GitBranchInfo {
+  ref: string;
+  name: string;
+  remote: boolean;
+  upstream: string;
+  worktree: string;
+}
+export interface GitBranchList {
+  current: string;
+  head: string;
+  branches: GitBranchInfo[];
+}
 export const gitConflict = (file: GitChange) =>
   ["DD", "AU", "UD", "UA", "DU", "AA", "UU"].includes(
     file.index + file.worktree,
