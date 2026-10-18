@@ -167,7 +167,7 @@ afterEach(async () => {
   vi.clearAllMocks();
 });
 describe("single refresh-token authority", () => {
-  it("serializes simultaneous worker refreshes and stages the last committed credential for each request", async () => {
+  it("shares overlapping worker refreshes and stages the latest credential for the next independent refresh", async () => {
     const account = await accounts.import(JSON.stringify(auth()));
     let active = 0,
       maximum = 0,
@@ -202,14 +202,18 @@ describe("single refresh-token authority", () => {
     );
     expect(maximum).toBe(1);
     expect(active).toBe(0);
-    expect(staged).toEqual(["old", "generation-1", "generation-2"]);
+    expect(staged).toEqual(["old"]);
     expect(results.map((r) => r.tokens.access_token)).toEqual([
       "generation-1",
-      "generation-2",
-      "generation-3",
+      "generation-1",
+      "generation-1",
     ]);
+    expect((await accounts.refreshTokens(account.id)).tokens.access_token).toBe(
+      "generation-2",
+    );
+    expect(staged).toEqual(["old", "generation-1"]);
     expect((await accounts.auth(account.id)).tokens.access_token).toBe(
-      "generation-3",
+      "generation-2",
     );
   });
 
@@ -224,6 +228,125 @@ describe("single refresh-token authority", () => {
     expect(await refreshing).toBeInstanceOf(Error);
     await expect(accounts.inspect(account.id)).rejects.toThrow("原 Codex 实例");
     expect(Rpc.open).not.toHaveBeenCalled();
+  });
+  it("shares a failed refresh, retains rotated credentials and permits a later retry", async () => {
+    const account = await accounts.import(JSON.stringify(auth()));
+    vi.mocked(Rpc.open).mockImplementationOnce(
+      async (_cli, home) =>
+        ({
+          call: async () => {
+            await fs.writeFile(
+              path.join(home, "auth.json"),
+              JSON.stringify(auth("rotated-before-error")),
+            );
+            throw Error("temporary network failure");
+          },
+          close: async () => {},
+        }) as any,
+    );
+    const results = await Promise.allSettled(
+      Array.from({ length: 3 }, () => accounts.refreshTokens(account.id)),
+    );
+    expect(results.every((result) => result.status === "rejected")).toBe(true);
+    expect(Rpc.open).toHaveBeenCalledOnce();
+    expect((await accounts.auth(account.id)).tokens.access_token).toBe("old");
+    const file = path.join(store.profileHome(account.id), "auth.json");
+    expect(
+      JSON.parse(await fs.readFile(file, "utf8")).tokens.access_token,
+    ).toBe("rotated-before-error");
+    vi.mocked(Rpc.open).mockImplementationOnce(
+      async (_cli, home) =>
+        ({
+          call: async () => {
+            expect(
+              JSON.parse(
+                await fs.readFile(path.join(home, "auth.json"), "utf8"),
+              ).tokens.access_token,
+            ).toBe("rotated-before-error");
+            return { account: { type: "chatgpt" } };
+          },
+          close: async () => {},
+        }) as any,
+    );
+    expect((await accounts.refreshTokens(account.id)).tokens.access_token).toBe(
+      "rotated-before-error",
+    );
+    await expect(fs.stat(file)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+  it("rejects every refresh waiter with process safety failure without releasing staged credentials", async () => {
+    const account = await accounts.import(JSON.stringify(auth()));
+    const close = vi.fn(async () => {
+      throw Error("still alive");
+    });
+    vi.mocked(Rpc.open).mockImplementationOnce(
+      async (_cli, home) =>
+        ({
+          call: async () => {
+            await fs.writeFile(
+              path.join(home, "auth.json"),
+              JSON.stringify(auth("rotated-pending-close")),
+            );
+            return { account: { type: "chatgpt" } };
+          },
+          close,
+        }) as any,
+    );
+    const results = await Promise.allSettled([
+      accounts.refreshTokens(account.id),
+      accounts.refreshTokens(account.id),
+    ]);
+    for (const result of results) {
+      expect(result.status).toBe("rejected");
+      if (result.status === "rejected")
+        expect(result.reason).toBeInstanceOf(ProcessSafetyError);
+    }
+    expect(Rpc.open).toHaveBeenCalledOnce();
+    expect((await accounts.auth(account.id)).tokens.access_token).toBe("old");
+    expect(
+      JSON.parse(
+        await fs.readFile(
+          path.join(store.profileHome(account.id), "auth.json"),
+          "utf8",
+        ),
+      ).tokens.access_token,
+    ).toBe("rotated-pending-close");
+  });
+  it("refreshes different accounts independently while sharing each account's own request", async () => {
+    const a = await accounts.import(JSON.stringify(teamAuth("one")));
+    const b = await accounts.import(JSON.stringify(teamAuth("two")));
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let started = 0;
+    vi.mocked(Rpc.open).mockImplementation(
+      async () =>
+        ({
+          call: async () => {
+            started++;
+            await gate;
+            return { account: { type: "chatgpt" } };
+          },
+          close: async () => {},
+        }) as any,
+    );
+    const tasks = [
+      accounts.refreshTokens(a.id),
+      accounts.refreshTokens(a.id),
+      accounts.refreshTokens(b.id),
+    ];
+    try {
+      await vi.waitFor(() => expect(started).toBe(2));
+    } finally {
+      release();
+    }
+    const results = await Promise.all(tasks);
+    expect(results.map((r) => r.tokens.access_token)).toEqual([
+      "one",
+      "one",
+      "two",
+    ]);
+    expect(Rpc.open).toHaveBeenCalledTimes(2);
   });
 
   it("deduplicates simultaneous imports of the same identity", async () => {

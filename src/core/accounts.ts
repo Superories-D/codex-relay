@@ -116,6 +116,7 @@ export class Accounts {
     fresh: Record<string, Quota>,
   ) => void;
   private locks = new Map<string, Promise<unknown>>();
+  private refreshing = new Map<string, Promise<AuthCache>>();
   private login?: {
     id: string;
     rpc: Rpc;
@@ -233,7 +234,9 @@ export class Accounts {
   async refreshTokens(id: string): Promise<AuthCache> {
     this.assertExternalRefreshIdle();
     if (this.busy.has(id)) throw new Error("客户端负责刷新该账户");
-    return this.serial(id, async () => {
+    const pending = this.refreshing.get(id);
+    if (pending) return pending;
+    const task = this.serial(id, async () => {
       this.assertExternalRefreshIdle();
       this.available(id);
       const home = this.store.profileHome(id);
@@ -268,9 +271,24 @@ export class Accounts {
         await fs.rm(path.join(home, "auth.json"), { force: true });
         return fresh;
       } finally {
-        if (rpc) await rpc.close();
+        if (rpc) {
+          try {
+            await rpc.close();
+          } catch (error) {
+            throw new ProcessSafetyError(
+              "刷新凭据后未能确认受管进程停止",
+              error,
+            );
+          }
+        }
       }
     });
+    this.refreshing.set(id, task);
+    const release = () => {
+      if (this.refreshing.get(id) === task) this.refreshing.delete(id);
+    };
+    void task.then(release, release);
+    return task;
   }
   private serial<T>(id: string, fn: () => Promise<T>): Promise<T> {
     const next = (this.locks.get(id) ?? Promise.resolve())

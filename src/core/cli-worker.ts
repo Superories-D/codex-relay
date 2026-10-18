@@ -60,6 +60,9 @@ export class CliWorker extends EventEmitter implements Worker {
   private finalText = "";
   private quotas: Record<string, Quota> = {};
   private requests = new Map<string, number | string>();
+  private pendingRequests = new Set<Promise<void>>();
+  private closing = false;
+  private refreshStopFailure?: ProcessSafetyError;
   private agents = new Map<string, AgentState>();
   private parentEnded = false;
   private parentOutcome?: Outcome;
@@ -84,7 +87,13 @@ export class CliWorker extends EventEmitter implements Worker {
           this.finish({ kind: "error", error }),
         ),
     );
-    this.rpc.on("request", (msg) => void this.request(msg));
+    this.rpc.on("request", (msg) => {
+      if (this.closing) return;
+      const task = this.request(msg);
+      this.pendingRequests.add(task);
+      const release = () => this.pendingRequests.delete(task);
+      void task.then(release, release);
+    });
     this.rpc.on("diagnostic", (text) => this.emit("log", text));
     this.rpc.on("disconnected", () =>
       this.finish({
@@ -818,7 +827,7 @@ export class CliWorker extends EventEmitter implements Worker {
     try {
       if (msg.method === "account/chatgptAuthTokens/refresh") {
         const tokens = await this.ctx.refresh();
-        this.rpc!.respond(msg.id!, tokens);
+        if (!this.closing) this.rpc!.respond(msg.id!, tokens);
         return;
       }
       const id = String(msg.id);
@@ -841,6 +850,11 @@ export class CliWorker extends EventEmitter implements Worker {
           "Credential refresh failed; reauthentication may be required",
         );
       } catch {}
+      if (error instanceof ProcessSafetyError) {
+        this.refreshStopFailure = error;
+        this.emit("stopError", error);
+        this.finish({ kind: "error", error });
+      }
       this.emit("log", String(error));
     }
   }
@@ -1085,7 +1099,16 @@ export class CliWorker extends EventEmitter implements Worker {
     return this.stopping;
   }
   async close() {
-    if (this.rpc) await this.rpc.close();
+    this.closing = true;
+    // A refresh uses a separate managed process. Keep ownership of this job
+    // until all accepted requests settle, even if its main process exited.
+    const results = await Promise.allSettled([
+      this.rpc?.close(),
+      ...this.pendingRequests,
+    ]);
+    const failed = results.find((result) => result.status === "rejected");
+    if (failed?.status === "rejected") throw failed.reason;
+    if (this.refreshStopFailure) throw this.refreshStopFailure;
     this.activeAgentTurns.clear();
     for (const agent of this.agents.values())
       if (activeAgentStatuses.has(agent.status))

@@ -3,6 +3,7 @@ import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { Rpc } from "../src/core/rpc";
 import { CliWorker } from "../src/core/cli-worker";
 import type { Job } from "../src/shared/types";
+import { ProcessSafetyError } from "../src/core/process-safety-error";
 vi.mock("../src/core/rpc", () => ({ Rpc: { open: vi.fn() } }));
 class FakeRpc extends EventEmitter {
   used = 10;
@@ -71,7 +72,7 @@ const auth = {
   chatgptAccountId: "account",
   chatgptPlanType: "plus",
 };
-function worker() {
+function worker(refresh = async () => auth) {
   return new CliWorker({
     job,
     home: "/tmp/never-used",
@@ -90,9 +91,88 @@ function worker() {
       }
     },
     shouldStart: () => true,
-    refresh: async () => auth,
+    refresh,
   });
 }
+it("propagates an unsafe external refresh process into the scheduler recovery gate", async () => {
+  const failure = new ProcessSafetyError(
+    "refresh process still alive",
+    Error("cleanup"),
+  );
+  const w = worker(async () => {
+      throw failure;
+    }),
+    errors = vi.fn();
+  w.on("stopError", errors);
+  await w.start(auth);
+  rpc.emit("request", {
+    id: "refresh",
+    method: "account/chatgptAuthTokens/refresh",
+    params: {},
+  });
+  expect(await w.done).toMatchObject({ kind: "error", error: failure });
+  expect(errors).toHaveBeenCalledWith(failure);
+  expect(rpc.reject).toHaveBeenCalledWith(
+    "refresh",
+    expect.stringContaining("Credential refresh failed"),
+  );
+  await expect(w.close()).rejects.toBe(failure);
+});
+it("drains an accepted refresh before closing and ignores requests after close begins", async () => {
+  let finish!: (value: typeof auth) => void;
+  const refresh = vi.fn(
+    () =>
+      new Promise<typeof auth>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const w = worker(refresh);
+  await w.start(auth);
+  rpc.emit("request", {
+    id: "refresh",
+    method: "account/chatgptAuthTokens/refresh",
+  });
+  let closed = false;
+  const close = w.close().then(() => {
+    closed = true;
+  });
+  await Promise.resolve();
+  expect(rpc.close).toHaveBeenCalledOnce();
+  expect(closed).toBe(false);
+  rpc.emit("request", {
+    id: "late",
+    method: "account/chatgptAuthTokens/refresh",
+  });
+  expect(refresh).toHaveBeenCalledOnce();
+  finish(auth);
+  await close;
+  expect(closed).toBe(true);
+  expect(rpc.respond).not.toHaveBeenCalled();
+});
+it("keeps late refresh cleanup failure visible to scheduler close after the main process exits", async () => {
+  let fail!: (error: unknown) => void;
+  const w = worker(
+    () =>
+      new Promise<typeof auth>((_, reject) => {
+        fail = reject;
+      }),
+  );
+  await w.start(auth);
+  rpc.emit("request", {
+    id: "refresh",
+    method: "account/chatgptAuthTokens/refresh",
+  });
+  const close = w.close();
+  const failure = new ProcessSafetyError(
+    "refresh process still alive",
+    Error("cleanup"),
+  );
+  const rejected = expect(close).rejects.toBe(failure);
+  fail(failure);
+  await rejected;
+  expect(await w.done).toMatchObject({ kind: "error", error: failure });
+  await expect(w.close()).rejects.toBe(failure);
+});
 it("preserves adopted thread permissions while enforcing an explicitly selected read-only planning turn", async () => {
   job.threadId = "thread-1";
   job.preserveNativePermissions = true;
