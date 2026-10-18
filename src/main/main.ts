@@ -155,6 +155,34 @@ async function boot() {
     () => scheduler?.changed(),
   );
   await accounts.migrateIdentities();
+  const nativeHomes = new Map<string, typeof store.data.jobs>();
+  for (const job of store.data.jobs)
+    if (job.historySource?.storage === "sqlite") {
+      const home = store.jobHome(job.id);
+      nativeHomes.set(home, [...(nativeHomes.get(home) || []), job]);
+    }
+  for (const [home, jobs] of nativeHomes) {
+    if (
+      jobs.some(
+        (j) =>
+          !["completed", "failed", "paused", "cancelled"].includes(j.state),
+      )
+    )
+      continue;
+    try {
+      await Rpc.assertHomeIdle(home);
+      const missing = await rebaseNativeHome(home);
+      for (const job of jobs)
+        if (missing.has(job.threadId!) && !job.historySource!.issue)
+          job.historySource!.issue =
+            "源会话日志已缺失；已恢复完整缓存供阅读，CLI 续接需要原始日志。";
+    } catch (error) {
+      for (const job of jobs)
+        if (!job.historySource!.issue)
+          job.historySource!.issue = `导入副本暂时不可续接：${redact(error)}`;
+    }
+  }
+  if (nativeHomes.size) await store.save();
   const importer = new AccountImport(accounts, store);
   scheduler = new Scheduler(
     store,

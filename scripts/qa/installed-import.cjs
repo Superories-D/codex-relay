@@ -309,7 +309,14 @@ const version = require("../../package.json").version;
     });
   } finally {
     if (app) {
+      const process = app.process();
+      const exited = new Promise((resolve, reject) => {
+        if(process.exitCode !== null || process.signalCode !== null) return resolve();
+        const timeout = setTimeout(()=>reject(new Error("Installed application did not finish saving before exit")),60000);
+        process.once("exit",()=>{clearTimeout(timeout);resolve();});
+      });
       await app.evaluate(({ app }) => app.quit()).catch(() => {});
+      await exited;
       await app.close().catch(() => {});
     }
     await fs.writeFile(

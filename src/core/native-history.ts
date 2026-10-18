@@ -1,10 +1,11 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import os from "node:os";
 import { randomUUID, createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import type { HistoryEntry, Job } from "../shared/types";
 import { Store } from "./store";
-import { Chats, protocolItem } from "./chat";
+import { Chats, protocolItem, jsonLines } from "./chat";
 import { TextWriter } from "./text-writer";
 import { persistImages } from "./chat-media";
 
@@ -19,12 +20,30 @@ const uuid = (id: unknown): id is string =>
   typeof id === "string" && /^[a-f0-9-]{36}$/i.test(id);
 // Native metadata contains absolute paths from the original home. Never let
 // resuming an imported thread append to the source client's rollout files.
-export async function rebaseNativeHome(home: string) {
+export async function rebaseNativeHome(home: string, sourceHome?: string) {
   const names = (await fs.readdir(home)).filter((f) =>
     /^state_\d+\.sqlite$/.test(f),
   );
   const { DatabaseSync } = await import("node:sqlite");
   const realHome = await fs.realpath(home);
+  const marker = path.join(realHome, "native-source.json");
+  if (!sourceHome)
+    try {
+      sourceHome = JSON.parse(await fs.readFile(marker, "utf8")).home;
+    } catch {}
+  sourceHome ||= path.join(os.homedir(), ".codex");
+  if (path.resolve(sourceHome).toLowerCase() === realHome.toLowerCase())
+    throw Error("来源目录不能是导入副本");
+  const originals = new Map(
+    (await nativeCatalog(sourceHome).catch(() => undefined))?.threads.map(
+      (t) => [t.entry.threadId, t.row.rollout_path],
+    ) || [],
+  );
+  const missing = new Set<string>();
+  const copied = new Map<string, string>();
+  await fs.writeFile(marker, JSON.stringify({ home: sourceHome }), {
+    mode: 0o600,
+  });
   for (const name of names) {
     const db = new DatabaseSync(path.join(realHome, name));
     try {
@@ -43,9 +62,7 @@ export async function rebaseNativeHome(home: string) {
         recursive: true,
         mode: 0o700,
       });
-      const rows = db
-        .prepare("SELECT id,rollout_path,archived FROM threads")
-        .all();
+      const rows = db.prepare("SELECT * FROM threads").all();
       const update = db.prepare("UPDATE threads SET rollout_path=? WHERE id=?");
       db.exec("BEGIN IMMEDIATE");
       try {
@@ -55,21 +72,61 @@ export async function rebaseNativeHome(home: string) {
             typeof row.rollout_path === "string"
               ? path.relative(realHome, row.rollout_path)
               : "..";
-          if (
+          const inside =
             relative &&
             !relative.startsWith("..") &&
-            !path.isAbsolute(relative)
+            !path.isAbsolute(relative);
+          const canonical = (value: unknown) =>
+            typeof value === "string" &&
+            /^rollout-\d{4}-\d\d-\d\dT\d\d-\d\d-\d\d-[a-f0-9-]{36}\.jsonl$/i.test(
+              path.basename(value),
+            );
+          const original = originals.get(row.id);
+          const stamp = new Date(
+            Number(row.created_at_ms) ||
+              Number(row.created_at) * 1000 ||
+              Date.now(),
           )
-            continue;
-          update.run(
-            path.join(
-              realHome,
-              row.archived ? "archived_sessions" : "sessions",
-              "imported",
-              `${row.id}.jsonl`,
-            ),
-            row.id,
-          );
+            .toISOString()
+            .slice(0, 19)
+            .replace(/:/g, "-");
+          const target =
+            inside && canonical(row.rollout_path)
+              ? String(row.rollout_path)
+              : path.join(
+                  realHome,
+                  row.archived ? "archived_sessions" : "sessions",
+                  ...stamp.slice(0, 10).split("-"),
+                  canonical(original)
+                    ? path.basename(original)
+                    : `rollout-${stamp}-${row.id}.jsonl`,
+                );
+          await fs.mkdir(path.dirname(target), {
+            recursive: true,
+            mode: 0o700,
+          });
+          try {
+            await fs.access(target);
+          } catch {
+            const source =
+              inside &&
+              typeof row.rollout_path === "string" &&
+              (await fs.access(row.rollout_path).then(
+                () => true,
+                () => false,
+              ))
+                ? row.rollout_path
+                : original ||
+                  (target !== row.rollout_path ? row.rollout_path : undefined);
+            try {
+              if (typeof source !== "string") throw Error("缺少源日志");
+              await fs.copyFile(source, target);
+            } catch {
+              missing.add(row.id);
+            }
+          }
+          update.run(target, row.id);
+          if (!missing.has(row.id)) copied.set(row.id, target);
         }
         db.exec("COMMIT");
       } catch (e) {
@@ -80,6 +137,39 @@ export async function rebaseNativeHome(home: string) {
       db.close();
     }
   }
+  const parents = new Map<string, any>();
+  for (const [id, file] of copied)
+    try {
+      for await (const row of jsonLines(file)) {
+        if (row.type !== "session_meta" || row.payload?.id !== id) {
+          missing.add(id);
+          break;
+        }
+        parents.set(id, row.payload?.history_base);
+        break;
+      }
+      if (!parents.has(id)) missing.add(id);
+    } catch {
+      missing.add(id);
+    }
+  const complete = async (
+    id: string,
+    seen = new Set<string>(),
+  ): Promise<boolean> => {
+    if (missing.has(id) || seen.has(id) || seen.size >= 32) return false;
+    const base = parents.get(id);
+    if (!base || (base.end_ordinal_exclusive === 0 && !base.end_byte_offset))
+      return true;
+    if (!uuid(base.thread_id) || !copied.has(base.thread_id)) return false;
+    if (
+      base.end_byte_offset &&
+      (await fs.stat(copied.get(base.thread_id)!)).size < base.end_byte_offset
+    )
+      return false;
+    return complete(base.thread_id, new Set([...seen, id]));
+  };
+  for (const id of copied.keys()) if (!(await complete(id))) missing.add(id);
+  return missing;
 }
 export function nativeSource(raw: unknown) {
   let source: any = raw;
@@ -143,16 +233,24 @@ export async function nativeCatalog(home: string) {
     >[]) {
       if (!uuid(row.id)) continue;
       const source = nativeSource(row.source);
+      const missingRollout =
+        typeof row.rollout_path === "string" &&
+        (await fs.access(row.rollout_path).then(
+          () => false,
+          () => true,
+        ));
       const issue =
         !history && row.history_mode === "paginated"
           ? "源客户端的分页消息数据库缺失，只能查看会话信息。"
-          : privateTools.has(row.id)
-            ? "此会话使用 Desktop 专属工具，可阅读历史；CLI 无法提供原应用工具。"
-            : source.source === "subagent"
-              ? "子代理记录仅供阅读，请继续主会话。"
-              : source.source === "review"
-                ? "这是后台审批记录，仅供查阅。"
-                : undefined;
+          : missingRollout
+            ? "源会话日志已缺失；已恢复完整缓存供阅读，CLI 续接需要原始日志。"
+            : privateTools.has(row.id)
+              ? "此会话使用 Desktop 专属工具，可阅读历史；CLI 无法提供原应用工具。"
+              : source.source === "subagent"
+                ? "子代理记录仅供阅读，请继续主会话。"
+                : source.source === "review"
+                  ? "这是后台审批记录，仅供查阅。"
+                  : undefined;
       threads.push({
         home,
         state,
@@ -190,7 +288,7 @@ export async function nativeCatalog(home: string) {
 export class NativeSnapshots {
   private snapshots = new Map<
     string,
-    { id: string; home: string; history?: DatabaseSync }
+    { id: string; home: string; history?: DatabaseSync; missing: Set<string> }
   >();
   private copies = new Map<string, string>();
   constructor(
@@ -226,10 +324,11 @@ export class NativeSnapshots {
           source.close();
         }
       }
-      await rebaseNativeHome(home);
+      const missing = await rebaseNativeHome(home, native.home);
       snapshot = {
         id,
         home,
+        missing,
         history: native.history
           ? new DatabaseSync(path.join(home, path.basename(native.history)), {
               readOnly: true,
@@ -337,7 +436,12 @@ export class NativeSnapshots {
         source: entry.source,
         storage: "sqlite",
         parentThreadId: entry.parentThreadId,
-        issue: !count ? "源客户端尚未保存可读取的消息记录。" : entry.issue,
+        issue: !count
+          ? "源客户端尚未保存可读取的消息记录。"
+          : entry.issue ||
+            (snapshot.missing.has(entry.threadId)
+              ? "源会话日志已缺失；已恢复完整缓存供阅读，CLI 续接需要原始日志。"
+              : undefined),
       },
       rotations: 0,
       createdAt: Number(

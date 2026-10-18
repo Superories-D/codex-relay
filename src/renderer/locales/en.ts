@@ -1,6 +1,8 @@
 import { legacyEnglish } from "./legacy-en";
 import { nativeEnglish } from "./native-en";
 export const english: Record<string, string> = {
+  "源会话日志已缺失；已恢复完整缓存供阅读，CLI 续接需要原始日志。":
+    "The source rollout is missing. The complete cached history is readable; CLI continuation requires the original rollout.",
   使用设备验证码登录: "Sign in with a device code",
   "已更新现有账户：{email}": "Updated existing account: {email}",
   "已添加新账户：{email}": "Added new account: {email}",

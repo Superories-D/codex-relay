@@ -60,6 +60,10 @@ it("rebases copied native rollout paths into the private import home before CLI 
   const db = new DatabaseSync(path.join(home, "state_5.sqlite"));
   db.exec("ALTER TABLE threads ADD COLUMN rollout_path TEXT");
   const sourcePath = path.join(home, "sessions", "original.jsonl");
+  await fs.writeFile(
+    sourcePath,
+    JSON.stringify({ type: "session_meta", payload: { id } }) + "\n",
+  );
   db.prepare("UPDATE threads SET rollout_path=?").run(sourcePath);
   db.close();
   importer.start([home]);
@@ -73,9 +77,29 @@ it("rebases copied native rollout paths into the private import home before CLI 
     copy.prepare("SELECT rollout_path FROM threads WHERE id=?").get(id)
       ?.rollout_path,
   ).toBe(
-    path.join(store.jobHome(job.id), "sessions", "imported", `${id}.jsonl`),
+    path.join(
+      store.jobHome(job.id),
+      "sessions",
+      "1970",
+      "01",
+      "01",
+      `rollout-1970-01-01T00-00-01-${id}.jsonl`,
+    ),
   );
   copy.close();
+  expect(
+    await fs.readFile(
+      path.join(
+        store.jobHome(job.id),
+        "sessions",
+        "1970",
+        "01",
+        "01",
+        `rollout-1970-01-01T00-00-01-${id}.jsonl`,
+      ),
+      "utf8",
+    ),
+  ).toBe(await fs.readFile(sourcePath, "utf8"));
   const original = new DatabaseSync(path.join(home, "state_5.sqlite"), {
     readOnly: true,
   });
@@ -84,6 +108,39 @@ it("rebases copied native rollout paths into the private import home before CLI 
       ?.rollout_path,
   ).toBe(sourcePath);
   original.close();
+});
+it("keeps cached messages readable but refuses continuation when a required rollout ancestor is missing", async () => {
+  const id = await sqliteFixture();
+  const { DatabaseSync } = await import("node:sqlite"),
+    db = new DatabaseSync(path.join(home, "state_5.sqlite"));
+  db.exec("ALTER TABLE threads ADD COLUMN rollout_path TEXT");
+  const file = path.join(
+    home,
+    "sessions",
+    `rollout-2026-10-18T00-00-00-${id}.jsonl`,
+  );
+  await fs.writeFile(
+    file,
+    JSON.stringify({
+      type: "session_meta",
+      payload: {
+        id,
+        history_base: {
+          thread_id: randomUUID(),
+          end_ordinal_exclusive: 10,
+          end_byte_offset: 100,
+        },
+      },
+    }) + "\n",
+  );
+  db.prepare("UPDATE threads SET rollout_path=?").run(file);
+  db.close();
+  importer.start([home]);
+  await finished();
+  expect(store.data.jobs[0].historySource?.issue).toContain("日志已缺失");
+  expect((await new Chats(store.root).read(store.data.jobs[0].id)).total).toBe(
+    3,
+  );
 });
 it("preserves every native page and exports complete source when a very large output uses a UI preview", async () => {
   const id = await sqliteFixture();
