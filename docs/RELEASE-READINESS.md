@@ -44,3 +44,8 @@ Never disclose or commit credentials. Do not overwrite current tokens from old
 backups. Changes are verified then committed and pushed at concrete milestones.
 No quota-consuming test is authorized merely by reactivating the goal; continue
 local and account-free checks and request a bounded live test only when needed.
+
+Additional schedule durability gate: `SCHEDULE-STORAGE-20261019.md` records
+persist-before-publish create/edit/delete behavior, controlled atomic-write
+failure regressions and real Electron draft/error/retry verification. This does
+not replace the open scheduled-inference or physical-suspend requirements.

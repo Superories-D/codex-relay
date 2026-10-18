@@ -226,6 +226,52 @@ const output = path.join(root, "qa-output");
     report.checks.push(
       "UI deletion persisted while preserving task history; no accounts or model sessions",
     );
+    const denyNextScheduleWrite = () => app.evaluate(() => {
+      const fs = process.getBuiltinModule("fs"), path = process.getBuiltinModule("path");
+      const original = fs.promises.rename;
+      fs.promises.rename = async (from, to) => {
+        if (path.basename(String(to)) === "desktop.json") {
+          fs.promises.rename = original;
+          throw Object.assign(Error("fixture schedule write denied"), { code: "EPERM" });
+        }
+        return original(from, to);
+      };
+    });
+    await page.getByRole("button", { name: "スケジュールタスクを作成", exact: true }).click();
+    await page.getByLabel("名前", { exact: true }).fill("Durable schedule fixture");
+    await page.getByLabel("タスクの内容").fill("Saved original prompt");
+    await page.getByLabel("プロジェクトディレクトリ").fill(profile);
+    await denyNextScheduleWrite();
+    const save = () => page.getByRole("button", { name: "スケジュールタスクを保存", exact: true }).click();
+    const error = page.locator(".schedule-form [role='alert']");
+    await save();
+    await error.filter({ hasText: "fixture schedule write denied" }).waitFor();
+    assert.equal((await call("desktop.read")).schedules.length, 0);
+    assert.equal(await page.getByLabel("タスクの内容").inputValue(), "Saved original prompt");
+    await save();
+    await page.locator(".schedule-form").waitFor({ state: "detached" });
+    const saved = (await call("desktop.read")).schedules[0];
+    await page.getByRole("button", { name: "Durable schedule fixture", exact: true }).click();
+    await page.getByLabel("タスクの内容").fill("Unsaved replacement");
+    await denyNextScheduleWrite();
+    await save();
+    await error.filter({ hasText: "fixture schedule write denied" }).waitFor();
+    assert.deepEqual((await call("desktop.read")).schedules[0], saved);
+    assert.equal(await page.getByLabel("タスクの内容").inputValue(), "Unsaved replacement");
+    await page.getByRole("button", { name: "スケジュールタスクの編集を閉じる", exact: true }).click();
+    await page.getByRole("button", { name: "Durable schedule fixture", exact: true }).click();
+    assert.equal(await page.getByLabel("タスクの内容").inputValue(), "Saved original prompt");
+    await denyNextScheduleWrite();
+    const remove = () => page.getByRole("button", { name: "スケジュールタスクを削除", exact: true }).click();
+    await remove();
+    await error.filter({ hasText: "fixture schedule write denied" }).waitFor();
+    assert.deepEqual((await call("desktop.read")).schedules[0], saved);
+    await remove();
+    await page.locator(".schedule-form").waitFor({ state: "detached" });
+    await page.reload();
+    assert.equal((await call("desktop.read")).schedules.length, 0);
+    assert.deepEqual(report.errors, []);
+    report.checks.push("actual Electron save/edit/delete disk failures retain saved state, keep the draft visible and permit retry without duplication; successful deletion survives reload");
     report.status = "passed";
   } catch (error) {
     report.failure = String(error);

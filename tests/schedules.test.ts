@@ -339,3 +339,88 @@ it("preserves a pending occurrence across time-zone changes and rolls back faile
   await schedules.tick();
   expect(store.data.jobs).toHaveLength(1);
 });
+
+function failDesktopWrite() {
+  const rename = fs.rename.bind(fs);
+  let failed = false;
+  return vi.spyOn(fs, "rename").mockImplementation(async (from, to) => {
+    if (!failed && path.basename(String(to)) === "desktop.json") {
+      failed = true;
+      throw Object.assign(Error("schedule disk denied"), { code: "EPERM" });
+    }
+    return rename(from, to);
+  });
+}
+
+it("does not enable a new schedule after its disk write fails", async () => {
+  await desktop.save();
+  failDesktopWrite();
+  await expect(schedules.save(input())).rejects.toThrow("schedule disk denied");
+  expect(desktop.data.schedules).toHaveLength(0);
+  now += 86400000;
+  await schedules.tick();
+  expect(store.data.jobs).toHaveLength(0);
+  const loaded = new Desktop(root);
+  await loaded.load();
+  expect(loaded.data.schedules).toHaveLength(0);
+  await schedules.save(input());
+  expect(desktop.data.schedules).toHaveLength(1);
+});
+
+it("retains the saved enabled state and task content after edit or deletion fails", async () => {
+  const task = await create();
+  const before = structuredClone(task);
+  const spy = failDesktopWrite();
+  await expect(schedules.save({ ...input(), id: task.id, enabled: false, prompt: "unsaved replacement" })).rejects.toThrow("schedule disk denied");
+  expect(desktop.data.schedules[0]).toEqual(before);
+  spy.mockRestore();
+  failDesktopWrite();
+  await expect(schedules.remove(task.id)).rejects.toThrow("schedule disk denied");
+  expect(desktop.data.schedules[0]).toEqual(before);
+  const loaded = new Desktop(root);
+  await loaded.load();
+  expect(loaded.data.schedules[0]).toEqual(before);
+  await schedules.remove(task.id);
+  expect(desktop.data.schedules).toHaveLength(0);
+});
+
+it("keeps failed edits invisible while concurrent schedule and preference writes preserve committed changes", async () => {
+  await schedules.save({ ...input(), enabled: false });
+  const original = desktop.data.schedules[0];
+  const rename = fs.rename.bind(fs);
+  let release!: () => void, entered!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const waiting = new Promise<void>((resolve) => { entered = resolve; });
+  let first = true;
+  vi.spyOn(fs, "rename").mockImplementation(async (from, to) => {
+    if (first && path.basename(String(to)) === "desktop.json") {
+      first = false;
+      entered();
+      await gate;
+      throw Error("blocked schedule edit failed");
+    }
+    return rename(from, to);
+  });
+  const edit = schedules.save({ ...input(), id: original.id }).catch((error) => error);
+  await waiting;
+  expect(original.enabled).toBe(false);
+  const add = schedules.save({ ...input(), title: "Independent schedule" });
+  desktop.data.preferences.language = "ja";
+  const preferences = desktop.save();
+  release();
+  expect(await edit).toBeInstanceOf(Error);
+  await Promise.all([add, preferences]);
+  expect(desktop.data.schedules).toHaveLength(2);
+  expect(original.enabled).toBe(false);
+  const loaded = new Desktop(root);
+  await loaded.load();
+  expect(loaded.data.schedules).toEqual(desktop.data.schedules);
+  expect(loaded.data.preferences.language).toBe("ja");
+  // A preference write already queued behind deletion must not resurrect it.
+  const removing = schedules.remove(original.id);
+  await Promise.resolve();
+  await Promise.all([removing, desktop.save()]);
+  await loaded.load();
+  expect(loaded.data.schedules.map((task) => task.title)).toEqual(["Independent schedule"]);
+  expect(desktop.data.schedules.map((task) => task.title)).toEqual(["Independent schedule"]);
+});

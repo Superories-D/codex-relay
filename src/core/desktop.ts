@@ -84,10 +84,27 @@ export class Desktop {
     }
   }
   save() {
-    const text = JSON.stringify(this.data);
     const next = this.writes
       .catch(() => {})
-      .then(() => atomicWrite(path.join(this.root, "desktop.json"), text));
+      // Read after prior transactions commit, so an already-queued preference
+      // save cannot put an obsolete schedule list back on disk.
+      .then(() => atomicWrite(path.join(this.root, "desktop.json"), JSON.stringify(this.data)));
+    this.writes = next;
+    return next;
+  }
+  changeSchedules(change: (tasks: ScheduledTask[]) => ScheduledTask[]) {
+    const next = this.writes.catch(() => {}).then(async () => {
+      const tasks = change(this.data.schedules);
+      await atomicWrite(path.join(this.root, "desktop.json"), JSON.stringify({
+        ...this.data, schedules: tasks,
+      }));
+      // Publish only durable edits. Retain task identities used by admission
+      // bookkeeping; unrelated tasks may still be preparing while disk writes.
+      this.data.schedules = tasks.map((task) => {
+        const previous = this.data.schedules.find((item) => item.id === task.id);
+        return previous && previous !== task ? Object.assign(previous, task) : task;
+      });
+    });
     this.writes = next;
     return next;
   }

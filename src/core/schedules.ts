@@ -64,9 +64,9 @@ export class Schedules {
         nextRun: nextSchedule(input, this.now()),
         nextRunZone: input.cadence === "interval" ? undefined : this.timeZone(),
       };
-      if (previous) Object.assign(previous, task);
-      else this.desktop.data.schedules.push(task);
-      await this.desktop.save();
+      await this.desktop.changeSchedules((tasks) => previous
+        ? tasks.map((item) => item.id === id ? task : item)
+        : [...tasks, task]);
       this.changed();
       return this.desktop.data;
     });
@@ -74,10 +74,9 @@ export class Schedules {
   remove(id: string) {
     return this.serial(id, async () => {
       if (this.closing) throw new Error("客户端正在退出，请稍后再操作定时任务");
-      this.desktop.data.schedules = this.desktop.data.schedules.filter(
+      await this.desktop.changeSchedules((tasks) => tasks.filter(
         (task) => task.id !== id,
-      );
-      await this.desktop.save();
+      ));
       this.changed();
       return this.desktop.data;
     });
