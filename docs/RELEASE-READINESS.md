@@ -8,8 +8,10 @@ requires concurrent tasks across multiple threads.
 
 The user supplied an HTTP origin after the initial v0.6.17 binary uploads failed
 and explicitly resumed the long-term goal. The existing release now contains
-verified binary volumes, instructions and checksums. Further iteration is active;
-the incomplete gates below remain open and are not achieved by publication.
+verified binary volumes, instructions and checksums. Further iteration is stopping
+under the user's shutdown deadline; leave the Goal paused. The incomplete gates
+below remain open and are not achieved by publication. Current stop/resume entry:
+`HANDOFF-20261019-SHUTDOWN.md`.
 
 Shutdown constraint: at 2026-10-18 23:32 (Asia/Shanghai), the user allowed another
 160 minutes and instructed stopping if the objective remains unfinished. Stop by
@@ -49,3 +51,11 @@ Additional schedule durability gate: `SCHEDULE-STORAGE-20261019.md` records
 persist-before-publish create/edit/delete behavior, controlled atomic-write
 failure regressions and real Electron draft/error/retry verification. This does
 not replace the open scheduled-inference or physical-suspend requirements.
+
+Latest code checkpoint: `35d82ed`, build/typecheck and **48 files / 419 tests**
+passed. Diagnostic authentication masking now preserves valid JSON and masks
+complete headers/HTTP URL user information; see `DIAGNOSTIC-REDACTION-20261019.md`.
+File previews reject unsupported encodings instead of corrupting their bytes;
+core UTF-8/BOM checks and actual Chinese/Japanese Electron preview/edit passed;
+see `FILE-ENCODING-20261019.md`. New source milestones are not in the unchanged
+v0.6.17 release binaries.
