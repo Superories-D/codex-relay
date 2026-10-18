@@ -9,6 +9,7 @@ export const defaults: AppState = {
   logs: [],
   cursor: 0,
   settings: {
+    maxConcurrentTasks: 3,
     accountSelection: "smart",
     resetWarmupEnabled: true,
     cliPath: "codex",

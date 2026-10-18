@@ -69,6 +69,23 @@
 .agent-rail-spacer {
   flex: 1;
 }
+.agent-rail .task-queue-button {
+  position: relative;
+}
+.agent-rail .task-count {
+  position: absolute;
+  top: 1px;
+  right: 0;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #14201b;
+  font-size: 10px;
+  line-height: 15px;
+  font-weight: 600;
+}
 .agent-dot {
   width: 8px;
   height: 8px;

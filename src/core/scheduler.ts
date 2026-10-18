@@ -44,22 +44,83 @@ import {
   denyModel,
 } from "../shared/model-access";
 class ModelRoutingError extends Error {}
+interface ActiveRun {
+  job: Job;
+  worker?: Worker;
+  reason?: "pause" | "cancel";
+  failedStop?: boolean;
+  done?: Promise<void>;
+}
 export class Scheduler extends EventEmitter {
   readonly chats: Chats;
   approvals: Approval[] = [];
-  private active?: {
-    job: Job;
-    worker?: Worker;
-    reason?: "pause" | "cancel";
-    failedStop?: boolean;
-  };
+  private active = new Map<string, ActiveRun>();
+  private jobControls = new Map<string, Promise<unknown>>();
   private timer?: NodeJS.Timeout;
   private ticking = false;
   private tickInFlight?: Promise<void>;
   private controls: Promise<unknown> = Promise.resolve();
   private closing = false;
   private maintaining = false;
-  private currentRun?: Promise<void>;
+  private get currentRun() {
+    return Promise.all([...this.active.values()].map((run) => run.done));
+  }
+  private familyActive(id: string) {
+    const home = this.store.jobHome(id);
+    return [...this.active.values()].some(
+      (run) => this.store.jobHome(run.job.id) === home,
+    );
+  }
+  private accountActive(id: string, runningOnly = false) {
+    return [...this.active.values()].some(
+      (run) =>
+        run.job.accountId === id &&
+        (!runningOnly || run.job.state === "running"),
+    );
+  }
+  private queueControl<T>(id: string, fn: () => Promise<T>): Promise<T> {
+    const key = this.store.jobHome(id);
+    const dependencies = [this.controls, this.jobControls.get(key)];
+    const task = Promise.allSettled(dependencies).then(fn);
+    this.jobControls.set(key, task);
+    void task
+      .finally(() => {
+        if (this.jobControls.get(key) === task) this.jobControls.delete(key);
+      })
+      .catch(() => {});
+    return task;
+  }
+  private queueMaintenance<T>(fn: () => Promise<T>): Promise<T> {
+    const task = Promise.allSettled([
+      this.controls,
+      ...this.jobControls.values(),
+    ]).then(fn);
+    this.controls = task;
+    return task;
+  }
+  private selectAccount(job: Job) {
+    // Keep array indexes stable for round-robin cursors. CLI runtimes share only
+    // access tokens; a Desktop runtime must exclusively own its account profile.
+    const pool = this.store.data.accounts.map((account) => {
+      const conflict =
+        this.accounts.busy.has(account.id) ||
+        [...this.active.values()].some(
+          (run) =>
+            run.job.id !== job.id &&
+            run.job.accountId === account.id &&
+            (job.mode === "desktop" || run.job.mode === "desktop"),
+        );
+      return conflict ? { ...account, enabled: false } : account;
+    });
+    return pickAccount(
+      pool,
+      this.store.data.cursor,
+      job.bucket,
+      Date.now(),
+      this.store.data.settings.accountSelection || "smart",
+      job.model,
+    );
+  }
   private probes = new Map<string, number>();
   private publishTimer?: NodeJS.Timeout;
   readonly warmups: AccountWarmups;
@@ -134,8 +195,8 @@ export class Scheduler extends EventEmitter {
           )
         )
           return false;
-        return this.active
-          ? this.active.job.accountId !== account.id
+        return this.active.size
+          ? !this.accountActive(account.id)
           : !store.data.jobs.some(
               (j) =>
                 ["queued", "preparing", "running", "pausing"].includes(
@@ -154,8 +215,7 @@ export class Scheduler extends EventEmitter {
         account,
         previous,
         fresh,
-        this.active?.job.accountId === account.id &&
-          this.active.job.state === "running",
+        this.accountActive(account.id, true),
       );
   }
   snapshot(): Snapshot {
@@ -224,7 +284,7 @@ export class Scheduler extends EventEmitter {
     if (!stat.isDirectory()) throw new Error("工作目录不存在");
     if (
       existing &&
-      (this.active ||
+      (this.active.size ||
         this.store.data.jobs.some(
           (j) =>
             j.recoveryRequired ||
@@ -279,116 +339,111 @@ export class Scheduler extends EventEmitter {
     void this.tick().catch((error) => this.log(error, "error"));
   }
   createGoal(input: NewJob, tokenBudget: number | null, start: boolean) {
-    const task = this.controls
-      .catch(() => {})
-      .then(async () => {
-        await this.tickInFlight;
-        if (this.closing || this.maintaining)
-          throw new Error("客户端正在处理其他会话操作，请稍后再创建目标");
-        if (input.mode !== "cli" || input.attachments?.length || input.review)
-          throw new Error("请先创建持续目标，再在聊天中补充文件或发起审查");
-        if (!(await fs.stat(input.cwd)).isDirectory())
-          throw new Error("工作目录不存在");
-        this.maintaining = true;
-        const job: Job = {
-          ...input,
-          prompt: "",
-          interactive: true,
-          id: randomUUID(),
-          state: "paused",
-          rotations: 0,
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-        };
-        let rpc: Rpc | undefined;
-        try {
-          const home = this.store.jobHome(job.id);
-          await fs.mkdir(home, { recursive: true, mode: 0o700 });
+    return this.queueMaintenance(async () => {
+      await this.tickInFlight;
+      if (this.closing || this.maintaining)
+        throw new Error("客户端正在处理其他会话操作，请稍后再创建目标");
+      if (input.mode !== "cli" || input.attachments?.length || input.review)
+        throw new Error("请先创建持续目标，再在聊天中补充文件或发起审查");
+      if (!(await fs.stat(input.cwd)).isDirectory())
+        throw new Error("工作目录不存在");
+      this.maintaining = true;
+      const job: Job = {
+        ...input,
+        prompt: "",
+        interactive: true,
+        id: randomUUID(),
+        state: "paused",
+        rotations: 0,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      let rpc: Rpc | undefined;
+      try {
+        const home = this.store.jobHome(job.id);
+        await fs.mkdir(home, { recursive: true, mode: 0o700 });
+        rpc = await Rpc.open(this.store.data.settings.cliPath, home);
+        rpc.on("request", (m) =>
+          rpc?.reject(m.id!, "创建目标不执行模型或工具"),
+        );
+        const result = await prepareThread(rpc, undefined, {
+          cwd: input.cwd,
+          approvalPolicy: input.approvalPolicy,
+          sandbox: "read-only",
+          ...(input.model ? { model: input.model } : {}),
+          config: { "features.goals": false },
+        });
+        job.threadId = result.thread.id;
+        const saved = await rpc.call("thread/goal/set", {
+          threadId: job.threadId,
+          objective: input.prompt,
+          tokenBudget,
+          status: "paused",
+          origin: "user",
+        });
+        if (
+          saved.goal?.threadId !== job.threadId ||
+          saved.goal.status !== "paused"
+        )
+          throw new Error("目标保存状态未确认，请检查新建会话");
+        job.goal = saved.goal;
+        await rpc.close();
+        rpc = undefined;
+        if (start) {
+          // Only activate after unloading. A loaded active Goal can start its
+          // own turn before the Scheduler selects and authenticates an account.
           rpc = await Rpc.open(this.store.data.settings.cliPath, home);
-          rpc.on("request", (m) =>
-            rpc?.reject(m.id!, "创建目标不执行模型或工具"),
-          );
-          const result = await prepareThread(rpc, undefined, {
-            cwd: input.cwd,
-            approvalPolicy: input.approvalPolicy,
-            sandbox: "read-only",
-            ...(input.model ? { model: input.model } : {}),
-            config: { "features.goals": false },
-          });
-          job.threadId = result.thread.id;
-          const saved = await rpc.call("thread/goal/set", {
+          rpc.on("request", (m) => rpc?.reject(m.id!, "目标等待调度后执行"));
+          const activated = await rpc.call("thread/goal/set", {
             threadId: job.threadId,
-            objective: input.prompt,
-            tokenBudget,
-            status: "paused",
+            status: "active",
             origin: "user",
           });
           if (
-            saved.goal?.threadId !== job.threadId ||
-            saved.goal.status !== "paused"
+            activated.goal?.threadId !== job.threadId ||
+            activated.goal.status !== "active"
           )
-            throw new Error("目标保存状态未确认，请检查新建会话");
-          job.goal = saved.goal;
+            throw new Error("目标尚未确认激活，未排队执行");
+          job.goal = activated.goal;
           await rpc.close();
           rpc = undefined;
-          if (start) {
-            // Only activate after unloading. A loaded active Goal can start its
-            // own turn before the Scheduler selects and authenticates an account.
-            rpc = await Rpc.open(this.store.data.settings.cliPath, home);
-            rpc.on("request", (m) => rpc?.reject(m.id!, "目标等待调度后执行"));
-            const activated = await rpc.call("thread/goal/set", {
-              threadId: job.threadId,
-              status: "active",
-              origin: "user",
-            });
-            if (
-              activated.goal?.threadId !== job.threadId ||
-              activated.goal.status !== "active"
-            )
-              throw new Error("目标尚未确认激活，未排队执行");
-            job.goal = activated.goal;
-            await rpc.close();
-            rpc = undefined;
-            job.goalStartRequested = true;
-            job.state = "queued";
-          }
-          this.store.data.jobs.push(job);
+          job.goalStartRequested = true;
+          job.state = "queued";
+        }
+        this.store.data.jobs.push(job);
+        await this.store.save();
+        this.changed();
+        return job;
+      } catch (error) {
+        if (job.threadId || error instanceof ProcessSafetyError) {
+          job.state = "needs_attention";
+          if (error instanceof ProcessSafetyError) job.recoveryRequired = true;
+          job.lastError = redact(
+            error instanceof Error ? error.message : String(error),
+          );
+          if (!this.store.data.jobs.some((j) => j.id === job.id))
+            this.store.data.jobs.push(job);
           await this.store.save();
           this.changed();
-          return job;
+        }
+        throw error;
+      } finally {
+        try {
+          await rpc?.close();
         } catch (error) {
-          if (job.threadId || error instanceof ProcessSafetyError) {
-            job.state = "needs_attention";
-            if (error instanceof ProcessSafetyError)
-              job.recoveryRequired = true;
-            job.lastError = redact(
-              error instanceof Error ? error.message : String(error),
-            );
-            if (!this.store.data.jobs.some((j) => j.id === job.id))
-              this.store.data.jobs.push(job);
-            await this.store.save();
-            this.changed();
-          }
+          job.state = "needs_attention";
+          job.recoveryRequired = true;
+          job.lastError = "目标创建进程停止尚未确认，请先处理恢复状态";
+          if (!this.store.data.jobs.some((j) => j.id === job.id))
+            this.store.data.jobs.push(job);
+          await this.store.save();
+          this.changed();
           throw error;
         } finally {
-          try {
-            await rpc?.close();
-          } catch (error) {
-            job.state = "needs_attention";
-            job.recoveryRequired = true;
-            job.lastError = "目标创建进程停止尚未确认，请先处理恢复状态";
-            if (!this.store.data.jobs.some((j) => j.id === job.id))
-              this.store.data.jobs.push(job);
-            await this.store.save();
-            this.changed();
-            throw error;
-          } finally {
-            this.maintaining = false;
-          }
+          this.maintaining = false;
         }
-      });
-    this.controls = task;
-    return task;
+      }
+    });
   }
   private async refreshDue(now: number) {
     for (const a of this.store.data.accounts) {
@@ -400,7 +455,7 @@ export class Scheduler extends EventEmitter {
         Object.values(a.warmups || {}).some(
           (w) => w.status === "running" || w.processSafe === false,
         ) ||
-        this.active?.job.accountId === a.id
+        this.accountActive(a.id)
       )
         continue;
       const last = this.probes.get(a.id) ?? 0;
@@ -454,18 +509,12 @@ export class Scheduler extends EventEmitter {
         this.store.data.jobs.find(
           (j) =>
             ["queued", "waiting"].includes(j.state) &&
-            pickAccount(
-              this.store.data.accounts,
-              this.store.data.cursor,
-              j.bucket,
-              Date.now(),
-              this.store.data.settings.accountSelection || "smart",
-              j.model,
-            ),
+            !this.familyActive(j.id) &&
+            this.selectAccount(j),
         );
       let runnable = findRunnable();
       if (
-        !this.active &&
+        !this.active.size &&
         !runnable &&
         this.store.data.jobs.some(
           (j) =>
@@ -476,8 +525,8 @@ export class Scheduler extends EventEmitter {
         await this.warmups.yieldToTask();
         runnable = findRunnable();
       }
-      if (!this.active && !runnable) await this.refreshDue(now);
-      else if (this.active && !this.backgroundProbe) {
+      if (!this.active.size && !runnable) await this.refreshDue(now);
+      else if (this.active.size && !this.backgroundProbe) {
         this.backgroundProbe = this.refreshDue(now)
           .catch((error) => this.log(error, "warning"))
           .finally(() => {
@@ -491,89 +540,83 @@ export class Scheduler extends EventEmitter {
           .catch((error) => this.log(error, "warning"));
       }
       this.warmups.pump();
-      if (
-        this.active ||
-        this.closing ||
-        this.store.data.jobs.some((j) => j.recoveryRequired)
-      )
+      if (this.closing || this.store.data.jobs.some((j) => j.recoveryRequired))
         return;
-      const job = this.store.data.jobs.find(
-        (j) =>
-          j.state === "queued" ||
-          (j.state === "waiting" &&
-            ((j.nextWakeAt ?? 0) <= now ||
-              pickAccount(
-                this.store.data.accounts,
-                this.store.data.cursor,
-                j.bucket,
-                Date.now(),
-                this.store.data.settings.accountSelection || "smart",
-                j.model,
-              ) !== null)),
+      const limit = Math.max(
+        1,
+        Math.min(8, this.store.data.settings.maxConcurrentTasks ?? 3),
       );
-      if (!job) return;
-      const selection = pickAccount(
-        this.store.data.accounts,
-        this.store.data.cursor,
-        job.bucket,
-        Date.now(),
-        this.store.data.settings.accountSelection || "smart",
-        job.model,
-      );
-      if (!selection) {
-        const pool = this.store.data.accounts.filter(
-          (a) =>
-            a.enabled &&
-            a.status !== "reauth" &&
-            !(a.expiresAt && a.expiresAt <= now),
-        );
-        const modelWait =
-          !!job.model &&
-          pool.length > 0 &&
-          pool.every((a) => supportsModel(a, job.model, now) === false);
-        job.state = "waiting";
-        job.waitingFor = modelWait ? "model" : undefined;
-        job.stage = modelWait ? "等待支持所选模型的账户" : "等待可用账户";
-        job.lastError = modelWait
-          ? "暂时没有参与轮换的账户支持所选模型。会自动复查，也可以切换模型继续原任务。"
-          : undefined;
-        job.nextWakeAt = modelWait
-          ? Math.max(
-              now + 1000,
-              Math.min(
-                ...pool.map(
-                  (a) => a.modelDenials![job.model!] + MODEL_ACCESS_TTL,
-                ),
-              ),
-            )
-          : nextWake(
-              this.store.data.accounts,
-              job.bucket,
-              Date.now(),
-              this.store.data.settings.retrySeconds * 1000,
-              job.model,
-            );
-        this.log(
-          modelWait
+      for (const job of this.store.data.jobs) {
+        if (this.closing || this.maintaining || this.active.size >= limit)
+          break;
+        if (
+          this.familyActive(job.id) ||
+          !["queued", "waiting"].includes(job.state)
+        )
+          continue;
+        const selection = this.selectAccount(job);
+        if (
+          job.state === "waiting" &&
+          (job.nextWakeAt ?? 0) > now &&
+          !selection
+        )
+          continue;
+        if (!selection) {
+          const pool = this.store.data.accounts.filter(
+            (a) =>
+              a.enabled &&
+              a.status !== "reauth" &&
+              !(a.expiresAt && a.expiresAt <= now),
+          );
+          const modelWait =
+            !!job.model &&
+            pool.length > 0 &&
+            pool.every((a) => supportsModel(a, job.model, now) === false);
+          job.state = "waiting";
+          job.waitingFor = modelWait ? "model" : undefined;
+          job.stage = modelWait ? "等待支持所选模型的账户" : "等待可用账户";
+          job.lastError = modelWait
             ? "暂时没有参与轮换的账户支持所选模型。会自动复查，也可以切换模型继续原任务。"
-            : `暂无可用账户，等待到 ${new Date(job.nextWakeAt).toLocaleString()} 后重新向服务器核实额度`,
-          "info",
-          job.id,
-        );
-        await this.store.save();
-        this.changed();
-        return;
+            : undefined;
+          job.nextWakeAt = modelWait
+            ? Math.max(
+                now + 1000,
+                Math.min(
+                  ...pool.map(
+                    (a) => a.modelDenials![job.model!] + MODEL_ACCESS_TTL,
+                  ),
+                ),
+              )
+            : nextWake(
+                this.store.data.accounts,
+                job.bucket,
+                Date.now(),
+                this.store.data.settings.retrySeconds * 1000,
+                job.model,
+              );
+          this.log(
+            modelWait
+              ? "暂时没有参与轮换的账户支持所选模型。会自动复查，也可以切换模型继续原任务。"
+              : `暂无可用账户，等待到 ${new Date(job.nextWakeAt).toLocaleString()} 后重新向服务器核实额度`,
+            "info",
+            job.id,
+          );
+          await this.store.save();
+          this.changed();
+          continue;
+        }
+        this.store.data.cursor = selection.cursor;
+        const active: ActiveRun = { job };
+        this.active.set(job.id, active);
+        active.done = this.run(job, selection.account).catch((error) => {
+          job.state = "needs_attention";
+          job.recoveryRequired = true;
+          job.lastError = redact(error);
+          active.failedStop = true;
+          this.log(error, "error", job.id);
+          this.changed();
+        });
       }
-      this.store.data.cursor = selection.cursor;
-      this.active = { job };
-      this.currentRun = this.run(job, selection.account).catch((error) => {
-        job.state = "needs_attention";
-        job.recoveryRequired = true;
-        job.lastError = redact(error);
-        if (this.active) this.active.failedStop = true;
-        this.log(error, "error", job.id);
-        this.changed();
-      });
     } finally {
       this.ticking = false;
     }
@@ -591,13 +634,12 @@ export class Scheduler extends EventEmitter {
       account,
       previous,
       account.quotas,
-      this.active?.job.accountId === account.id &&
-        this.active.job.state === "running",
+      this.accountActive(account.id, true),
     );
     this.changed();
   }
   private async run(job: Job, account: Account) {
-    const active = this.active!;
+    const active = this.active.get(job.id)!;
     let poll: NodeJS.Timeout | undefined;
     let outcome: Outcome | undefined;
     try {
@@ -619,14 +661,7 @@ export class Scheduler extends EventEmitter {
             codexErrorInfo: "usageLimitExceeded",
             message: "额度在准备会话时已用尽",
           };
-        const preferred = pickAccount(
-          this.store.data.accounts,
-          this.store.data.cursor,
-          job.bucket,
-          Date.now(),
-          this.store.data.settings.accountSelection || "smart",
-          job.model,
-        );
+        const preferred = this.selectAccount(job);
         if (
           job.model &&
           (supportsModel(account, job.model) === false ||
@@ -1007,53 +1042,45 @@ export class Scheduler extends EventEmitter {
               : "errored",
     });
     await this.store.save();
-    if (!active.failedStop) this.active = undefined;
+    if (!active.failedStop) this.active.delete(job.id);
     this.changed();
   }
   control(id: string, action: "pause" | "resume" | "cancel"): Promise<void> {
-    const next = this.controls
-      .catch(() => {})
-      .then(() => this.controlOnce(id, action));
-    this.controls = next;
-    return next;
+    return this.queueControl(id, () => this.controlOnce(id, action));
   }
   model(id: string, model: string, effort: string) {
-    const next = this.controls
-      .catch(() => {})
-      .then(async () => {
-        const job = this.store.data.jobs.find((j) => j.id === id);
-        if (!job) throw Error("会话不存在");
-        if (
-          this.active?.job.id === id ||
-          job.state !== "waiting" ||
-          job.waitingFor !== "model"
-        )
-          return { applied: false };
-        if (model === job.model) {
-          for (const account of this.store.data.accounts) {
-            if (account.modelAccess && supportsModel(account, model) === false)
-              account.modelAccess.observedAt = 0;
-            if (
-              account.modelDenials &&
-              Object.hasOwn(account.modelDenials, model)
-            )
-              delete account.modelDenials[model];
-          }
+    return this.queueControl(id, async () => {
+      const job = this.store.data.jobs.find((j) => j.id === id);
+      if (!job) throw Error("会话不存在");
+      if (
+        this.active.has(id) ||
+        job.state !== "waiting" ||
+        job.waitingFor !== "model"
+      )
+        return { applied: false };
+      if (model === job.model) {
+        for (const account of this.store.data.accounts) {
+          if (account.modelAccess && supportsModel(account, model) === false)
+            account.modelAccess.observedAt = 0;
+          if (
+            account.modelDenials &&
+            Object.hasOwn(account.modelDenials, model)
+          )
+            delete account.modelDenials[model];
         }
-        job.model = model;
-        job.effort = effort;
-        job.waitingFor = undefined;
-        job.state = "queued";
-        job.nextWakeAt = undefined;
-        job.lastError = undefined;
-        job.updatedAt = Date.now();
-        await this.store.save();
-        this.changed();
-        void this.tick().catch((error) => this.log(error, "error", id));
-        return { applied: true };
-      });
-    this.controls = next;
-    return next;
+      }
+      job.model = model;
+      job.effort = effort;
+      job.waitingFor = undefined;
+      job.state = "queued";
+      job.nextWakeAt = undefined;
+      job.lastError = undefined;
+      job.updatedAt = Date.now();
+      await this.store.save();
+      this.changed();
+      void this.tick().catch((error) => this.log(error, "error", id));
+      return { applied: true };
+    });
   }
   send(input: {
     id: string;
@@ -1067,94 +1094,86 @@ export class Scheduler extends EventEmitter {
     multiAgent?: boolean;
     serviceTier?: string;
   }) {
-    const next = this.controls
-      .catch(() => {})
-      .then(async () => {
-        const job = this.store.data.jobs.find((j) => j.id === input.id);
-        if (!job || job.mode !== "cli") throw new Error("请选择 CLI 会话");
-        if (
-          this.active?.job.id === job.id &&
-          ["completed", "cancelled", "paused"].includes(job.state)
-        )
-          await this.currentRun;
-        if (job.historySource?.issue) throw new Error(job.historySource.issue);
-        if (
-          job.recoveryRequired ||
-          (job.existing && job.existing.phase !== "managed")
-        )
-          throw new Error("请先在任务管理中完成安全恢复或交接");
-        if (job.archived) throw new Error("请先取消归档");
-        if (
-          this.active &&
-          this.active.job.id !== job.id &&
-          this.store.jobHome(this.active.job.id) ===
-            this.store.jobHome(job.id) &&
-          input.action !== "queue"
-        )
-          throw Error("同组会话正在运行，请排队发送或在主会话的代理面板操作");
-        const active =
-          this.active?.job.id === job.id ||
-          [
-            "queued",
-            "waiting",
-            "rotating",
-            "preparing",
-            "running",
-            "pausing",
-          ].includes(job.state);
-        if (input.action === "steer") {
-          if (
-            this.active?.job.id !== job.id ||
-            !this.active.worker?.steer ||
-            job.state !== "running"
-          )
-            throw new Error("当前没有可补充指令的运行轮次");
-          await this.active.worker.steer(input.text, input.attachments);
-        } else if (active) {
-          if (input.action !== "queue")
-            throw new Error("本轮仍在运行，请选择排队发送或立即补充");
-          if ((job.queuedMessages?.length ?? 0) >= 100)
-            throw new Error("待发送消息已达上限");
-          (job.queuedMessages ??= []).push({
-            text: input.text,
-            attachments: input.attachments,
-            model: input.model,
-            effort: input.effort,
-            review: input.review,
-            planMode: input.planMode,
-            multiAgent: input.multiAgent,
-            serviceTier: input.serviceTier,
-          });
-        } else {
-          if (!(await fs.stat(job.cwd)).isDirectory())
-            throw new Error("项目目录不存在，请先重新选择目录");
-          job.pendingMessage = input.text;
-          job.attachments = input.attachments;
-          job.review = input.review;
-          if (input.planMode !== undefined) job.planMode = input.planMode;
-          if (input.multiAgent !== undefined) job.multiAgent = input.multiAgent;
-          if (input.serviceTier !== undefined)
-            job.serviceTier = input.serviceTier;
-          job.state = "queued";
-          job.lastError = undefined;
-          job.nextWakeAt = undefined;
-          job.completionRetries = 0;
-          job.completionMarker = undefined;
-          if (input.model !== undefined) job.model = input.model;
-          if (input.effort !== undefined) job.effort = input.effort;
-        }
-        job.interactive = true;
-        job.updatedAt = Date.now();
-        await this.chats.user(
-          job.id,
-          input.text,
-          input.attachments.map((a) => a.path).join("\n"),
-        );
-        await this.store.save();
-        this.changed();
-      });
-    this.controls = next;
-    return next;
+    return this.queueControl(input.id, async () => {
+      const job = this.store.data.jobs.find((j) => j.id === input.id);
+      if (this.closing) throw new Error("Scheduler is shutting down");
+      if (!job || job.mode !== "cli") throw new Error("请选择 CLI 会话");
+      if (
+        this.active.has(job.id) &&
+        ["completed", "cancelled", "paused"].includes(job.state)
+      )
+        await this.active.get(job.id)?.done;
+      if (job.historySource?.issue) throw new Error(job.historySource.issue);
+      if (
+        job.recoveryRequired ||
+        (job.existing && job.existing.phase !== "managed")
+      )
+        throw new Error("请先在任务管理中完成安全恢复或交接");
+      if (job.archived) throw new Error("请先取消归档");
+      if (
+        !this.active.has(job.id) &&
+        this.familyActive(job.id) &&
+        input.action !== "queue"
+      )
+        throw Error("同组会话正在运行，请排队发送或在主会话的代理面板操作");
+      const active =
+        this.active.has(job.id) ||
+        [
+          "queued",
+          "waiting",
+          "rotating",
+          "preparing",
+          "running",
+          "pausing",
+        ].includes(job.state);
+      if (input.action === "steer") {
+        const running = this.active.get(job.id);
+        if (!running || !running.worker?.steer || job.state !== "running")
+          throw new Error("当前没有可补充指令的运行轮次");
+        await running.worker.steer(input.text, input.attachments);
+      } else if (active) {
+        if (input.action !== "queue")
+          throw new Error("本轮仍在运行，请选择排队发送或立即补充");
+        if ((job.queuedMessages?.length ?? 0) >= 100)
+          throw new Error("待发送消息已达上限");
+        (job.queuedMessages ??= []).push({
+          text: input.text,
+          attachments: input.attachments,
+          model: input.model,
+          effort: input.effort,
+          review: input.review,
+          planMode: input.planMode,
+          multiAgent: input.multiAgent,
+          serviceTier: input.serviceTier,
+        });
+      } else {
+        if (!(await fs.stat(job.cwd)).isDirectory())
+          throw new Error("项目目录不存在，请先重新选择目录");
+        job.pendingMessage = input.text;
+        job.attachments = input.attachments;
+        job.review = input.review;
+        if (input.planMode !== undefined) job.planMode = input.planMode;
+        if (input.multiAgent !== undefined) job.multiAgent = input.multiAgent;
+        if (input.serviceTier !== undefined)
+          job.serviceTier = input.serviceTier;
+        job.state = "queued";
+        job.lastError = undefined;
+        job.nextWakeAt = undefined;
+        job.completionRetries = 0;
+        job.completionMarker = undefined;
+        if (input.model !== undefined) job.model = input.model;
+        if (input.effort !== undefined) job.effort = input.effort;
+      }
+      job.interactive = true;
+      job.updatedAt = Date.now();
+      await this.chats.user(
+        job.id,
+        input.text,
+        input.attachments.map((a) => a.path).join("\n"),
+      );
+      await this.store.save();
+      this.changed();
+    });
   }
   operation(id: string, method: string, params: Record<string, unknown>) {
     if (!capabilities.some((c) => c.method === method))
@@ -1169,142 +1188,136 @@ export class Scheduler extends EventEmitter {
         method as "thread/goal/get" | "thread/goal/set" | "thread/goal/clear",
         params,
       );
-    const task = this.controls
-      .catch(() => {})
-      .then(async () => {
-        await this.tickInFlight;
-        if (this.closing || this.active || this.maintaining)
-          throw new Error("请等待当前任务结束或暂停后再执行 CLI 操作");
-        const job = this.store.data.jobs.find((j) => j.id === id);
-        if (
-          !job ||
-          job.mode !== "cli" ||
-          !job.threadId ||
-          job.recoveryRequired ||
-          job.historySource?.issue ||
-          (job.existing && job.existing.phase !== "managed")
-        )
-          throw new Error("当前会话尚不可操作，请先发送一条消息或完成安全恢复");
-        this.maintaining = true;
-        let rpc: Rpc | undefined;
-        try {
-          const account = pickAccount(
-            this.store.data.accounts,
-            this.store.data.cursor,
-            job.bucket,
-            Date.now(),
-            this.store.data.settings.accountSelection || "smart",
-          )?.account;
-          if (!account) throw new Error("暂无可用账户");
-          const prepared = await this.accounts.inspect(account.id);
-          rpc = await Rpc.open(
-            this.store.data.settings.cliPath,
-            this.store.jobHome(id),
-          );
-          rpc.on("request", (m) =>
-            rpc?.reject(m.id, "请在对话中执行需要交互审批的操作"),
-          );
-          await rpc.call("account/login/start", {
-            type: "chatgptAuthTokens",
-            accessToken: prepared.auth.tokens.access_token,
-            chatgptAccountId: account.identity,
-            chatgptPlanType: account.plan,
+    return this.queueMaintenance(async () => {
+      await this.tickInFlight;
+      if (this.closing || this.familyActive(id) || this.maintaining)
+        throw new Error("请等待当前任务结束或暂停后再执行 CLI 操作");
+      const job = this.store.data.jobs.find((j) => j.id === id);
+      if (
+        !job ||
+        job.mode !== "cli" ||
+        !job.threadId ||
+        job.recoveryRequired ||
+        job.historySource?.issue ||
+        (job.existing && job.existing.phase !== "managed")
+      )
+        throw new Error("当前会话尚不可操作，请先发送一条消息或完成安全恢复");
+      this.maintaining = true;
+      let rpc: Rpc | undefined;
+      try {
+        const account = pickAccount(
+          this.store.data.accounts,
+          this.store.data.cursor,
+          job.bucket,
+          Date.now(),
+          this.store.data.settings.accountSelection || "smart",
+        )?.account;
+        if (!account) throw new Error("暂无可用账户");
+        const prepared = await this.accounts.inspect(account.id);
+        rpc = await Rpc.open(
+          this.store.data.settings.cliPath,
+          this.store.jobHome(id),
+        );
+        rpc.on("request", (m) =>
+          rpc?.reject(m.id, "请在对话中执行需要交互审批的操作"),
+        );
+        await rpc.call("account/login/start", {
+          type: "chatgptAuthTokens",
+          accessToken: prepared.auth.tokens.access_token,
+          chatgptAccountId: account.identity,
+          chatgptPlanType: account.plan,
+        });
+        await ensureWindowsSandbox(rpc, job.cwd, job.sandbox);
+        const resumed = await prepareThread(
+          rpc,
+          job.threadId,
+          {
+            cwd: job.cwd,
+            ...(job.preserveNativePermissions
+              ? {}
+              : {
+                  approvalPolicy: job.approvalPolicy,
+                  sandbox: {
+                    workspaceWrite: "workspace-write",
+                    readOnly: "read-only",
+                    dangerFullAccess: "danger-full-access",
+                  }[job.sandbox],
+                }),
+            // Loading a thread for inspection must never dispatch its active
+            // Goal. The override is local to this maintenance process.
+            config: { "features.goals": false },
+          },
+          job.importedRollout,
+        );
+        const args = {
+          ...params,
+          threadId: job.threadId,
+          ...(method === "command/exec" || method === "gitDiffToRemote"
+            ? { cwd: job.cwd }
+            : {}),
+        };
+        // Commands use the same sandbox as the conversation; no arbitrary policy override.
+        if (method === "command/exec") {
+          if (
+            job.preserveNativePermissions &&
+            ![
+              "readOnly",
+              "workspaceWrite",
+              "dangerFullAccess",
+              "externalSandbox",
+            ].includes(resumed.sandbox?.type)
+          )
+            throw Error("无法核实子代理原生权限，未执行命令");
+          delete (args as any).disableTimeout;
+          Object.assign(args, {
+            sandboxPolicy: job.preserveNativePermissions
+              ? resumed.sandbox
+              : job.sandbox === "dangerFullAccess"
+                ? { type: "dangerFullAccess" }
+                : job.sandbox === "readOnly"
+                  ? { type: "readOnly", networkAccess: false }
+                  : {
+                      type: "workspaceWrite",
+                      writableRoots: [job.cwd],
+                      networkAccess: false,
+                      excludeTmpdirEnvVar: false,
+                      excludeSlashTmp: false,
+                    },
+            timeoutMs: Math.min(Number(params.timeoutMs) || 10000, 60000),
+            tty: false,
+            streamStdin: false,
+            streamStdoutStderr: false,
           });
-          await ensureWindowsSandbox(rpc, job.cwd, job.sandbox);
-          const resumed = await prepareThread(
-            rpc,
-            job.threadId,
-            {
-              cwd: job.cwd,
-              ...(job.preserveNativePermissions
-                ? {}
-                : {
-                    approvalPolicy: job.approvalPolicy,
-                    sandbox: {
-                      workspaceWrite: "workspace-write",
-                      readOnly: "read-only",
-                      dangerFullAccess: "danger-full-access",
-                    }[job.sandbox],
-                  }),
-              // Loading a thread for inspection must never dispatch its active
-              // Goal. The override is local to this maintenance process.
-              config: { "features.goals": false },
-            },
-            job.importedRollout,
-          );
-          const args = {
-            ...params,
-            threadId: job.threadId,
-            ...(method === "command/exec" || method === "gitDiffToRemote"
-              ? { cwd: job.cwd }
-              : {}),
-          };
-          // Commands use the same sandbox as the conversation; no arbitrary policy override.
-          if (method === "command/exec") {
-            if (
-              job.preserveNativePermissions &&
-              ![
-                "readOnly",
-                "workspaceWrite",
-                "dangerFullAccess",
-                "externalSandbox",
-              ].includes(resumed.sandbox?.type)
-            )
-              throw Error("无法核实子代理原生权限，未执行命令");
-            delete (args as any).disableTimeout;
-            Object.assign(args, {
-              sandboxPolicy: job.preserveNativePermissions
-                ? resumed.sandbox
-                : job.sandbox === "dangerFullAccess"
-                  ? { type: "dangerFullAccess" }
-                  : job.sandbox === "readOnly"
-                    ? { type: "readOnly", networkAccess: false }
-                    : {
-                        type: "workspaceWrite",
-                        writableRoots: [job.cwd],
-                        networkAccess: false,
-                        excludeTmpdirEnvVar: false,
-                        excludeSlashTmp: false,
-                      },
-              timeoutMs: Math.min(Number(params.timeoutMs) || 10000, 60000),
-              tty: false,
-              streamStdin: false,
-              streamStdoutStderr: false,
-            });
-          }
-          if (method === "thread/compact/start") {
-            const done = new Promise<void>((resolve, reject) => {
-              const timer = setTimeout(
-                () => reject(new Error("压缩等待超时，请检查会话后重试")),
-                60000,
-              );
-              rpc!.once("turn/completed", () => {
-                clearTimeout(timer);
-                resolve();
-              });
-              rpc!.once("disconnected", () => {
-                clearTimeout(timer);
-                reject(new Error("压缩连接断开"));
-              });
-            });
-            // Attach rejection before awaiting the RPC to avoid an unhandled timer.
-            const result = await Promise.all([rpc.call(method, args), done]);
-            return result[0];
-          }
-          return JSON.parse(
-            redact(JSON.stringify(await rpc.call(method, args))),
-          );
-        } finally {
-          try {
-            await rpc?.close();
-          } finally {
-            this.maintaining = false;
-            this.changed();
-          }
         }
-      });
-    this.controls = task;
-    return task;
+        if (method === "thread/compact/start") {
+          const done = new Promise<void>((resolve, reject) => {
+            const timer = setTimeout(
+              () => reject(new Error("压缩等待超时，请检查会话后重试")),
+              60000,
+            );
+            rpc!.once("turn/completed", () => {
+              clearTimeout(timer);
+              resolve();
+            });
+            rpc!.once("disconnected", () => {
+              clearTimeout(timer);
+              reject(new Error("压缩连接断开"));
+            });
+          });
+          // Attach rejection before awaiting the RPC to avoid an unhandled timer.
+          const result = await Promise.all([rpc.call(method, args), done]);
+          return result[0];
+        }
+        return JSON.parse(redact(JSON.stringify(await rpc.call(method, args))));
+      } finally {
+        try {
+          await rpc?.close();
+        } finally {
+          this.maintaining = false;
+          this.changed();
+        }
+      }
+    });
   }
   private localHistory<T>(
     id: string,
@@ -1312,88 +1325,77 @@ export class Scheduler extends EventEmitter {
     resume = true,
     commit?: (result: T, job: Job) => Promise<void>,
   ) {
-    const task = this.controls
-      .catch(() => {})
-      .then(async () => {
-        await this.tickInFlight;
-        if (
-          this.closing ||
-          (this.active &&
-            (resume ||
-              this.store.jobHome(this.active.job.id) ===
-                this.store.jobHome(id))) ||
-          this.maintaining
-        )
-          throw new Error("请等待当前任务结束或暂停后再查看会话历史");
-        const job = this.store.data.jobs.find((job) => job.id === id);
-        if (
-          !job?.threadId ||
-          job.mode !== "cli" ||
-          !(
-            ["completed", "paused", "cancelled", "needs_attention"].includes(
-              job.state,
-            ) ||
-            (!resume &&
-              job.goalStartRequested &&
-              ["queued", "waiting"].includes(job.state))
+    return this.queueMaintenance(async () => {
+      await this.tickInFlight;
+      if (this.closing || this.familyActive(id) || this.maintaining)
+        throw new Error("请等待当前任务结束或暂停后再查看会话历史");
+      const job = this.store.data.jobs.find((job) => job.id === id);
+      if (
+        !job?.threadId ||
+        job.mode !== "cli" ||
+        !(
+          ["completed", "paused", "cancelled", "needs_attention"].includes(
+            job.state,
           ) ||
-          job.recoveryRequired ||
-          job.historySource?.issue ||
-          (job.existing && job.existing.phase !== "managed")
-        )
-          throw new Error("当前会话尚不可操作，请先发送一条消息或完成安全恢复");
-        this.maintaining = true;
-        let rpc: Rpc | undefined;
-        const close = async () => {
-          const owned = rpc;
-          rpc = undefined;
-          try {
-            await owned?.close();
-          } catch (error) {
-            if (error instanceof ProcessSafetyError) {
-              job.recoveryRequired = true;
-              job.state = "needs_attention";
-              job.lastError = redact(error);
-              await this.store.save();
-            }
-            throw error;
-          }
-        };
+          (!resume &&
+            job.goalStartRequested &&
+            ["queued", "waiting"].includes(job.state))
+        ) ||
+        job.recoveryRequired ||
+        job.historySource?.issue ||
+        (job.existing && job.existing.phase !== "managed")
+      )
+        throw new Error("当前会话尚不可操作，请先发送一条消息或完成安全恢复");
+      this.maintaining = true;
+      let rpc: Rpc | undefined;
+      const close = async () => {
+        const owned = rpc;
+        rpc = undefined;
         try {
-          // Metadata, paging, and forks are local operations: never log in or start a turn.
-          rpc = await Rpc.open(
-            this.store.data.settings.cliPath,
-            this.store.jobHome(id),
-          );
-          rpc.on("request", (request) =>
-            rpc?.reject(request.id, "历史操作不执行交互式工具"),
-          );
-          if (resume)
-            await prepareThread(
-              rpc,
-              job.threadId,
-              {
-                cwd: job.cwd,
-                excludeTurns: true,
-                config: { "features.goals": false },
-              },
-              job.importedRollout,
-            );
-          const result = await run(rpc, job);
-          await close();
-          await commit?.(result, job);
-          return result;
-        } finally {
-          try {
-            await close();
-          } finally {
-            this.maintaining = false;
-            this.changed();
+          await owned?.close();
+        } catch (error) {
+          if (error instanceof ProcessSafetyError) {
+            job.recoveryRequired = true;
+            job.state = "needs_attention";
+            job.lastError = redact(error);
+            await this.store.save();
           }
+          throw error;
         }
-      });
-    this.controls = task;
-    return task;
+      };
+      try {
+        // Metadata, paging, and forks are local operations: never log in or start a turn.
+        rpc = await Rpc.open(
+          this.store.data.settings.cliPath,
+          this.store.jobHome(id),
+        );
+        rpc.on("request", (request) =>
+          rpc?.reject(request.id, "历史操作不执行交互式工具"),
+        );
+        if (resume)
+          await prepareThread(
+            rpc,
+            job.threadId,
+            {
+              cwd: job.cwd,
+              excludeTurns: true,
+              config: { "features.goals": false },
+            },
+            job.importedRollout,
+          );
+        const result = await run(rpc, job);
+        await close();
+        await commit?.(result, job);
+        return result;
+      } finally {
+        try {
+          await close();
+        } finally {
+          this.maintaining = false;
+          this.changed();
+        }
+      }
+    });
   }
   goal(
     id: string,
@@ -1408,7 +1410,7 @@ export class Scheduler extends EventEmitter {
       job: Job,
     ) => {
       const activate = intent === "start" || intent === "createAndStart";
-      const live = this.active?.job.id === job.id;
+      const live = this.active.has(job.id);
       let mutation = params;
       if (intent) {
         if (job.recoveryRequired || (live && job.state !== "running"))
@@ -1499,26 +1501,22 @@ export class Scheduler extends EventEmitter {
     };
     // The same control chain also owns user pause/send. Never open a second
     // process for the active runtime or race a thread's stopping state.
-    if (this.active?.job.id === id) {
-      const task = this.controls
-        .catch(() => {})
-        .then(async () => {
-          const active = this.active;
-          if (
-            this.closing ||
-            active?.job.id !== id ||
-            active.reason ||
-            active.failedStop ||
-            !active.worker?.operation
-          )
-            throw new Error("会话正在停止，请稍后再操作目标");
-          return run(
-            { call: (name, args) => active.worker!.operation!(name, args) },
-            active.job,
-          );
-        });
-      this.controls = task;
-      return task;
+    if (this.active.has(id)) {
+      return this.queueControl(id, async () => {
+        const active = this.active.get(id);
+        if (
+          this.closing ||
+          active?.job.id !== id ||
+          active.reason ||
+          active.failedStop ||
+          !active.worker?.operation
+        )
+          throw new Error("会话正在停止，请稍后再操作目标");
+        return run(
+          { call: (name, args) => active.worker!.operation!(name, args) },
+          active.job,
+        );
+      });
     }
     return this.localHistory(id, run, false);
   }
@@ -1777,43 +1775,34 @@ export class Scheduler extends EventEmitter {
     action: "send" | "interrupt",
     text?: string,
   ) {
-    const operation = this.controls
-      .catch(() => {})
-      .then(async () => {
-        if (
-          this.closing ||
-          this.active?.job.id !== id ||
-          this.active.reason ||
-          this.active.failedStop ||
-          this.active.job.state !== "running" ||
-          !this.active.worker?.agentControl
-        )
-          throw new Error("主会话当前未运行，请在主会话中继续任务");
-        if (
-          !this.active.job.agents?.some((agent) => agent.threadId === threadId)
-        )
-          throw Error("该子代理不属于当前会话");
-        const result = await this.active.worker.agentControl(
-          threadId,
-          action,
-          text,
-        );
-        if (action === "send") await this.chats.user(threadId, text || "");
-        return result;
-      });
-    this.controls = operation;
-    return operation;
+    return this.queueControl(id, async () => {
+      const active = this.active.get(id);
+      if (
+        this.closing ||
+        !active ||
+        active.reason ||
+        active.failedStop ||
+        active.job.state !== "running" ||
+        !active.worker?.agentControl
+      )
+        throw new Error("主会话当前未运行，请在主会话中继续任务");
+      if (!active.job.agents?.some((agent) => agent.threadId === threadId))
+        throw Error("该子代理不属于当前会话");
+      const result = await active.worker.agentControl(threadId, action, text);
+      if (action === "send") await this.chats.user(threadId, text || "");
+      return result;
+    });
   }
   private async controlOnce(id: string, action: "pause" | "resume" | "cancel") {
     const job = this.store.data.jobs.find((j) => j.id === id);
     if (!job) throw new Error("任务不存在");
     if (["completed", "cancelled"].includes(job.state))
       throw new Error("终止任务不可再次操作，请新建任务");
-    if (this.active?.job.id === id && this.active.failedStop) {
-      await this.currentRun;
-      await this.active?.worker?.close();
+    if (this.active.has(id) && this.active.get(id)!.failedStop) {
+      await this.active.get(id)?.done;
+      await this.active.get(id)?.worker?.close();
       await this.recover(job);
-      this.active = undefined;
+      this.active.delete(id);
       job.recoveryRequired = false;
     }
     if (job.recoveryRequired) {
@@ -1821,26 +1810,27 @@ export class Scheduler extends EventEmitter {
       job.recoveryRequired = false;
     }
     if (action === "resume") {
-      if (this.active?.job.id === id) throw new Error("任务仍在执行或正在停止");
+      if (this.active.has(id)) throw new Error("任务仍在执行或正在停止");
       if (["completed", "cancelled"].includes(job.state))
         throw new Error("终止任务不可恢复，请新建任务");
       job.state = "queued";
       job.completionRetries = 0;
       job.lastError = undefined;
       job.nextWakeAt = undefined;
-    } else if (this.active?.job.id === id) {
-      this.active.reason = action;
+    } else if (this.active.has(id)) {
+      this.active.get(id)!.reason = action;
       job.state = "pausing";
       this.changed();
       try {
         // User pause/cancel also pauses Goal continuation. Quota-driven stops
         // bypass this path, preserving their automatic recovery authority.
-        if (job.goal?.status === "active" && this.active.worker?.operation) {
+        const worker = this.active.get(id)?.worker;
+        if (job.goal?.status === "active" && worker?.operation) {
           try {
-            const result = (await this.active.worker.operation(
-              "thread/goal/set",
-              { status: "paused", origin: "user" },
-            )) as { goal?: Job["goal"] };
+            const result = (await worker.operation("thread/goal/set", {
+              status: "paused",
+              origin: "user",
+            })) as { goal?: Job["goal"] };
             if (result.goal) job.goal = result.goal;
           } catch (error) {
             this.log(
@@ -1850,12 +1840,12 @@ export class Scheduler extends EventEmitter {
             );
           }
         }
-        await this.active.worker?.stop();
-        await this.currentRun;
-        if (this.active?.failedStop)
+        await this.active.get(id)!.worker?.stop();
+        await this.active.get(id)?.done;
+        if (this.active.get(id)?.failedStop)
           throw new Error("任务未能安全停止，请处理恢复状态");
       } catch (error) {
-        if (this.active) this.active.failedStop = true;
+        if (this.active.has(id)) this.active.get(id)!.failedStop = true;
         throw error;
       }
     } else {
@@ -1868,25 +1858,27 @@ export class Scheduler extends EventEmitter {
     this.changed();
   }
   async showDesktop(id: string) {
-    if (this.active?.job.id !== id || !this.active.worker?.show)
-      throw new Error("受管客户端尚未启动");
-    await this.active.worker.show();
+    const worker = this.active.get(id)?.worker;
+    if (!worker?.show) throw new Error("受管客户端尚未启动");
+    await worker.show();
   }
   async inspectDesktop(id: string) {
-    if (this.active?.job.id !== id || !this.active.worker?.inspect)
+    const worker = this.active.get(id)?.worker;
+    if (!worker?.inspect)
       throw new Error("该任务没有已连接的受管客户端，请先启动 Desktop 任务");
-    return this.active.worker.inspect();
+    return worker.inspect();
   }
-  respond(id: string, value: unknown) {
-    const approval = this.approvals.find((a) => a.id === id);
-    if (!approval || !this.active?.worker) throw new Error("请求已过期");
+  respond(id: string, value: unknown, jobId?: string) {
+    const matches = this.approvals.filter(
+      (a) => a.id === id && (!jobId || a.jobId === jobId),
+    );
+    if (matches.length > 1) throw new Error("请选择要回复的会话");
+    const approval = matches[0];
+    const active = approval && this.active.get(approval.jobId);
+    if (!approval || !active?.worker) throw new Error("请求已过期");
+    if (active.reason || active.failedStop || this.closing)
+      throw Error("会话正在停止，请等待停止确认后继续");
     if (approval.kind === "input") {
-      if (
-        this.active.job.id !== approval.jobId ||
-        this.active.reason ||
-        this.closing
-      )
-        throw Error("会话正在停止，请等待停止确认后继续");
       if (approval.responsePending)
         throw Error("回答已发送，正在等待服务器确认");
       const answers = validateQuestionAnswers(approval.params, value);
@@ -1894,7 +1886,7 @@ export class Scheduler extends EventEmitter {
       approval.responsePending = true;
       this.questionReplies.set(approval.historyId, answers);
       try {
-        this.active.worker.respond(id, { answers });
+        active.worker.respond(id, { answers });
       } catch (error) {
         approval.responsePending = false;
         this.questionReplies.delete(approval.historyId);
@@ -1903,7 +1895,7 @@ export class Scheduler extends EventEmitter {
       this.changed();
       return;
     }
-    this.active.worker.respond(id, value);
+    active.worker.respond(id, value);
     this.approvals = this.approvals.filter((a) => a !== approval);
     this.changed();
   }
@@ -1915,13 +1907,17 @@ export class Scheduler extends EventEmitter {
       await this.backgroundProbe;
       await this.controls.catch(() => {});
       await this.tickInFlight;
-      if (
-        this.active &&
-        !["completed", "cancelled"].includes(this.active.job.state)
-      )
-        await this.control(this.active.job.id, "pause");
+      await Promise.allSettled([...this.jobControls.values()]);
+      const stopped = await Promise.allSettled(
+        [...this.active.values()]
+          .filter((run) => !["completed", "cancelled"].includes(run.job.state))
+          .map((run) => this.control(run.job.id, "pause")),
+      );
       await this.currentRun;
-      if (this.active?.failedStop)
+      if (
+        stopped.some((result) => result.status === "rejected") ||
+        [...this.active.values()].some((run) => run.failedStop)
+      )
         throw new Error("受管进程未确认停止，暂不退出");
       await this.accounts.cancelLogin();
       if (this.accounts.drain) await this.accounts.drain();

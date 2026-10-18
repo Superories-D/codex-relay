@@ -597,7 +597,9 @@ function App({ initialTab = "dashboard" }: { initialTab?: string }) {
             <ApprovalCard
               key={`${a.jobId}:${a.id}`}
               approval={a}
-              respond={(value) => act("approval.respond", { id: a.id, value })}
+              respond={(value) =>
+                act("approval.respond", { id: a.id, jobId: a.jobId, value })
+              }
             />
           ))}
           {tab === "dashboard" && (

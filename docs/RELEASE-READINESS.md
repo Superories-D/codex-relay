@@ -13,7 +13,7 @@ test cannot replace actual CLI or installed-client evidence.
 | Requirement | Current evidence / next acceptance gate |
 | --- | --- |
 | UI and input ergonomics | v0.6.15 packaged startup verified; screenshot follow-up fixes validated in source, awaiting next package |
-| Concurrent independent tasks | Existing scheduler has one global active worker. Must replace with task-specific ownership and bounded concurrency; verify one account and multiple accounts, per-task pause/steer/approvals, independent completion, quota relay, shutdown and recovery |
+| Concurrent independent tasks | Implemented 1–8 slots (default 3), family exclusion, per-task control/approvals and shutdown. Unit and real local JSONL-process checks passed; see `CONCURRENCY-20261018.md`. Real-account concurrent inference/refresh/relay remains unverified |
 | Account refresh and relay | Existing real same-thread single-task relay observed. Concurrent refresh/rotation and full reset-cycle behavior still require evidence |
 | Subagents | Existing live parent/child flows verified; deep hierarchy, cross-account recovery and Goal combinations remain incomplete. Related threads sharing a runtime home must not race |
 | Real CLI execution and task outputs | Real execution exists. Previous completed live task's output is still pending acceptance; completion status is not output correctness |
@@ -21,7 +21,7 @@ test cannot replace actual CLI or installed-client evidence.
 | History and files | Paginated import and original-record integrity verified. 632 imported histories lack source/ancestors and remain explicitly read-only; never invent recoverable context |
 | Git/Worktree and terminal | Existing basic native checks; isolation of concurrent projects/worktrees, fuller Git workflows and terminal lifecycle require broader acceptance |
 | Plugins/MCP and schedules | Configuration/UI exist; end-to-end plugin calls and full schedule lifecycle remain open |
-| Multilingual/accessibility | Continue three-language, theme, keyboard, zoom, resizing and long-history checks on changed flows |
+| Multilingual/accessibility | Existing three-language checks retained. User additionally requested Japanese; implement translations, native menus, language persistence and layout validation before the next package |
 | Packaging | v0.6.15 NSIS wizard loading + packaged app + ZIP integrity verified. User performs installation. Future builds must verify resources and actual app; signing/release distribution remain separate gaps |
 
 Operational constraints: inspect the real installed profile only through the

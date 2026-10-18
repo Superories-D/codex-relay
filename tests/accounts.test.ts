@@ -167,6 +167,52 @@ afterEach(async () => {
   vi.clearAllMocks();
 });
 describe("single refresh-token authority", () => {
+  it("serializes simultaneous worker refreshes and stages the last committed credential for each request", async () => {
+    const account = await accounts.import(JSON.stringify(auth()));
+    let active = 0,
+      maximum = 0,
+      generation = 0;
+    const staged: string[] = [];
+    vi.mocked(Rpc.open).mockImplementation(async (_cli, home) => {
+      active++;
+      maximum = Math.max(maximum, active);
+      let closed = false;
+      return {
+        call: async () => {
+          staged.push(
+            JSON.parse(await fs.readFile(path.join(home, "auth.json"), "utf8"))
+              .tokens.access_token,
+          );
+          await fs.writeFile(
+            path.join(home, "auth.json"),
+            JSON.stringify(auth(`generation-${++generation}`)),
+          );
+          return { account: { type: "chatgpt" } };
+        },
+        close: async () => {
+          if (!closed) {
+            closed = true;
+            active--;
+          }
+        },
+      } as any;
+    });
+    const results = await Promise.all(
+      Array.from({ length: 3 }, () => accounts.refreshTokens(account.id)),
+    );
+    expect(maximum).toBe(1);
+    expect(active).toBe(0);
+    expect(staged).toEqual(["old", "generation-1", "generation-2"]);
+    expect(results.map((r) => r.tokens.access_token)).toEqual([
+      "generation-1",
+      "generation-2",
+      "generation-3",
+    ]);
+    expect((await accounts.auth(account.id)).tokens.access_token).toBe(
+      "generation-3",
+    );
+  });
+
   it("blocks refresh work queued before an existing instance becomes the token authority", async () => {
     const account = await accounts.import(JSON.stringify(auth()));
     const refreshing = accounts.refreshTokens(account.id).catch((e) => e);

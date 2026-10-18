@@ -1265,6 +1265,16 @@ async function boot() {
           throw new Error("请先暂停使用该账户的任务");
         return accounts.remove(id);
       }
+      case "tasks.policy": {
+        const a = z
+          .object({ maxConcurrentTasks: z.number().int().min(1).max(8) })
+          .strict()
+          .parse(args);
+        Object.assign(store.data.settings, a);
+        await store.save();
+        scheduler.changed();
+        return;
+      }
       case "accounts.policy": {
         const a = z
           .object({
@@ -1324,12 +1334,17 @@ async function boot() {
         const r = z
           .object({
             id: z.string().max(100),
+            jobId: idSchema.optional(),
             historyId: z.string().max(100).optional(),
             value: z.unknown(),
           })
           .strict()
           .parse(args);
-        const approval = scheduler.approvals.find((a) => a.id === r.id);
+        const matches = scheduler.approvals.filter(
+          (a) => a.id === r.id && (!r.jobId || a.jobId === r.jobId),
+        );
+        if (matches.length > 1) throw new Error("请选择要回复的会话");
+        const approval = matches[0];
         if (!approval) throw new Error("请求已经结束");
         if (approval.kind === "input" && r.historyId !== approval.historyId)
           throw new Error("问题已更新，请重新查看后回答");
@@ -1345,7 +1360,11 @@ async function boot() {
                   Object.entries(requested).filter(([, v]) => v != null),
                 )
               : {};
-          return scheduler.respond(r.id, { permissions, scope: "turn" });
+          return scheduler.respond(
+            r.id,
+            { permissions, scope: "turn" },
+            approval.jobId,
+          );
         }
         if (approval.kind === "elicitation") {
           const value = z
@@ -1358,7 +1377,7 @@ async function boot() {
             .parse(r.value);
           if (JSON.stringify(value).length > 100000)
             throw new Error("输入内容过大");
-          return scheduler.respond(r.id, value);
+          return scheduler.respond(r.id, value, approval.jobId);
         }
         const value =
           approval.kind === "input"
@@ -1384,7 +1403,7 @@ async function boot() {
                 })
                 .strict()
                 .parse(r.value);
-        return scheduler.respond(r.id, value);
+        return scheduler.respond(r.id, value, approval.jobId);
       }
       case "data.open":
         await shell.openPath(dataRoot);

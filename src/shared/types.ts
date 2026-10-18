@@ -246,6 +246,7 @@ export interface Log {
   jobId?: string;
 }
 export interface Settings {
+  maxConcurrentTasks?: number;
   accountSelection?: "smart" | "roundRobin";
   resetWarmupEnabled?: boolean;
   cliPath: string;

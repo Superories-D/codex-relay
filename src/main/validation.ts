@@ -70,6 +70,7 @@ export const newJobSchema = z
   .strict();
 export const settingsSchema = z
   .object({
+    maxConcurrentTasks: z.number().int().min(1).max(8).optional(),
     accountSelection: z.enum(["smart", "roundRobin"]).optional(),
     resetWarmupEnabled: z.boolean().optional(),
     cliPath: z.string().min(1).max(32700),

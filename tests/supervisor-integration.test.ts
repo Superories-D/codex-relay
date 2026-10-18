@@ -8,6 +8,7 @@ import { Scheduler } from "../src/core/scheduler";
 import { CliWorker } from "../src/core/cli-worker";
 import { ExistingSessions } from "../src/core/existing-sessions";
 import { randomUUID } from "node:crypto";
+import type { Job } from "../src/shared/types";
 vi.mock("../src/core/process", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/core/process")>();
   return {
@@ -239,6 +240,119 @@ it("hands off an existing rollout and drives the real worker to completion with 
     expect(await fs.readFile(file, "utf8")).toBe(original);
   } finally {
     await service.shutdown();
+    await scheduler.shutdown();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+}, 15000);
+
+it("runs real isolated JSONL processes concurrently on one account and pauses only the selected thread", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "relay-parallel-"));
+  const store = new Store(root);
+  const quotas = {
+    codex: {
+      limitId: "codex",
+      primary: {
+        usedPercent: 10,
+        windowDurationMins: 300,
+        resetsAt: Date.now() + 3600000,
+      },
+      secondary: null,
+      observedAt: Date.now(),
+      reached: false,
+    },
+  };
+  const accounts: any = {
+    busy: new Set(),
+    inspect: async () => ({
+      auth: { tokens: { access_token: "synthetic" } },
+      models: [],
+      quotas,
+    }),
+    cancelLogin: async () => {},
+  };
+  const scheduler = new Scheduler(store, accounts, {
+    cli: (ctx) => new CliWorker(ctx),
+    desktop: () => {
+      throw Error("not used");
+    },
+  });
+  try {
+    const jobs: Job[] = [];
+    for (let i = 0; i < 2; i++) {
+      const job = await scheduler.add({
+        title: `Parallel ${i}`,
+        prompt: `Independent task ${i}`,
+        cwd: root,
+        mode: "cli",
+        model: "",
+        effort: "",
+        bucket: "codex",
+        approvalPolicy: "on-request",
+        sandbox: "workspaceWrite",
+        interactive: true,
+      });
+      await (scheduler as any).tickInFlight;
+      await fs.mkdir(store.jobHome(job.id), { recursive: true });
+      await fs.writeFile(
+        path.join(store.jobHome(job.id), "parallel-fixture.json"),
+        "{}",
+      );
+      jobs.push(job);
+    }
+    store.data.accounts = [
+      {
+        id: "shared",
+        identity: "shared",
+        label: "shared",
+        email: "synthetic",
+        plan: "test",
+        enabled: true,
+        status: "ready",
+        blockedUntil: null,
+        failureCount: 0,
+        quotas,
+      },
+    ];
+    await (scheduler as any).tick();
+    await vi.waitFor(
+      () => expect(jobs.map((j) => j.state)).toEqual(["running", "running"]),
+      { timeout: 5000 },
+    );
+    const journals = await Promise.all(
+      jobs.map(async (j) =>
+        JSON.parse(
+          (
+            await fs.readFile(
+              path.join(store.jobHome(j.id), "synthetic-journal.jsonl"),
+              "utf8",
+            )
+          ).trim(),
+        ),
+      ),
+    );
+    expect(new Set(journals.map((j) => j.pid)).size).toBe(2);
+    expect(new Set(jobs.map((j) => j.threadId)).size).toBe(2);
+    expect(journals.map((j) => j.account)).toEqual(["shared", "shared"]);
+    await scheduler.control(jobs[0].id, "pause");
+    expect(jobs.map((j) => j.state)).toEqual(["paused", "running"]);
+    await fs.writeFile(
+      path.join(store.jobHome(jobs[1].id), "complete-turn"),
+      "",
+    );
+    await vi.waitFor(() => expect(jobs[1].state).toBe("completed"), {
+      timeout: 5000,
+    });
+    await (scheduler as any).currentRun;
+    const saved = JSON.parse(
+      await fs.readFile(path.join(root, "state.json"), "utf8"),
+    );
+    expect(saved.jobs.map((j: any) => j.state)).toEqual([
+      "paused",
+      "completed",
+    ]);
+    expect(jobs[0].rotations).toBe(0);
+    expect(jobs[1].rotations).toBe(0);
+  } finally {
     await scheduler.shutdown();
     await fs.rm(root, { recursive: true, force: true });
   }

@@ -87,6 +87,7 @@ export function QuestionRequest({
     try {
       await window.relay.command("approval.respond", {
         id: a.id,
+        jobId: a.jobId,
         historyId: a.historyId,
         value,
       });

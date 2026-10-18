@@ -103,11 +103,11 @@ it("keeps question answers pending until the native request is resolved, then re
     historyId: undefined,
     responsePending: false,
   });
-  (scheduler as any).active.reason = "pause";
+  (scheduler as any).active.get(job.id).reason = "pause";
   expect(() =>
     scheduler.respond("73", { answers: { direction: { answers: ["Small"] } } }),
   ).toThrow("会话正在停止");
-  (scheduler as any).active.reason = undefined;
+  (scheduler as any).active.get(job.id).reason = undefined;
 });
 it("expires a pending question on stop and does not claim an unacknowledged answer succeeded", async () => {
   const job = await scheduler.add({ ...input, cwd: root, interactive: true });
@@ -1042,7 +1042,7 @@ it("queues inputs until normal completion and steers only a running turn", async
   expect(job.queuedMessages).toHaveLength(1);
   workers[0].settle({ kind: "completed" });
   await until(() => job.state === "queued");
-  await until(() => !(scheduler as any).active);
+  await until(() => !(scheduler as any).active.has(job.id));
   await (scheduler as any).tick();
   await until(() => workers[1]?.started);
   expect(workers[1].submitted).toBe("queued question");
@@ -1419,4 +1419,155 @@ it("bounds completion repair attempts while retaining the thread and keeping quo
   expect(workers).toHaveLength(2);
   await scheduler.control(job.id, "resume");
   expect(job.completionRetries).toBe(0);
+});
+
+async function queuedJobs(count: number) {
+  store.data.accounts = [];
+  const jobs = [];
+  for (let i = 0; i < count; i++) {
+    jobs.push(
+      await scheduler.add({
+        ...input,
+        cwd: root,
+        interactive: true,
+        title: `Parallel ${i}`,
+      }),
+    );
+    await (scheduler as any).tickInFlight;
+  }
+  store.data.accounts = [account("a")];
+  return jobs;
+}
+
+it("runs three independent CLI conversations on one account and respects a reduced limit without interrupting them", async () => {
+  const jobs = await queuedJobs(4);
+  await (scheduler as any).tick();
+  await until(() => workers.length === 3 && workers.every((w) => w.started));
+  expect(jobs.slice(0, 3).map((j) => j.accountId)).toEqual(["a", "a", "a"]);
+  expect(new Set(workers.map((w) => w.ctx.home)).size).toBe(3);
+  store.data.settings.maxConcurrentTasks = 1;
+  workers[0].settle({ kind: "completed" });
+  await (scheduler as any).active.get(jobs[0].id).done;
+  await (scheduler as any).tick();
+  expect(workers).toHaveLength(3);
+  expect(jobs[1].state).toBe("running");
+  expect(jobs[2].state).toBe("running");
+  store.data.settings.maxConcurrentTasks = 3;
+  await (scheduler as any).tick();
+  await until(() => workers[3]?.started);
+  expect(jobs[3].state).toBe("running");
+});
+
+it("keeps another conversation responsive during a delayed pause and routes colliding approval IDs by job", async () => {
+  const [a, b] = await queuedJobs(2);
+  await (scheduler as any).tick();
+  await until(() => workers.length === 2 && workers.every((w) => w.started));
+  for (const worker of workers)
+    worker.emit("approval", {
+      jobId: worker.ctx.job.id,
+      id: "7",
+      method: "item/commandExecution/requestApproval",
+      kind: "command",
+      params: {},
+    });
+  const replies = workers.map((w) => vi.spyOn(w, "respond"));
+  expect(() => scheduler.respond("7", { decision: "accept" })).toThrow();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  vi.spyOn(workers[0], "stop").mockImplementationOnce(async () => {
+    await gate;
+    workers[0].settle({ kind: "interrupted" });
+  });
+  const pause = scheduler.control(a.id, "pause");
+  try {
+    await until(() => a.state === "pausing");
+    await scheduler.send({
+      id: b.id,
+      text: "continue independently",
+      attachments: [],
+      action: "steer",
+    });
+    expect(workers[1].steer).toHaveBeenCalledWith("continue independently", []);
+    scheduler.respond("7", { decision: "accept" }, b.id);
+    expect(replies[1]).toHaveBeenCalledExactlyOnceWith("7", {
+      decision: "accept",
+    });
+    expect(replies[0]).not.toHaveBeenCalled();
+    expect(scheduler.approvals.map((a) => a.jobId)).toEqual([a.id]);
+    expect(() =>
+      scheduler.respond("7", { decision: "accept" }, a.id),
+    ).toThrow();
+    expect(b.state).toBe("running");
+  } finally {
+    release();
+    await pause;
+  }
+  expect(a.state).toBe("paused");
+  expect(b.state).toBe("running");
+});
+
+it("serializes a parent and adopted child while admitting unrelated queued work", async () => {
+  const [parent, child, unrelated] = await queuedJobs(3);
+  child.runtimeHomeId = parent.id;
+  child.threadId = "child-thread";
+  await (scheduler as any).tick();
+  await until(() => workers.length === 2 && workers.every((w) => w.started));
+  expect(workers.map((w) => w.ctx.job.id)).toEqual([parent.id, unrelated.id]);
+  expect(child.state).not.toBe("running");
+  await scheduler.control(parent.id, "pause");
+  await (scheduler as any).tick();
+  await until(() => workers[2]?.started);
+  expect(workers[2].ctx.job.id).toBe(child.id);
+  expect(child.threadId).toBe("child-thread");
+  expect(unrelated.state).toBe("running");
+});
+
+it("rotates only the exhausted conversation and keeps its thread while another worker continues", async () => {
+  const [a, b] = await queuedJobs(2);
+  await (scheduler as any).tick();
+  await until(() => workers.length === 2 && workers.every((w) => w.started));
+  const thread = a.threadId;
+  store.data.accounts.push(account("b"));
+  workers[0].settle({ kind: "quota" });
+  await (scheduler as any).active.get(a.id).done;
+  await (scheduler as any).tick();
+  await until(() => workers[2]?.started);
+  expect(a.rotations).toBe(1);
+  expect(a.accountId).toBe("b");
+  expect(a.threadId).toBe(thread);
+  expect(b.state).toBe("running");
+  expect(b.accountId).toBe("a");
+  expect(b.rotations).toBe(0);
+});
+
+it("reserves Desktop accounts exclusively without blocking other CLI slots", async () => {
+  const [first, desktop, last] = await queuedJobs(3);
+  desktop.mode = "desktop";
+  await (scheduler as any).tick();
+  await until(() => workers.length === 2 && workers.every((w) => w.started));
+  expect(workers.map((w) => w.ctx.job.id)).toEqual([first.id, last.id]);
+  expect(desktop.state).toBe("waiting");
+  await scheduler.control(first.id, "pause");
+  await scheduler.control(last.id, "pause");
+  await (scheduler as any).tick();
+  await until(() => workers[2]?.started);
+  await scheduler.control(first.id, "resume");
+  await (scheduler as any).tick();
+  expect(workers).toHaveLength(3);
+  expect(desktop.state).toBe("running");
+  expect(first.state).toBe("waiting");
+});
+
+it("stops every parallel worker even when one fails to close and retains the recovery gate", async () => {
+  const [a, b] = await queuedJobs(2);
+  await (scheduler as any).tick();
+  await until(() => workers.length === 2 && workers.every((w) => w.started));
+  workers[0].failClose = true;
+  await expect(scheduler.shutdown()).rejects.toThrow();
+  expect(a.recoveryRequired).toBe(true);
+  expect(a.state).toBe("needs_attention");
+  expect(b.state).toBe("paused");
+  expect((scheduler as any).active.size).toBe(1);
 });

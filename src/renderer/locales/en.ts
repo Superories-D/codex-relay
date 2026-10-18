@@ -1,6 +1,12 @@
 import { legacyEnglish } from "./legacy-en";
 import { nativeEnglish } from "./native-en";
 export const english: Record<string, string> = {
+  并发任务: "Concurrent tasks",
+  并发任务上限: "Concurrent task limit",
+  "允许多个独立会话同时运行。同组父子会话依次执行；调低上限不会中断正在运行的任务。":
+    "Run independent conversations at the same time. Parent and child conversations in the same group run in sequence. Lowering the limit does not interrupt active tasks.",
+  "{count} 个任务正在运行": "{count} tasks running",
+  请选择要回复的会话: "Select the conversation to reply to",
   "源会话日志已缺失；已恢复完整缓存供阅读，CLI 续接需要原始日志。":
     "The source rollout is missing. The complete cached history is readable; CLI continuation requires the original rollout.",
   使用设备验证码登录: "Sign in with a device code",
@@ -841,9 +847,9 @@ export const english: Record<string, string> = {
     "Paste files here. Open folders using the project picker",
   "复制时原文件已更改，请重新粘贴":
     "The file changed while copying. Please paste it again",
-  "导入项目与对话": "Import projects & chats",
+  导入项目与对话: "Import projects & chats",
   "选择历史来源…": "Choose history sources…",
-  "工具活动": "Tool activity",
+  工具活动: "Tool activity",
   语言: "Language",
   "选择界面语言，聊天内容、代码和终端输出会保留原文。":
     "Choose the interface language. Your messages, code, and terminal output keep their original language.",

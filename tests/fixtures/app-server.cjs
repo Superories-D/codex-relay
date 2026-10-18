@@ -4,7 +4,8 @@ const path = require("node:path");
 const readline = require("node:readline");
 const home = process.env.RELAY_TEST_HOME;
 const saved = path.join(home, "synthetic-thread.json");
-let thread = "synthetic-thread",
+const parallel = fs.existsSync(path.join(home, "parallel-fixture.json"));
+let thread = parallel ? `synthetic-${path.basename(home)}` : "synthetic-thread",
   account = "";
 let runningTurn;
 const send = (m) => process.stdout.write(JSON.stringify(m) + "\n");
@@ -61,10 +62,11 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
           account,
           threadId: p.threadId,
           input: p.input[0].text,
+          pid: process.pid,
         }) + "\n",
       );
       notify("turn/started", { threadId: thread, turn: { id: runningTurn } });
-      setTimeout(() => {
+      const complete = () => {
         if (account === "a")
           notify("error", {
             threadId: thread,
@@ -89,7 +91,14 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
           threadId: thread,
           turn: { id: runningTurn, status: "completed", error: null },
         });
-      }, 5);
+      };
+      if (parallel) {
+        const gate = setInterval(() => {
+          if (!fs.existsSync(path.join(home, "complete-turn"))) return;
+          clearInterval(gate);
+          complete();
+        }, 20);
+      } else setTimeout(complete, 5);
     }
     if (m.method === "turn/interrupt")
       notify("turn/completed", {

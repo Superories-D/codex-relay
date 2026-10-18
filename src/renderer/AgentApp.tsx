@@ -1,6 +1,12 @@
 import { t, useI18n, setLanguage, errorText } from "./i18n";
 import { CopyButton } from "./CopyButton";
-import React, { useEffect, useLayoutEffect, useRef, useState, useMemo } from "react";
+import React, {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useMemo,
+} from "react";
 import type {
   Approval,
   ChatAttachment,
@@ -222,6 +228,10 @@ export function AgentApp({
   const modelDirty = useRef(false);
   selectedRef.current = selected;
   const job = snapshot?.jobs.find((j) => j.id === selected);
+  const activeTaskCount =
+    snapshot?.jobs.filter((j) =>
+      ["preparing", "running", "pausing"].includes(j.state),
+    ).length || 0;
   const familyOwner =
     job &&
     snapshot?.jobs.find(
@@ -825,11 +835,21 @@ export function AgentApp({
             <Network size={21} />
           </button>
           <button
-            title={t("任务队列")}
+            className="task-queue-button"
+            title={
+              activeTaskCount
+                ? t("{count} 个任务正在运行", { count: activeTaskCount })
+                : t("任务队列")
+            }
             aria-label={t("任务队列")}
             onClick={() => setManage("advanced:tasks")}
           >
             <ListTodo size={21} />
+            {activeTaskCount > 0 && (
+              <span className="task-count" aria-hidden="true">
+                {activeTaskCount}
+              </span>
+            )}
           </button>
           <button
             aria-label={t("定时任务")}
@@ -952,7 +972,9 @@ export function AgentApp({
                         basename(dir) ||
                         t("未关联项目")}
                     </span>
-                    <small className="project-count">{group.length || ""}</small>
+                    <small className="project-count">
+                      {group.length || ""}
+                    </small>
                     <button
                       className="project-new-chat"
                       title={t("在此项目新建聊天")}
@@ -1155,7 +1177,9 @@ export function AgentApp({
                     <Folder size={13} />
                     {desktop.projects?.find(
                       (p) => p.cwd === (job?.projectCwd || currentCwd),
-                    )?.name || basename(currentCwd) || t("未关联项目")}
+                    )?.name ||
+                      basename(currentCwd) ||
+                      t("未关联项目")}
                   </span>
                   {job ? (
                     <button
@@ -1175,7 +1199,9 @@ export function AgentApp({
                   )}
                 </div>
                 {job && (
-                  <small className={`conversation-state ${running(job) ? "working" : ""}`}>
+                  <small
+                    className={`conversation-state ${running(job) ? "working" : ""}`}
+                  >
                     {running(job) ? (
                       <LoaderCircle size={11} className="spin" />
                     ) : job.state === "completed" ? (
@@ -1209,7 +1235,9 @@ export function AgentApp({
                 <button
                   title={t("项目文件")}
                   aria-label={t("项目文件")}
-                  className={inspector && workspaceTab === "files" ? "selected" : ""}
+                  className={
+                    inspector && workspaceTab === "files" ? "selected" : ""
+                  }
                   onClick={() => {
                     setWorkspaceTab("files");
                     setPreviewFile("");
@@ -1221,7 +1249,9 @@ export function AgentApp({
                 <button
                   title={t("Git 更改")}
                   aria-label={t("Git 更改")}
-                  className={inspector && workspaceTab === "changes" ? "selected" : ""}
+                  className={
+                    inspector && workspaceTab === "changes" ? "selected" : ""
+                  }
                   onClick={() => {
                     setWorkspaceTab("changes");
                     setPreviewFile("");
@@ -1389,7 +1419,11 @@ export function AgentApp({
                         <React.Fragment key={a.id}>
                           {approval(a, (value) =>
                             action(() =>
-                              call("approval.respond", { id: a.id, value }),
+                              call("approval.respond", {
+                                id: a.id,
+                                jobId: a.jobId,
+                                value,
+                              }),
                             ),
                           )}
                         </React.Fragment>
@@ -1531,23 +1565,39 @@ export function AgentApp({
                     {!!attachments.length && (
                       <div className="agent-attachments">
                         {attachments.map((a, i) => (
-                          <div className="draft-attachment" key={a.path} title={a.path}>
+                          <div
+                            className="draft-attachment"
+                            key={a.path}
+                            title={a.path}
+                          >
                             {a.type === "localImage" ? (
                               <ImageThumbnail
                                 compact
-                                image={{ id: a.path, path: a.path, name: a.name, origin: "input" }}
+                                image={{
+                                  id: a.path,
+                                  path: a.path,
+                                  name: a.name,
+                                  origin: "input",
+                                }}
                                 context={{ id: job?.id, cwd: currentCwd }}
                               />
-                            ) : <FileCode2 size={18} />}
+                            ) : (
+                              <FileCode2 size={18} />
+                            )}
                             <span>{a.name}</span>
                             <button
                               className="draft-attachment-remove"
                               title={a.path}
                               aria-label={t("移除附件 {p0}", { p0: a.name })}
-                              onClick={() => setFiles((f) => ({
-                                ...f, [key]: attachments.filter((_, n) => n !== i),
-                              }))}
-                            ><X size={13} /></button>
+                              onClick={() =>
+                                setFiles((f) => ({
+                                  ...f,
+                                  [key]: attachments.filter((_, n) => n !== i),
+                                }))
+                              }
+                            >
+                              <X size={13} />
+                            </button>
                           </div>
                         ))}
                       </div>
@@ -1733,7 +1783,9 @@ export function AgentApp({
                                 : t("描述你想完成的任务…")
                         }
                         value={draft}
-                        disabled={!!job?.archived || !!job?.historySource?.issue}
+                        disabled={
+                          !!job?.archived || !!job?.historySource?.issue
+                        }
                         onChange={(e) =>
                           setDrafts((d) => ({ ...d, [key]: e.target.value }))
                         }
@@ -1741,8 +1793,12 @@ export function AgentApp({
                           const pasted = Array.from(event.clipboardData.files);
                           if (pasted.length) {
                             event.preventDefault();
-                            addPastedFiles(key, () => importPastedFiles(pasted));
-                          } else if (!event.clipboardData.getData("text/plain")) {
+                            addPastedFiles(key, () =>
+                              importPastedFiles(pasted),
+                            );
+                          } else if (
+                            !event.clipboardData.getData("text/plain")
+                          ) {
                             // Explorer file lists can omit browser File objects.
                             addPastedFiles(key, () =>
                               call("chat.attachments.clipboard"),
@@ -1856,7 +1912,9 @@ export function AgentApp({
                             onChange={(e) => {
                               setEnvironment(e.target.value);
                               if (currentCwd)
-                                void call("workspace.branches", { cwd: currentCwd })
+                                void call("workspace.branches", {
+                                  cwd: currentCwd,
+                                })
                                   .then(setBranchList)
                                   .catch(() => {});
                             }}
@@ -1884,19 +1942,31 @@ export function AgentApp({
                               title={currentCwd}
                               onClick={() => action(chooseProject)}
                             >
-                              {currentCwd ? basename(currentCwd) : t("选择项目")}
+                              {currentCwd
+                                ? basename(currentCwd)
+                                : t("选择项目")}
                               <ChevronDown size={11} />
                             </button>
                           )}
                         </div>
                         <PermissionPicker
-                          value={job?.preserveNativePermissions && sandbox === job.sandbox ? "native" : sandbox}
+                          value={
+                            job?.preserveNativePermissions &&
+                            sandbox === job.sandbox
+                              ? "native"
+                              : sandbox
+                          }
                           native={!!job?.preserveNativePermissions}
                           disabled={running(job) || !!familyOwner}
                           onChange={(value) => {
                             setSandbox(value);
                             if (job?.preserveNativePermissions)
-                              action(() => call("chat.update", { id: job.id, sandbox: value }));
+                              action(() =>
+                                call("chat.update", {
+                                  id: job.id,
+                                  sandbox: value,
+                                }),
+                              );
                           }}
                         />
                         {planMode && (

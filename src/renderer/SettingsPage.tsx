@@ -173,6 +173,31 @@ export function SettingsPage({
               <h1>{t("常规")}</h1>
               <ImportAllControl call={call} changed={refresh} />
               <SettingRow
+                title={t("并发任务")}
+                description={t(
+                  "允许多个独立会话同时运行。同组父子会话依次执行；调低上限不会中断正在运行的任务。",
+                )}
+              >
+                <select
+                  aria-label={t("并发任务上限")}
+                  disabled={busy}
+                  value={snapshot.settings.maxConcurrentTasks ?? 3}
+                  onChange={(e) => {
+                    const maxConcurrentTasks = Number(e.target.value);
+                    void run(async () => {
+                      await call("tasks.policy", { maxConcurrentTasks });
+                      refresh();
+                    });
+                  }}
+                >
+                  {[1, 2, 3, 4, 5, 6, 7, 8].map((count) => (
+                    <option key={count} value={count}>
+                      {count}
+                    </option>
+                  ))}
+                </select>
+              </SettingRow>
+              <SettingRow
                 title={t("语言")}
                 description={t(
                   "选择界面语言，聊天内容、代码和终端输出会保留原文。",
