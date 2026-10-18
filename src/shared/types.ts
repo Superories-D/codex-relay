@@ -73,6 +73,19 @@ export interface ResetWarmup {
   nextResetAt?: number;
   error?: string;
 }
+export interface TokenCounts {
+  totalTokens: number;
+  inputTokens: number;
+  outputTokens: number;
+  cachedInputTokens: number;
+  cacheWriteInputTokens?: number;
+  reasoningOutputTokens?: number;
+}
+export interface JobTokenUsage extends TokenCounts {
+  // Keep the flat cumulative counters compatible with older saved jobs.
+  last?: TokenCounts;
+  modelContextWindow?: number | null;
+}
 export interface Job {
   schedule?: { taskId: string; runId: string; requestedAt: number };
   projectCwd?: string;
@@ -88,13 +101,7 @@ export interface Job {
   multiAgent?: boolean;
   serviceTier?: string;
   agents?: AgentState[];
-  tokenUsage?: {
-    totalTokens: number;
-    inputTokens: number;
-    outputTokens: number;
-    cachedInputTokens: number;
-    modelContextWindow?: number | null;
-  };
+  tokenUsage?: JobTokenUsage;
   interactive?: boolean;
   pendingMessage?: string;
   attachments?: ChatAttachment[];

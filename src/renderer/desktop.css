@@ -1870,17 +1870,34 @@ body:lang(ja) {
   flex-direction: column;
   gap: 8px;
   padding: 18px 10px;
-  color: #777;
+  color: var(--subtle);
+}
+.usage-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.usage-total {
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+.usage-total summary {
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.usage-total small {
+  display: block;
+  margin-top: 8px;
 }
 .usage-card strong {
   font-size: 12px;
   font-weight: 500;
-  color: #aaa;
+  color: var(--text);
 }
 .usage-track {
   height: 4px;
   border-radius: 4px;
-  background: #343434;
+  background: var(--line);
   overflow: hidden;
 }
 .usage-track i {

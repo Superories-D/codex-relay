@@ -41,6 +41,7 @@ import { MarkdownText, UserText } from "./RichMessage";
 import { ActivityTimeline } from "./ActivityTimeline";
 import { ImageThumbnail } from "./ChatImages";
 import { GoalCard } from "./GoalCard";
+import { TokenUsageCard } from "./TokenUsageCard";
 import { GitBranchPicker } from "./GitBranchPicker";
 import { QuestionPanel } from "./QuestionPanel";
 import { mergePage, agentRows } from "./chat-view";
@@ -497,26 +498,7 @@ function Summary({
           <ChevronRight size={14} />
         </button>
       )}
-      {job?.tokenUsage && (
-        <div className="usage-card">
-          <span>{t("上下文使用")}</span>
-          <strong>{job.tokenUsage.totalTokens.toLocaleString()} tokens</strong>
-          {job.tokenUsage.modelContextWindow && (
-            <div className="usage-track">
-              <i
-                style={{
-                  width: `${Math.min(100, (job.tokenUsage.totalTokens / job.tokenUsage.modelContextWindow) * 100)}%`,
-                }}
-              />
-            </div>
-          )}
-          <small>
-            {t("输入")}
-            {job.tokenUsage.inputTokens.toLocaleString()} {t("· 输出")}{" "}
-            {job.tokenUsage.outputTokens.toLocaleString()}
-          </small>
-        </div>
-      )}
+      {job?.tokenUsage && <TokenUsageCard usage={job.tokenUsage} />}
     </div>
   );
 }

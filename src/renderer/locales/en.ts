@@ -928,6 +928,10 @@ export const english: Record<string, string> = {
   "暂存第 {p0} 块": "Stage hunk {p0}",
   "取消暂存第 {p0} 块": "Unstage hunk {p0}",
   此差异仅支持整文件操作: "This diff supports whole-file operations only",
+  按最近一次用量更新: "Based on the latest usage update",
+  当前上下文用量暂不可用: "Current context usage is unavailable",
+  线程累计用量: "Thread total",
+  "{used} / {limit} tokens": "{used} / {limit} tokens",
   "Git 状态已变化，请刷新更改列表后重试":
     "Git state changed. Refresh the changes list and try again.",
   "文件差异已变化，请刷新后重新检查":

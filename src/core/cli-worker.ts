@@ -25,6 +25,7 @@ import type {
 import { ensureWindowsSandbox } from "./windows-sandbox";
 import { ProcessSafetyError } from "./process-safety-error";
 import { redact } from "./redact";
+import { threadTokenUsage } from "../shared/token-usage";
 const activeAgentStatuses = new Set([
   "running",
   "pendingInit",
@@ -730,11 +731,10 @@ export class CliWorker extends EventEmitter implements Worker {
     if (this.parentOutcome && !this.agentsRunning())
       this.finish(this.parentOutcome);
     this.emit("chat", msg.method, p);
-    if (msg.method === "thread/tokenUsage/updated" && p.tokenUsage)
-      this.emit("usage", {
-        ...p.tokenUsage.total,
-        modelContextWindow: p.tokenUsage.modelContextWindow,
-      });
+    if (msg.method === "thread/tokenUsage/updated") {
+      const usage = threadTokenUsage(p.tokenUsage);
+      if (usage) this.emit("usage", usage);
+    }
     if (msg.method === "turn/started") {
       await this.beginTurn(p.turn.id);
     }

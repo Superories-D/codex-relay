@@ -215,6 +215,30 @@ beforeEach(() => {
     sandbox: "workspaceWrite",
   };
 });
+it("forwards distinct cumulative/context snapshots without double counting or accepting another thread or turn", async () => {
+  const w = worker(), usage = vi.fn();
+  w.on("usage", usage);
+  await w.start(auth);
+  const counts = (n: number) => ({ totalTokens: n, inputTokens: n - 10, outputTokens: 10, cachedInputTokens: 0 });
+  const tokenUsage = { total: counts(46_867_019), last: counts(180_000), modelContextWindow: 200_000 };
+  const params = { threadId: job.threadId, turnId: job.turnId, tokenUsage };
+  rpc.notify("thread/tokenUsage/updated", params);
+  rpc.notify("thread/tokenUsage/updated", params);
+  expect(usage).toHaveBeenLastCalledWith({ ...tokenUsage.total, last: tokenUsage.last, modelContextWindow: 200_000 });
+  expect(usage).toHaveBeenCalledTimes(2);
+  rpc.notify("thread/tokenUsage/updated", { ...params, threadId: "unrelated" });
+  rpc.notify("thread/tokenUsage/updated", { ...params, turnId: "old-turn" });
+  rpc.notify("thread/tokenUsage/updated", { ...params, tokenUsage: { total: {} } });
+  expect(usage).toHaveBeenCalledTimes(2);
+  rpc.notify("thread/started", { thread: { id: "usage-child", source: { subAgent: { thread_spawn: { parent_thread_id: job.threadId } } } } });
+  rpc.notify("thread/tokenUsage/updated", { ...params, threadId: "usage-child" });
+  expect(usage).toHaveBeenCalledTimes(2);
+  rpc.notify("thread/tokenUsage/updated", { ...params, tokenUsage: { ...tokenUsage, last: counts(16_000) } });
+  expect(usage).toHaveBeenLastCalledWith({ ...tokenUsage.total, last: counts(16_000), modelContextWindow: 200_000 });
+  rpc.notify("thread/tokenUsage/updated", { ...params, tokenUsage: { total: tokenUsage.total } });
+  expect(usage).toHaveBeenLastCalledWith({ ...tokenUsage.total, last: undefined, modelContextWindow: null });
+  await w.close();
+});
 it("offers proactive question tools and resolves child-thread requests before filtering child chat events", async () => {
   const w = worker(),
     approval = vi.fn(),
