@@ -1,5 +1,10 @@
 # v0.6.17 — branch workflow and runtime reliability
 
+Publication outcome: source release and verified text attachments are published;
+remote binary uploads failed. The complete verified EXE/ZIP remain available
+locally. Release notes explicitly state that program downloads are unavailable
+on the remote page. This is a delivery limitation, not a passed upload gate.
+
 Windows x64 update requested by the user after the current verified milestone.
 This packages all source changes since v0.6.16. Installation remains the user's
 action; no installed application, real profile or credentials were replaced.
@@ -67,7 +72,8 @@ fully if using the alternative distribution. Binaries remain outside Git.
 
 The release server advertises a 100 MB attachment limit; direct installation-EXE
 upload returned a Cloudflare 502 and created no asset. Distribution therefore
-uses two standard ZIP volumes per option, each at most 90 MiB. Download both
+was prepared as two standard ZIP volumes per option, each at most 90 MiB. Both
+sets remain local because uploading them also failed. When available, download both
 `.001` and `.002` for the Installer or Unpacked option into the same folder and
 open `.001` using 7-Zip. The installer option contains the original verified EXE;
 the unpacked option contains the complete application directory. Original full
@@ -76,9 +82,19 @@ EXE/ZIP files remain available locally at the paths above.
 Both sets passed direct `7za t` from their `.001` volume. Reassembled ZIP CRC and
 content hashes match the original EXE/app.asar. `SHA256SUMS.txt` includes whole
 file and volume hashes; updated `INSTALL.txt` explains the download procedure.
-The release is kept as a draft until every attachment is downloaded again and
-its SHA256 matches locally. Failed uploads are checked against server metadata
-before retrying, so they do not create duplicate releases or attachments.
+The draft was initially held for all binary uploads. Direct, alternate resolved
+address, existing system-proxy, multipart and documented octet-stream attempts
+failed or timed out; server metadata confirmed no binary attachments. A 1 MiB
+diagnostic upload succeeded and was removed. The final raw upload transferred
+30,852,995 bytes but returned no HTTP response and ended with curl exit 28 after
+180 seconds below the response-speed threshold. No transport was left running.
+
+To honor the user's instruction to publish this version and then stop, publication
+was limited to source and text attachments, with the missing binaries stated
+prominently. Every published text attachment was downloaded again and its SHA256
+verified. This does not count as successful remote binary distribution.
+Failed uploads were checked against server metadata
+before retrying, so they did not create duplicate releases or attachments.
 
 | Volume | Bytes | SHA256 |
 | --- | ---: | --- |
@@ -91,5 +107,12 @@ Ignored evidence under `qa-output/`: `release-0617-tests.log`,
 `package-0617-final.log`, `package-0617-integrity.json`,
 `zip-0617-integrity.json`, `installer-probe-0617.json`, `windows-0617.log`,
 `git-0617.log`, `reasoning-0617.log`, `concurrency-0617.log` and their native
-reports/screenshots. Publishing records and downloaded asset hash checks are
-recorded separately in `release-published.json` and `release-publish-0617.log`.
+reports/screenshots. Publishing records and downloaded text-asset hash checks are
+recorded separately in `release-published.json` and
+`release-publish-source-0617.log`; failed binary transfer evidence remains in
+`release-publish-0617.log`.
+
+Published page: https://code.taiko.im/Superories/codex-go/releases/tag/v0.6.17
+(`draft=false`). The immutable tag targets application commit `9523a89`;
+later documentation commits record upload limitations without retagging or
+rebuilding the verified application.
