@@ -114,7 +114,7 @@ const jobLabel = (j: Job) =>
 const basename = (p: string) => p.split(/[\\/]/).filter(Boolean).at(-1) || p;
 function fitComposer(input: HTMLTextAreaElement) {
   input.style.height = "auto";
-  input.style.height = `${Math.min(200, Math.max(44, input.scrollHeight))}px`;
+  input.style.height = `${Math.min(200, Math.max(40, input.scrollHeight))}px`;
 }
 export function AgentApp({
   management,
@@ -1467,7 +1467,7 @@ export function AgentApp({
                     <ArrowDown size={17} />
                   </button>
                   <div
-                    className={`agent-composer ${pasting[key] ? "is-pasting" : ""}`}
+                    className={`composer-controls ${pasting[key] ? "is-pasting" : ""}`}
                     onDragOver={(event) => {
                       if (
                         Array.from(event.dataTransfer.types).includes(
@@ -1580,61 +1580,8 @@ export function AgentApp({
                         </p>
                       </div>
                     </MotionRegion>
-                    <textarea
-                      ref={messageInput}
-                      rows={1}
-                      aria-label={t("消息")}
-                      placeholder={
-                        job?.archived
-                          ? t("取消归档后继续对话")
-                          : job
-                            ? t("继续提问，或补充任务要求…")
-                            : goalMode
-                              ? t("描述期望的最终结果和验收标准…")
-                              : t("描述你想完成的任务…")
-                      }
-                      value={draft}
-                      disabled={!!job?.archived || !!job?.historySource?.issue}
-                      onChange={(e) =>
-                        setDrafts((d) => ({ ...d, [key]: e.target.value }))
-                      }
-                      onPaste={(event) => {
-                        const pasted = Array.from(event.clipboardData.files);
-                        if (pasted.length) {
-                          event.preventDefault();
-                          addPastedFiles(key, () => importPastedFiles(pasted));
-                        } else if (!event.clipboardData.getData("text/plain")) {
-                          // Explorer file lists can omit browser File objects.
-                          addPastedFiles(key, () =>
-                            call("chat.attachments.clipboard"),
-                          );
-                        }
-                      }}
-                      onKeyDown={(e) => {
-                        if (
-                          e.key === "Enter" &&
-                          !e.shiftKey &&
-                          (desktop.preferences?.enterSends !== false ||
-                            e.ctrlKey ||
-                            e.metaKey) &&
-                          !e.nativeEvent.isComposing
-                        ) {
-                          e.preventDefault();
-                          action(() =>
-                            send(
-                              running(job)
-                                ? desktop.preferences?.followUp === "steer" &&
-                                  job?.state === "running"
-                                  ? "steer"
-                                  : "queue"
-                                : "send",
-                            ),
-                          );
-                        }
-                      }}
-                    />
-                    <div className="agent-composer-toolbar">
-                      <div>
+                    <div className="agent-composer">
+                      <div className="composer-attach-control">
                         <button
                           title={t("添加附件")}
                           aria-label={t("添加附件")}
@@ -1763,88 +1710,61 @@ export function AgentApp({
                             </div>
                           </>
                         )}
-                        <ShieldCheck size={15} className="composer-shield" />
-                        <select
-                          aria-label={t("执行权限")}
-                          title={t("执行权限")}
-                          value={
-                            job?.preserveNativePermissions &&
-                            sandbox === job.sandbox
-                              ? "native"
-                              : sandbox
-                          }
-                          disabled={running(job) || !!familyOwner}
-                          onChange={(e) => {
-                            const value = e.target.value as Job["sandbox"];
-                            setSandbox(value);
-                            if (job?.preserveNativePermissions)
-                              action(() =>
-                                call("chat.update", {
-                                  id: job.id,
-                                  sandbox: value,
-                                }),
-                              );
-                          }}
-                        >
-                          {job?.preserveNativePermissions && (
-                            <option value="native" disabled>
-                              {t("沿用原生权限")}
-                            </option>
-                          )}
-                          <option value="workspaceWrite">
-                            {t("请求审批")}
-                          </option>
-                          <option value="readOnly">{t("只读")}</option>
-                          <option value="dangerFullAccess">
-                            {t("完全访问")}
-                          </option>
-                        </select>
-                        {planMode && (
-                          <button
-                            className="composer-mode-badge"
-                            title={t("退出规划模式")}
-                            onClick={() => setPlanMode(false)}
-                          >
-                            <ListTodo size={13} />
-                            {t("规划")}
-                            <X size={11} />
-                          </button>
-                        )}
                       </div>
-                      <div>
-                        <ModelPicker
-                          model={model}
-                          effort={effort}
-                          accountId={
-                            snapshot?.accounts.find(
-                              (a) => a.enabled && a.status === "ready",
-                            )?.id
+                      <textarea
+                        ref={messageInput}
+                        rows={1}
+                        aria-label={t("消息")}
+                        placeholder={
+                          job?.archived
+                            ? t("取消归档后继续对话")
+                            : job
+                              ? t("继续提问，或补充任务要求…")
+                              : goalMode
+                                ? t("描述期望的最终结果和验收标准…")
+                                : t("描述你想完成的任务…")
+                        }
+                        value={draft}
+                        disabled={!!job?.archived || !!job?.historySource?.issue}
+                        onChange={(e) =>
+                          setDrafts((d) => ({ ...d, [key]: e.target.value }))
+                        }
+                        onPaste={(event) => {
+                          const pasted = Array.from(event.clipboardData.files);
+                          if (pasted.length) {
+                            event.preventDefault();
+                            addPastedFiles(key, () => importPastedFiles(pasted));
+                          } else if (!event.clipboardData.getData("text/plain")) {
+                            // Explorer file lists can omit browser File objects.
+                            addPastedFiles(key, () =>
+                              call("chat.attachments.clipboard"),
+                            );
                           }
-                          open={modelPicker}
-                          setOpen={setModelPicker}
-                          onChange={(m, e) => {
-                            if (
-                              job?.state === "waiting" &&
-                              job.waitingFor === "model" &&
-                              pending
-                            )
-                              return;
-                            modelDirty.current = true;
-                            setModel(m);
-                            setEffort(e);
-                            if (
-                              job?.state === "waiting" &&
-                              job.waitingFor === "model"
-                            )
-                              action(async () => {
-                                await call("chat.model", {
-                                  id: job.id,
-                                  model: m,
-                                  effort: e,
-                                });
-                              });
-                          }}
-                        />
+                        }}
+                        onKeyDown={(e) => {
+                          if (
+                            e.key === "Enter" &&
+                            !e.shiftKey &&
+                            (desktop.preferences?.enterSends !== false ||
+                              e.ctrlKey ||
+                              e.metaKey) &&
+                            !e.nativeEvent.isComposing
+                          ) {
+                            e.preventDefault();
+                            action(() =>
+                              send(
+                                running(job)
+                                  ? desktop.preferences?.followUp === "steer" &&
+                                    job?.state === "running"
+                                    ? "steer"
+                                    : "queue"
+                                  : "send",
+                              ),
+                            );
+                          }
+                        }}
+                      />
+                      <div className="composer-send-controls">
                         {running(job) && (
                           <button
                             className="agent-stop"
@@ -1861,19 +1781,6 @@ export function AgentApp({
                             }
                           >
                             <Square size={13} fill="currentColor" />
-                          </button>
-                        )}
-                        {!job && goalMode && (
-                          <button
-                            className="composer-goal-save"
-                            disabled={
-                              pending || !!pasting[key] || !draft.trim()
-                            }
-                            onClick={() =>
-                              action(() => send("send", false, true))
-                            }
-                          >
-                            {t("仅保存目标")}
                           </button>
                         )}
                         <button
@@ -1930,64 +1837,163 @@ export function AgentApp({
                         </button>
                       </div>
                     </div>
-                  </div>
-                  <div className="agent-composer-caption">
-                    <div className="composer-environment">
-                      <Folder size={13} />
-                      <select
-                        aria-label={t("工作环境")}
-                        value={job ? "local" : environment}
-                        disabled={!!job}
-                        onChange={(e) => {
-                          setEnvironment(e.target.value);
-                          if (currentCwd)
-                            void call("workspace.branches", { cwd: currentCwd })
-                              .then(setBranchList)
-                              .catch(() => {});
-                        }}
-                      >
-                        <option value="local">{t("本地")}</option>
-                        <option value="worktree">Worktree</option>
-                      </select>
-                      <span className="caption-divider" />
-                      <GitBranch size={13} />
-                      {!job && environment === "worktree" ? (
+                    <div className="agent-composer-toolbar">
+                      <div>
+                        <div className="composer-environment">
+                          <Folder size={13} />
+                          <select
+                            aria-label={t("工作环境")}
+                            value={job ? "local" : environment}
+                            disabled={!!job}
+                            onChange={(e) => {
+                              setEnvironment(e.target.value);
+                              if (currentCwd)
+                                void call("workspace.branches", { cwd: currentCwd })
+                                  .then(setBranchList)
+                                  .catch(() => {});
+                            }}
+                          >
+                            <option value="local">{t("本地")}</option>
+                            <option value="worktree">Worktree</option>
+                          </select>
+                          <span className="caption-divider" />
+                          <GitBranch size={13} />
+                          {!job && environment === "worktree" ? (
+                            <select
+                              aria-label={t("Worktree 起始分支")}
+                              value={branch}
+                              onChange={(e) => setBranch(e.target.value)}
+                            >
+                              <option value="HEAD">{t("当前分支")}</option>
+                              {branchList.map((value) => (
+                                <option value={value} key={value}>
+                                  {value}
+                                </option>
+                              ))}
+                            </select>
+                          ) : (
+                            <button
+                              title={currentCwd}
+                              onClick={() => action(chooseProject)}
+                            >
+                              {currentCwd ? basename(currentCwd) : t("选择项目")}
+                              <ChevronDown size={11} />
+                            </button>
+                          )}
+                        </div>
+                        <ShieldCheck size={15} className="composer-shield" />
                         <select
-                          aria-label={t("Worktree 起始分支")}
-                          value={branch}
-                          onChange={(e) => setBranch(e.target.value)}
+                          aria-label={t("执行权限")}
+                          title={t("执行权限")}
+                          value={
+                            job?.preserveNativePermissions &&
+                            sandbox === job.sandbox
+                              ? "native"
+                              : sandbox
+                          }
+                          disabled={running(job) || !!familyOwner}
+                          onChange={(e) => {
+                            const value = e.target.value as Job["sandbox"];
+                            setSandbox(value);
+                            if (job?.preserveNativePermissions)
+                              action(() =>
+                                call("chat.update", {
+                                  id: job.id,
+                                  sandbox: value,
+                                }),
+                              );
+                          }}
                         >
-                          <option value="HEAD">{t("当前分支")}</option>
-                          {branchList.map((value) => (
-                            <option value={value} key={value}>
-                              {value}
+                          {job?.preserveNativePermissions && (
+                            <option value="native" disabled>
+                              {t("沿用原生权限")}
                             </option>
-                          ))}
+                          )}
+                          <option value="workspaceWrite">
+                            {t("请求审批")}
+                          </option>
+                          <option value="readOnly">{t("只读")}</option>
+                          <option value="dangerFullAccess">
+                            {t("完全访问")}
+                          </option>
                         </select>
-                      ) : (
-                        <button
-                          title={currentCwd}
-                          onClick={() => action(chooseProject)}
-                        >
-                          {currentCwd ? basename(currentCwd) : t("选择项目")}
-                          <ChevronDown size={11} />
-                        </button>
-                      )}
+                        {planMode && (
+                          <button
+                            className="composer-mode-badge"
+                            title={t("退出规划模式")}
+                            onClick={() => setPlanMode(false)}
+                          >
+                            <ListTodo size={13} />
+                            {t("规划")}
+                            <X size={11} />
+                          </button>
+                        )}
+                        {!job && goalMode && (
+                          <button
+                            className="composer-goal-save"
+                            disabled={
+                              pending || !!pasting[key] || !draft.trim()
+                            }
+                            onClick={() =>
+                              action(() => send("send", false, true))
+                            }
+                          >
+                            {t("仅保存目标")}
+                          </button>
+                        )}
+                      </div>
+                      <div>
+                        <ModelPicker
+                          model={model}
+                          effort={effort}
+                          accountId={
+                            snapshot?.accounts.find(
+                              (a) => a.enabled && a.status === "ready",
+                            )?.id
+                          }
+                          open={modelPicker}
+                          setOpen={setModelPicker}
+                          onChange={(m, e) => {
+                            if (
+                              job?.state === "waiting" &&
+                              job.waitingFor === "model" &&
+                              pending
+                            )
+                              return;
+                            modelDirty.current = true;
+                            setModel(m);
+                            setEffort(e);
+                            if (
+                              job?.state === "waiting" &&
+                              job.waitingFor === "model"
+                            )
+                              action(async () => {
+                                await call("chat.model", {
+                                  id: job.id,
+                                  model: m,
+                                  effort: e,
+                                });
+                              });
+                          }}
+                        />
+                        <div className="agent-composer-caption">
+                          {running(job) && draft.trim() ? (
+                            <button
+                              disabled={pending || job?.state !== "running"}
+                              onClick={() => action(() => send("steer"))}
+                            >
+                              {t("立即补充到当前轮次 ↗")}
+                            </button>
+                          ) : (
+                            <span className="composer-keyboard-hint">
+                              {desktop.preferences?.enterSends === false
+                                ? t("Ctrl + Enter 发送")
+                                : t("Enter 发送 · Shift + Enter 换行")}
+                            </span>
+                          )}
+                        </div>
+                      </div>
                     </div>
-                    {running(job) && draft.trim() ? (
-                      <button
-                        disabled={pending || job?.state !== "running"}
-                        onClick={() => action(() => send("steer"))}
-                      >
-                        {t("立即补充到当前轮次 ↗")}
-                      </button>
-                    ) : (
-                      <span>
-                        {desktop.preferences?.enterSends === false
-                          ? t("Ctrl + Enter 发送")
-                          : t("Enter 发送 · Shift + Enter 换行")}
-                      </span>
-                    )}
                   </div>
                 </div>
               </div>

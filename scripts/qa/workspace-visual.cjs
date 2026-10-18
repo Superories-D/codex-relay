@@ -88,14 +88,17 @@ function fixture({ theme, language }) {
       await page.goto(`http://127.0.0.1:${server.address().port}`);
       await page.locator(".agent-message.assistant").waitFor();
       await page.locator(".sidebar-import .import-summary-status svg").waitFor();
-      await page.waitForFunction(() => document.querySelector(".agent-composer textarea").clientHeight <= 46);
+      await page.waitForFunction(() => document.querySelector(".agent-composer textarea").clientHeight <= 42);
       const dimensions = await page.evaluate(() => {
         const rect = (s) => document.querySelector(s).getBoundingClientRect();
-        const transcript = rect(".agent-transcript"), composer = rect(".agent-composer"), input = rect(".agent-composer textarea");
-        return { composerHeight: composer.height, inputHeight: input.height, alignment: Math.abs(transcript.x + parseFloat(getComputedStyle(document.querySelector(".agent-transcript")).paddingLeft) - composer.x), overflow: document.documentElement.scrollWidth > innerWidth };
+        const transcript = rect(".agent-transcript"), composer = rect(".agent-composer"), input = rect(".agent-composer textarea"), send = rect(".agent-send"), model = rect(".agent-model-trigger");
+        return { composerHeight: composer.height, controlsHeight: rect(".composer-controls").height, inputHeight: input.height, sendInInputRow: send.y >= composer.y && send.bottom <= composer.bottom, modelBelowInput: model.y >= composer.bottom, alignment: Math.abs(transcript.x + parseFloat(getComputedStyle(document.querySelector(".agent-transcript")).paddingLeft) - composer.x), overflow: document.documentElement.scrollWidth > innerWidth };
       });
       await page.screenshot({ path: path.join(output, `workspace-${theme}-${language}.png`) });
-      assert.ok(dimensions.composerHeight <= 90, `one-line composer stays compact: ${JSON.stringify(dimensions)}`);
+      assert.ok(dimensions.composerHeight <= 50, `one-line composer stays compact: ${JSON.stringify(dimensions)}`);
+      assert.ok(dimensions.controlsHeight <= 86, `input and footer together stay compact: ${JSON.stringify(dimensions)}`);
+      assert.ok(dimensions.sendInInputRow, "send stays beside the text input");
+      assert.ok(dimensions.modelBelowInput, "model controls stay outside the input surface");
       assert.ok(dimensions.alignment <= 8, "composer aligns with message column (including scrollbar gutter)");
       assert.equal(dimensions.overflow, false);
       assert.equal(await page.locator(".sidebar-import").evaluate((e) => e.open), false, "old successful imports do not occupy the sidebar");
@@ -105,7 +108,7 @@ function fixture({ theme, language }) {
       await input.fill(Array.from({ length: 12 }, (_, i) => `第 ${i + 1} 行：保留完整的多行输入与草稿。`).join("\n"));
       assert.ok(await input.evaluate((e) => e.clientHeight) >= 180);
       await input.fill("继续优化");
-      await page.waitForFunction(() => document.querySelector(".agent-composer textarea").clientHeight <= 46);
+      await page.waitForFunction(() => document.querySelector(".agent-composer textarea").clientHeight <= 42);
       // Long drafts wrap when resizing even without an input event.
       await input.fill("跨窗口调整时完整保留输入内容。".repeat(18));
       await page.setViewportSize({ width: 820, height: 760 });
