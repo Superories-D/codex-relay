@@ -370,6 +370,14 @@ export interface CatalogLoginUpdate {
   error?: string;
   loginId?: string;
 }
+export interface TerminalSession {
+  id: string;
+  cwd: string;
+  name: string;
+  state: "starting" | "running" | "closing" | "exited" | "error";
+  exitCode?: number;
+  error?: string;
+}
 export interface Bridge {
   filePath?: (file: File) => string;
   snapshot(): Promise<Snapshot>;

@@ -1520,6 +1520,7 @@ async function boot() {
           existing.start();
           schedules.start();
           catalog.resume();
+          terminals.resume();
           dialog.showErrorBox("任务尚未安全停止", redact(error));
           window?.show();
         });

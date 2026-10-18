@@ -1,6 +1,21 @@
 import { legacyEnglish } from "./legacy-en";
 import { nativeEnglish } from "./native-en";
 export const english: Record<string, string> = {
+  终端正在启动: "Starting terminal",
+  终端正在关闭: "Closing terminal",
+  "终端已退出（代码 {code}）": "Terminal exited (code {code})",
+  终端连接已关闭: "Terminal connection closed",
+  "客户端正在退出，无法新建终端": "The app is quitting; cannot open a terminal",
+  "最多同时打开 8 个终端，请关闭不再使用的终端":
+    "Up to 8 terminals can be open; close an unused terminal first",
+  终端目录不存在: "Terminal directory does not exist",
+  终端不接受会话交互请求:
+    "Terminals do not accept conversation interaction requests",
+  "终端正在启动，请稍后输入": "The terminal is starting; wait before typing",
+  终端已退出: "Terminal exited",
+  终端不存在: "Terminal does not exist",
+  "仍有终端未能确认停止，请重试关闭":
+    "Some terminals could not be confirmed stopped; retry closing",
   此文件没有已暂存的更改: "This file has no staged changes",
   此文件没有未暂存的更改: "This file has no unstaged changes",
   "文件存在合并冲突，请先解决冲突": "Resolve this file's merge conflicts first",

@@ -2403,6 +2403,30 @@ body:lang(ja) {
   overflow: hidden;
   min-height: 0;
 }
+.terminal-session-info {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 4px 14px;
+  color: var(--muted);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+.terminal-session-info > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.terminal-state-dot {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  margin-left: 6px;
+  opacity: .6;
+}
+.terminal-state-dot[data-state="error"] { color: #e8a088; }
 .terminal-host .xterm {
   height: 100%;
 }
