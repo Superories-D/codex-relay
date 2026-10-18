@@ -21,7 +21,7 @@ test cannot replace actual CLI or installed-client evidence.
 | History and files | Paginated import and original-record integrity verified. 632 imported histories lack source/ancestors and remain explicitly read-only; never invent recoverable context |
 | Git/Worktree and terminal | Existing basic native checks; isolation of concurrent projects/worktrees, fuller Git workflows and terminal lifecycle require broader acceptance |
 | Plugins/MCP and schedules | Configuration/UI exist; end-to-end plugin calls and full schedule lifecycle remain open |
-| Multilingual/accessibility | Existing three-language checks retained. User additionally requested Japanese; implement translations, native menus, language persistence and layout validation before the next package |
+| Multilingual/accessibility | Japanese added with 1,044 catalog entries; four-language switching/persistence and Japanese native menu construction verified. Narrow/zoomed light/dark Japanese layouts passed; see `JAPANESE-20261018.md` |
 | Packaging | v0.6.15 NSIS wizard loading + packaged app + ZIP integrity verified. User performs installation. Future builds must verify resources and actual app; signing/release distribution remain separate gaps |
 
 Operational constraints: inspect the real installed profile only through the

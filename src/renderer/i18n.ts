@@ -7,6 +7,7 @@ export const languages: { value: Language; label: string }[] = [
   { value: "zh-CN", label: "简体中文" },
   { value: "zh-TW", label: "繁體中文" },
   { value: "en", label: "English" },
+  { value: "ja", label: "日本語" },
 ];
 let current: Exclude<Language, "auto"> = "zh-CN";
 const listeners = new Set<() => void>();

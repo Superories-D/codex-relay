@@ -1,4 +1,4 @@
-import { t, useI18n } from "./i18n";
+import { t, useI18n, formatDate } from "./i18n";
 import React, { useState } from "react";
 import { Dialog } from "./Dialog";
 import type {
@@ -177,7 +177,7 @@ export function ExistingDialog({
                   <b>{row.title}</b>
                   <span>
                     {labels[row.status]} · {row.source} ·{" "}
-                    {new Date(row.updatedAt).toLocaleString("zh-CN")}
+                    {formatDate(row.updatedAt)}
                   </span>
                   <small>{row.cwd}</small>
                   {row.issue && (

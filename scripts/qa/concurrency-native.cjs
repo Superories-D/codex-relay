@@ -86,6 +86,7 @@ const output = path.join(root, "qa-output");
     for (const [language, label, languageLabel] of [
       ["zh-CN", "并发任务上限", "Language"],
       ["zh-TW", "併發任務上限", "语言"],
+      ["ja", "同時実行タスクの上限", "語言"],
     ]) {
       await page
         .getByLabel(languageLabel, { exact: true })
@@ -99,11 +100,39 @@ const output = path.join(root, "qa-output");
         path: path.join(output, `concurrency-settings-${language}.png`),
       });
     }
-    report.checks.push("three language labels retain saved value");
+    report.checks.push("four language labels retain saved value");
+    assert.equal(await page.locator("html").getAttribute("lang"), "ja");
+    await app.evaluate(({ Menu }) => {
+      globalThis.__qaBuildMenu = Menu.buildFromTemplate;
+      Menu.buildFromTemplate = (template) => {
+        const menu = globalThis.__qaBuildMenu.call(Menu, template);
+        globalThis.__qaMenu = menu;
+        // Inspect the actual native Menu without an OS popup stealing focus
+        // from the automation window or activating a close/quit role.
+        menu.popup = () => {};
+        return menu;
+      };
+    });
+    try {
+      await page.locator(".desktop-menu").getByRole("button", { name: "ファイル", exact: true }).click();
+      const labels = await app.evaluate(({ Menu }) => {
+        const menu = globalThis.__qaMenu;
+        const labels = menu?.items.map((item) => item.label);
+        return labels;
+      });
+      assert.deepEqual(labels, ["ウィンドウを閉じる", "終了"]);
+    } finally {
+      await app.evaluate(({ Menu }) => {
+        Menu.buildFromTemplate = globalThis.__qaBuildMenu;
+        delete globalThis.__qaBuildMenu;
+        delete globalThis.__qaMenu;
+      });
+    }
+    report.checks.push("Japanese native File menu construction");
     await page.reload();
     await page.getByRole("button", { name: "設定", exact: true }).click();
     assert.equal(
-      await page.getByLabel("併發任務上限", { exact: true }).inputValue(),
+      await page.getByLabel("同時実行タスクの上限", { exact: true }).inputValue(),
       "5",
     );
     const snapshot = await page.evaluate(() => window.relay.snapshot());
@@ -114,6 +143,8 @@ const output = path.join(root, "qa-output");
       "renderer reload retains value",
       "no accounts or task submissions",
     );
+    assert.equal(JSON.parse(await fs.readFile(path.join(profile, "desktop.json"), "utf8")).preferences.language, "ja");
+    report.checks.push("Japanese preference persisted to disk");
     report.status = "passed";
   } finally {
     await fs.writeFile(

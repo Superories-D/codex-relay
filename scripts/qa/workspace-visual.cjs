@@ -82,12 +82,19 @@ function fixture({ theme, language }) {
       ["dark", "zh-CN", 1600, 1000], ["light", "zh-CN", 1600, 1000],
       ["dark", "en", 900, 760], ["light", "zh-TW", 1100, 850],
       ["dark", "zh-CN", 900, 1020],
-    ]) {
+      ["dark", "ja", 900, 1020], ["light", "ja", 1100, 850],
+    ].filter(([, language]) => !process.env.RELAY_QA_LANGUAGE || language === process.env.RELAY_QA_LANGUAGE)) {
       const page = await browser.newPage({ viewport: { width, height }, deviceScaleFactor: width === 900 ? 1.5 : 1.25 });
       page.on("pageerror", (e) => report.rendererErrors.push(e.message));
       await page.addInitScript(fixture, { theme, language });
       await page.goto(`http://127.0.0.1:${server.address().port}`);
       await page.locator(".agent-message.assistant").waitFor();
+      if (language === "ja") {
+        assert.equal(await page.locator("html").getAttribute("lang"), "ja");
+        await page.getByRole("button", { name: "新しいチャット", exact: true }).waitFor();
+        assert.ok((await page.locator(".agent-message.assistant").innerText()).includes("已完整阅读"), "chat content remains in its original language");
+        assert.equal(await page.locator(".agent-composer textarea").getAttribute("placeholder"), "追加の質問やタスクの指示を入力…");
+      }
       await page.locator(".sidebar-import .import-summary-status svg").waitFor();
       await page.waitForFunction(() => document.querySelector(".agent-composer textarea").clientHeight <= 42);
       const dimensions = await page.evaluate(() => {
@@ -167,7 +174,7 @@ function fixture({ theme, language }) {
       report.layouts.push({ theme, language, width, height, ...dimensions });
       await page.close();
     }
-    report.checks = ["60 projects and long titles", "compact composer grows and shrinks", "resizing wrapped draft", "successful import collapsed", "start and cancel import", "failed import reveals details", "light/dark and three languages", "compact model panel above input", "permission keyboard selection, Escape focus and outside dismissal", "150 percent display scale"];
+    report.checks = ["60 projects and long titles", "compact composer grows and shrinks", "resizing wrapped draft", "successful import collapsed", "start and cancel import", "failed import reveals details", "light/dark and four languages", "compact model panel above input", "permission keyboard selection, Escape focus and outside dismissal", "150 percent display scale", "Japanese UI preserves original user content"];
     assert.deepEqual(report.rendererErrors, []);
     report.status = "passed";
     console.log(JSON.stringify(report));

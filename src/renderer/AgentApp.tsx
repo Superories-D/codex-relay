@@ -320,7 +320,7 @@ export function AgentApp({
     refreshDesktop();
   }, []);
   useEffect(() => {
-    setLanguage(desktop.preferences?.language || "zh-CN");
+    setLanguage(desktop.preferences?.language || "auto");
   }, [desktop.preferences?.language]);
   useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");

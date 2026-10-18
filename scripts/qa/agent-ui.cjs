@@ -149,7 +149,7 @@ const root = path.resolve(__dirname, "../..");
       const desktopData = {
         projects: [],
         schedules: [],
-        preferences: { theme: "dark", notifications: true },
+        preferences: { theme: "dark", notifications: true, language: "zh-CN" },
       };
       window.qaCalls = [];
       window.qaAgentScenario = (active) => {

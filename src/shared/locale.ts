@@ -1,6 +1,7 @@
 import OpenCC from "opencc-js/cn2t";
 import { english } from "../renderer/locales/en";
-export type Language = "auto" | "zh-CN" | "zh-TW" | "en";
+import { japanese } from "../renderer/locales/ja";
+export type Language = "auto" | "zh-CN" | "zh-TW" | "en" | "ja";
 export type ResolvedLanguage = Exclude<Language, "auto">;
 const convert = OpenCC.Converter({ from: "cn", to: "twp" });
 const traditional = new Map<string, string>();
@@ -14,7 +15,9 @@ export function resolveLanguage(
       ? "zh-TW"
       : /^zh/i.test(system)
         ? "zh-CN"
-        : "en";
+        : /^ja(?:[-_]|$)/i.test(system)
+          ? "ja"
+          : "en";
 }
 export function translate(
   source: string,
@@ -23,6 +26,8 @@ export function translate(
 ): string {
   let text = source;
   if (language === "en") text = english[source] ?? source;
+  else if (language === "ja")
+    text = japanese[source] ?? english[source] ?? source;
   else if (language === "zh-TW") {
     text =
       traditional.get(source) ?? convert(source).replaceAll("賬戶", "帳戶");

@@ -28,6 +28,10 @@
     sans-serif;
   color-scheme: dark;
 }
+.desktop-shell:lang(ja),
+body:lang(ja) {
+  font-family: "Segoe UI", "Yu Gothic UI", "Meiryo", sans-serif;
+}
 .desktop-shell *,
 .desktop-shell *::before,
 .desktop-shell *::after {

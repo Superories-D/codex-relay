@@ -53,7 +53,7 @@ export function SettingsPage({
   close: () => void;
   advanced: (tab: string) => void;
 }) {
-  useI18n();
+  const { language } = useI18n();
 
   const [tab, setTab] = useState(
       [
@@ -384,7 +384,9 @@ export function SettingsPage({
                   aria-label={t("界面字体")}
                   defaultValue={
                     prefs.uiFont ||
-                    '"Segoe UI", "Microsoft YaHei UI", sans-serif'
+                    (language === "ja"
+                      ? '"Segoe UI", "Yu Gothic UI", "Meiryo", sans-serif'
+                      : '"Segoe UI", "Microsoft YaHei UI", sans-serif')
                   }
                   onBlur={(e) => void preference({ uiFont: e.target.value })}
                 />

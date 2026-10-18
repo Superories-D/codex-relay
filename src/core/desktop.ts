@@ -35,7 +35,7 @@ export interface DesktopData {
   preferences: {
     theme: "dark" | "light" | "system";
     notifications: boolean;
-    language?: "auto" | "zh-CN" | "zh-TW" | "en";
+    language?: import("../shared/locale").Language;
     textSize?: number;
     codeSize?: number;
     accent?: string;

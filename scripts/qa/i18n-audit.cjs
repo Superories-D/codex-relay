@@ -4,9 +4,11 @@ const ts = require("typescript");
 const esbuild = require("esbuild");
 const root = path.resolve(__dirname, "../..");
 
-function audit() {
+function audit(language = "en") {
+  if (!["en", "ja"].includes(language))
+    throw Error("Unsupported audit language");
   const built = esbuild.buildSync({
-    entryPoints: [path.join(root, "src/renderer/locales/en.ts")],
+    entryPoints: [path.join(root, `src/renderer/locales/${language}.ts`)],
     bundle: true,
     platform: "node",
     format: "cjs",
@@ -60,14 +62,20 @@ function audit() {
   return {
     keys: keys.size,
     missing: [...keys]
-      .filter(([key]) => !(key in dictionary.exports.english))
+      .filter(
+        ([key]) =>
+          !(
+            key in
+            dictionary.exports[language === "ja" ? "japanese" : "english"]
+          ),
+      )
       .map(([key, file]) => ({ key, file })),
     unlocalized,
   };
 }
 module.exports = { audit };
 if (require.main === module) {
-  const result = audit();
+  const result = audit(process.argv[2] || "en");
   console.log(JSON.stringify(result, null, 2));
   if (result.missing.length || result.unlocalized.length) process.exitCode = 1;
 }
