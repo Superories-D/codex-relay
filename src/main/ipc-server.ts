@@ -18,11 +18,13 @@ export async function startCommandServer(
   root: string,
   scheduler: Scheduler,
   command: (name: string, args?: unknown) => Promise<unknown>,
+  additionalCommands: string[] = [],
+  tcpPort?: number,
 ) {
   const token = randomBytes(32).toString("hex");
   await atomicWrite(path.join(root, "ipc-token"), token);
   const endpoint = pipeName(root);
-  if (process.platform !== "win32") await fs.rm(endpoint, { force: true });
+  if (tcpPort === undefined && process.platform !== "win32") await fs.rm(endpoint, { force: true });
   const server = net.createServer((socket) => {
     let buffer = "";
     let authenticated = false;
@@ -88,6 +90,7 @@ export async function startCommandServer(
             // File dialogs and OAuth browser opens belong to the desktop UI.
             if (
               ![
+                ...additionalCommands,
                 "snapshot",
                 "job.add",
                 "job.report",
@@ -115,8 +118,9 @@ export async function startCommandServer(
   });
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
-    server.listen(endpoint, resolve);
+    if (tcpPort === undefined) server.listen(endpoint, resolve);
+    else server.listen(tcpPort, "127.0.0.1", resolve);
   });
-  if (process.platform !== "win32") await fs.chmod(endpoint, 0o600);
+  if (tcpPort === undefined && process.platform !== "win32") await fs.chmod(endpoint, 0o600);
   return server;
 }

@@ -46,3 +46,5 @@ await copyFile("src/renderer/index.html", "dist/renderer/index.html");
 await mkdir("dist/renderer/assets", { recursive: true });
 await copyFile("node_modules/katex/LICENSE", "dist/renderer/assets/KaTeX-LICENSE.txt");
 console.log("Built main, isolated preload, and renderer.");
+
+await build({entryPoints:["src/server/main.ts"],outfile:"dist/server/main.cjs",bundle:true,platform:"node",target:"node22",format:"cjs",sourcemap:true});

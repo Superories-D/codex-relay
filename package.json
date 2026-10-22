@@ -14,7 +14,8 @@
     "start": "electron .",
     "relay": "node scripts/relay.cjs",
     "package:win": "npm run build && electron-builder --win --x64",
-    "package:dir": "npm run build && electron-builder --win --x64 --dir"
+    "package:dir": "npm run build && electron-builder --win --x64 --dir",
+    "serve": "node dist/server/main.cjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",

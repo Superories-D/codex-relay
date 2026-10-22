@@ -29,6 +29,8 @@ if (operation === "help") {
   --allow-stop authorizes ending the identified Codex instance and its children at handoff, including other chats in that desktop instance.
   Watch reconnects automatically after a lost connection; it never replays task commands.
   Ctrl+C disconnects the viewer; the task continues in the desktop app.
+  --ipc-port PORT uses authenticated loopback TCP instead of a local socket.
+  Server commands: accounts | import-account --file auth.json [--label NAME] | approvals | respond --file response.json
   --data-dir PATH overrides the default app data location.`);
   process.exit(0);
 }
@@ -81,7 +83,7 @@ function connect() {
     return;
   }
   buffer = "";
-  const current = net.createConnection(endpoint);
+  const current = net.createConnection(options["ipc-port"] !== undefined ? {host:"127.0.0.1",port:Number(options["ipc-port"])} : endpoint);
   socket = current;
   current.setEncoding("utf8");
   current.on("connect", onConnect);
@@ -149,6 +151,16 @@ function onConnect() {
         : {}),
     });
   } else if (operation === "status") send(1, "snapshot");
+  else if (operation === "accounts") send(1,"account.list");
+  else if (operation === "approvals") send(1,"approval.list");
+  else if (operation === "import-account") {
+    try {send(1,"account.importText",{text:fs.readFileSync(path.resolve(options.file),"utf8"),...(options.label ? {label:options.label} : {})});}
+    catch(e){console.error(e.message);disconnect();process.exitCode=1;}
+  }
+  else if (operation === "respond") {
+    try {send(1,"approval.respond",JSON.parse(fs.readFileSync(path.resolve(options.file),"utf8")));}
+    catch(e){console.error(e.message);disconnect();process.exitCode=1;}
+  }
   else if (operation === "report") send(1, "job.report", jobId);
   else if (operation === "watch") {
     watching = true;
@@ -329,7 +341,7 @@ function onData(data) {
         watching = true;
         send(2, "watch");
       } else if (operation === "status") show(m.result);
-      else if (operation === "report") {
+      else if (["report","accounts","approvals","import-account"].includes(operation)) {
         console.log(JSON.stringify(m.result, null, 2));
         disconnect();
       } else {

@@ -77,3 +77,9 @@ Added whole-workflow Markdown/JSON reports with stage states, latest recorded as
 Validation: full check passed (54 files, 501 passed, 2 Windows-only skipped), including pagination, missing/cancelled stages, truncation, credential redaction and immutable/expired previews. Production-renderer QA passed Chinese/English/Japanese, including Markdown/JSON preview and save dispatch; native OS save-dialog interaction remains a Windows acceptance check.
 
 The user extended the sequence to 20 iterations during round 15, requesting larger capability expansions for the remaining rounds.
+
+## 16 — Standalone Linux supervisor
+
+Added a bundled, Electron-free Linux service with a separate private data directory, authenticated-encryption account vault, kernel `flock` ownership, shared validated approval handling, CLI account import/listing and response commands, and graceful restart persistence. The existing CLI connects over Unix sockets or optional authenticated loopback TCP. Unsupported desktop/unmanaged data is rejected instead of partially loading it. Normal service shutdown preserves runnable intent while explicit user stops remain stopped.
+
+Validation: build and 88 runtime/IPC/scheduler tests passed. The bundled daemon passed a real-process smoke test with the real CLI, singleton rejection, queued task persistence and restart. Native Unix sockets are denied by this test host, so transport acceptance used the loopback TCP option. No real accounts, model calls or Windows release were involved. See SERVER.md for setup and scope.
