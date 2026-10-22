@@ -4,6 +4,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { RecoveryError } from "../src/core/auto-recovery";
 import { Rpc } from "../src/core/rpc";
 import { spawnCodex, terminateTree } from "../src/core/process";
 import { ProcessSafetyError } from "../src/core/process-safety-error";
@@ -95,4 +96,37 @@ it("closes the protocol on an oversized unterminated frame", () => {
   rpc.on("disconnected", disconnected);
   child.stdout.write(Buffer.alloc(8 * 1024 * 1024 + 1, 120));
   expect(disconnected).toHaveBeenCalledOnce();
+});
+
+it("rejects pending calls on output EOF even while the process is still alive", async () => {
+  child.stdin.removeAllListeners("data");
+  const pending = rpc.call("thread/read");
+  const rejected = expect(pending).rejects.toBeInstanceOf(RecoveryError);
+  child.stdout.emit("end");
+  await rejected;
+  await expect(rpc.call("thread/read")).rejects.toBeInstanceOf(RecoveryError);
+  expect(child.exitCode).toBeNull();
+});
+it.each(["stdout", "stderr"])("recovers %s stream errors without crashing the host", async (stream) => {
+  child.stdin.removeAllListeners("data");
+  const rejected = expect(rpc.call("thread/read")).rejects.toBeInstanceOf(RecoveryError);
+  child[stream].emit("error", Error("broken pipe"));
+  await rejected;
+});
+it("classifies early process exit before initialization acknowledgement as recoverable", async () => {
+  await rpc.close();
+  child.stdin.removeAllListeners("data");
+  child.stdin.on("data", () => child.emit("close", 1));
+  await expect(Rpc.open("synthetic", root)).rejects.toBeInstanceOf(RecoveryError);
+  await expect(fs.access(path.join(root, "relay-owner.json"))).rejects.toThrow();
+});
+it("retains a missing executable error instead of converting it to automatic recovery", async () => {
+  await rpc.close();
+  const missing = Object.assign(Error("spawn ENOENT"), { code: "ENOENT" });
+  vi.mocked(spawnCodex).mockRejectedValueOnce(missing);
+  await expect(Rpc.open("missing", root)).rejects.toBe(missing);
+});
+it("bounds a silent RPC request with a recoverable timeout", async () => {
+  child.stdin.removeAllListeners("data");
+  await expect(rpc.call("thread/read", {}, 5)).rejects.toBeInstanceOf(RecoveryError);
 });

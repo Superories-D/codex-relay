@@ -8,6 +8,7 @@ import { promises as fs } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { atomicWrite } from "./store";
 import { ProcessSafetyError } from "./process-safety-error";
+import { RecoveryError } from "./auto-recovery";
 export interface RpcMessage {
   id?: number | string;
   method?: string;
@@ -31,6 +32,7 @@ export class Rpc extends EventEmitter {
     }
   >();
   private dead = false;
+  private failure?: Error;
   private closing = false;
   private closeInFlight?: Promise<void>;
   private constructor(
@@ -85,12 +87,19 @@ export class Rpc extends EventEmitter {
     );
     child.once("error", (error) => this.fail(error));
     child.once("close", (code) => {
-      this.fail(new Error(`Codex app-server exited (${code})`));
+      this.fail(new RecoveryError(`Codex app-server exited (${code})`));
     });
-    child.stdin.on("error", (error) => this.fail(error));
+    child.stdout.once("end", () =>
+      this.fail(new RecoveryError("Codex output stream closed")),
+    );
+    for (const stream of [child.stdin, child.stdout, child.stderr])
+      stream.on("error", (error) =>
+        this.fail(new RecoveryError(`Codex connection failed: ${redact(error.message)}`)),
+      );
   }
   private fail(error: Error) {
     const firstFailure = !this.dead;
+    if (firstFailure) this.failure = error;
     this.dead = true;
     for (const p of this.pending.values()) {
       clearTimeout(p.timer);
@@ -178,7 +187,7 @@ export class Rpc extends EventEmitter {
   }
   send(msg: RpcMessage) {
     if (this.dead || this.child.stdin.destroyed)
-      throw new Error("RPC connection is closed");
+      throw this.failure ?? new RecoveryError("RPC connection is closed");
     if (this.child.stdin.writableLength > 2 * 1024 * 1024)
       throw new Error("Codex 输入管道繁忙，请等待当前操作结束");
     this.child.stdin.write(JSON.stringify(msg) + "\n");
@@ -190,7 +199,7 @@ export class Rpc extends EventEmitter {
       const id = this.sequence++;
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(new Error(`RPC timeout: ${method}`));
+        reject(new RecoveryError(`RPC timeout: ${method}`));
       }, timeoutMs);
       this.pending.set(id, { resolve, reject, timer });
       try {
