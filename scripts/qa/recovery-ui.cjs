@@ -72,6 +72,8 @@ function fixture({ language, theme }) {
     onChat: () => () => {},
     command: async (name, args) => {
       window.recoveryCalls.push({ name, args });
+      if (name === "job.report") return { schemaVersion: 1, blockers: ["recovery"], task: { id: job.id, state: job.state }, recovery: [], logs: [] };
+      if (name === "job.report.save") return { saved: true };
       if (name === "templates.list") return structuredClone(templates);
       if (name === "templates.save") {
         templates.items.push({ ...args.template, id: "44444444-4444-4444-8444-444444444444", updatedAt: now });
@@ -307,6 +309,14 @@ function fixture({ language, theme }) {
       await page.locator(".task-templates").waitFor({ state: "detached" });
       assert.equal(await composer.inputValue(), "Persist across restart\n\nInspect before resuming");
       assert.equal(await page.evaluate(() => window.recoveryCalls.filter((c) => c.name === "chat.send" || c.name === "job.add").length), 0);
+      await page.locator(".desktop-product").click();
+      await page.locator(".task-report-trigger").click();
+      await page.locator(".task-report-preview pre").waitFor();
+      const reportText = await page.locator(".task-report-preview pre").innerText();
+      assert.equal(JSON.parse(reportText).task.id, "11111111-1111-4111-8111-111111111111");
+      await page.locator(".task-report-preview .queue-actions button").last().click();
+      await page.locator(".task-report-preview [role=status]").last().waitFor();
+      await page.keyboard.press("Escape");
       await page.close();
     }
     assert.deepEqual(report.rendererErrors, []);

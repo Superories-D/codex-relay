@@ -19,6 +19,7 @@ if (operation === "help") {
   node scripts/relay.cjs run --cwd C:\\Project --prompt "Finish the task" [--model MODEL] [--effort high] [--mode cli|desktop]
   node scripts/relay.cjs run --cwd C:\\Project --prompt-file task.txt
   node scripts/relay.cjs run --cwd C:\\Project --prompt "Finish the task" --completion-marker "[TASK_DONE]" --completion-retries 3
+  node scripts/relay.cjs report --id JOB_ID
   node scripts/relay.cjs status
   node scripts/relay.cjs watch [--id JOB_ID]
   node scripts/relay.cjs pause|resume|cancel --id JOB_ID
@@ -116,6 +117,7 @@ socket.on("connect", () => {
         : {}),
     });
   } else if (operation === "status") send(1, "snapshot");
+  else if (operation === "report") send(1, "job.report", jobId);
   else if (operation === "watch") {
     watching = true;
     send(2, "watch");
@@ -254,6 +256,7 @@ socket.on("data", (data) => {
         watching = true;
         send(2, "watch");
       } else if (operation === "status") show(m.result);
+      else if (operation === "report") { console.log(JSON.stringify(m.result, null, 2)); disconnect(); }
       else {
         console.log("OK");
         disconnect();

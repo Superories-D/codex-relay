@@ -33,3 +33,7 @@ A dedicated task center replaces the advanced queue navigation: status summaries
 ## 8. Reusable task templates
 
 Save/edit/delete named instructions with model, reasoning and planning preferences. Inserting a template appends to the draft and never starts work. A separate versioned store serializes mutations, rejects stale revisions and publishes only after atomic writes; corrupt storage is preserved. Build and 9 template/localization tests passed; three-language renderer checks save and insert a template without sending inference requests.
+
+## 9. Task diagnostic reports
+
+A previewable JSON report explains known blockers and includes a whitelisted task/environment summary, bounded recovery history and recent diagnostic logs. It excludes account credential objects, prompt fields and output logs, and redacts diagnostic strings. Users can copy/export it locally or run `relay.cjs report --id JOB_ID`. Build and 11 report/IPC/localization tests passed; three-language UI checks preview and request export. Native save dialogs remain an OS acceptance boundary.

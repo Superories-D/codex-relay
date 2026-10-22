@@ -19,7 +19,8 @@ import path from "node:path";
 import { promises as fs } from "node:fs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { Store } from "../core/store";
+import { taskReport } from "../core/task-report";
+import { Store, atomicWrite } from "../core/store";
 import { checkEnvironment } from "../core/diagnostics";
 import { windowsPowerShellEnv, protectDataDirectory } from "../core/powershell";
 import { AccountImport } from "../core/account-import";
@@ -807,6 +808,16 @@ async function boot() {
           .strict()
           .parse(args);
         return scheduler.openAgent(a.id, a.threadId);
+      }
+      case "job.report":
+      case "job.report.save": {
+        const id = idSchema.parse(args);
+        const report = taskReport(scheduler.snapshot(), id, { version: app.getVersion(), platform: process.platform, arch: process.arch, node: process.versions.node });
+        if (name === "job.report") return report;
+        const result = await dialog.showSaveDialog(window!, { defaultPath: `codex-relay-${id.slice(0, 8)}-report.json`, filters: [{ name: "JSON", extensions: ["json"] }] });
+        if (result.canceled || !result.filePath) return { saved: false };
+        await atomicWrite(result.filePath, JSON.stringify(report, null, 2));
+        return { saved: true };
       }
       case "chat.export": {
         const id = idSchema.parse(args),

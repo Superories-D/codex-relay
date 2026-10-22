@@ -4,6 +4,7 @@ import { loadDraftState, saveDraftState, remainingDraft, remainingFiles } from "
 import { ChatSearch } from "./ChatSearch";
 import { TaskCenter } from "./TaskCenter";
 import { TaskTemplates } from "./TaskTemplates";
+import { TaskReport } from "./TaskReport";
 import { CopyButton } from "./CopyButton";
 import { RecoveryNotice, RecoveryHistory } from "./RecoveryNotice";
 import React, {
@@ -146,6 +147,7 @@ export function AgentApp({
   const [turnHistory, setTurnHistory] = useState(false);
   const [contentSearch, setContentSearch] = useState(false);
   const [templatesOpen, setTemplatesOpen] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
   const [visibleProjects, setVisibleProjects] = useState(30),
     [visibleThreads, setVisibleThreads] = useState<Record<string, number>>({});
   const [selected, setSelected] = useState<string | undefined>(
@@ -2184,6 +2186,7 @@ export function AgentApp({
                     <Pencil size={15} />
                     {t("会话历史与编辑")}
                   </button>
+                  <button role="menuitem" className="task-report-trigger" onClick={() => { setReportOpen(true); setThreadMenu(false); }}><CircleHelp size={15} />{t("会话诊断报告")}</button>
                   <button role="menuitem" onClick={() => { setContentSearch(true); setThreadMenu(false); }}><Search size={15} />{t("搜索会话内容")}</button>
                   <button
                     role="menuitem"
@@ -2352,6 +2355,7 @@ export function AgentApp({
             />
           )}
         </ModalPresence>
+        <ModalPresence>{reportOpen && job && <TaskReport id={job.id} call={call} close={() => setReportOpen(false)} />}</ModalPresence>
         <ModalPresence>{templatesOpen && <TaskTemplates draft={draft} preferences={{ model, effort, planMode, multiAgent }} call={call} close={() => setTemplatesOpen(false)} apply={(template) => {
           setDrafts((d) => ({ ...d, [key]: [d[key], template.prompt].filter(Boolean).join("\n\n") }));
           setModel(template.model); setEffort(template.effort); setPlanMode(template.planMode); setMultiAgent(template.multiAgent);

@@ -1452,3 +1452,5 @@ button:disabled {
 .template-list article { border: 1px solid var(--line, #454545); padding: 12px; border-radius: 10px; }
 .template-list p { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 90px; overflow: auto; }
 .template-trigger { flex: 0 0 auto; align-self: flex-end; }
+
+.task-report-preview pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 360px; overflow: auto; font-size: 12px; padding: 12px; border: 1px solid var(--line, #454545); }
