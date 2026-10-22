@@ -1191,6 +1191,23 @@ export class Scheduler extends EventEmitter {
     this.changed();
   }
   control(id: string, action: "pause" | "resume" | "cancel"): Promise<void> {
+    if (action !== "resume" && this.recoveryTasks.has(id)) {
+      const job = this.store.data.jobs.find((j) => j.id === id);
+      if (job && !["completed", "cancelled"].includes(job.state)) {
+        // Ownership checks can take time. Remember Stop immediately instead of
+        // leaving it behind that check, where an app restart could lose it.
+        if (job.stopIntent !== "cancel") job.stopIntent = action;
+        const saved = this.store.save();
+        void saved.catch(() => {}); // Observed below after the recovery control.
+        this.changed();
+        return this.queueControl(id, async () => {
+          await saved;
+          // Recovery itself may have fulfilled a queued cancellation.
+          if (job.state === "cancelled" && job.stopIntent === "cancel") return;
+          return this.controlOnce(id, action);
+        });
+      }
+    }
     return this.queueControl(id, () => this.controlOnce(id, action));
   }
   model(id: string, model: string, effort: string) {

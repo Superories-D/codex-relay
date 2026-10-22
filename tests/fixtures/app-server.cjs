@@ -19,6 +19,7 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
   const p = m.params ?? {};
   try {
     if (m.method === "account/login/start") account = p.chatgptAccountId;
+    if (m.method === "thread/goal/get") result = { goal: null };
     if (m.method === "windowsSandbox/readiness") result = { status: "ready" };
     if (m.method === "account/rateLimits/read")
       result = {

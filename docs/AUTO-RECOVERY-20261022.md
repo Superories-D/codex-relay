@@ -15,9 +15,18 @@ change, or quota-consuming model run is part of this change.
   Successful completion or explicit user resumption resets the interruption count.
 - Startup automatically checks interrupted managed tasks, including older persisted
   `recoveryRequired` records. It does not automatically adopt an unmanaged window.
-- Pause/Cancel intent is saved before process stopping. Recovery can finish cleanup
+- Pause/Cancel intent is saved immediately, even while a slow ownership check is
+  pending, and before process stopping. Recovery can finish cleanup
   but cannot restart inference after that intent. Old `pausing` records are treated
   as a pause. Archived chats are not resumed.
+- Goal reads distinguish transient failures, malformed replies and explicit absence;
+  unknown state triggers recovery without losing pending input or admission flags.
+  Explicitly unsupported Goal APIs still allow ordinary chat. Newer Goal events
+  outrank older read responses, and known quota exhaustion retains priority.
+- Missing/invalid turn acknowledgements retain the uncertain-input marker and
+  trigger recovery instead of leaving the conversation running indefinitely.
+- Every resumed thread is checked against its expected ID, including ordinary
+  managed threads and newly materialized threads; mismatches stop submission.
 - The conversation and task manager show recovery progress and expandable details.
   The conversation has a Pause recovery control. Automatic recovery does not produce
   a misleading “needs your attention” desktop notification. Chinese, Traditional
@@ -60,7 +69,7 @@ model/tool operation is a crash.
 - `scripts/qa/recovery-ui.cjs`: production renderer, synthetic IPC, Chinese dark
   1440px, English light 900px and Japanese dark 900px; localized countdown updates,
   expanding details, width bounds, Pause IPC and zero renderer exceptions.
-- Final `npm run check`: build/typecheck passed; **49 test files, 434 passed,
+- Final `npm run check`: build/typecheck passed; **50 test files, 460 passed,
   2 Windows-only PowerShell tests skipped** on this Linux host.
   Windows process-tree recovery and provider-dependent behavior still require
   native acceptance. Existing v0.6.17 binaries do not include these changes.

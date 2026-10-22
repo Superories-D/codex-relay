@@ -100,7 +100,10 @@ export class CliWorker extends EventEmitter implements Worker {
       "notification",
       (msg) =>
         void this.notification(msg).catch((error) =>
-          this.finish({ kind: "error", error }),
+          this.finish({
+            kind: error instanceof RecoveryError ? "recoverable" : "error",
+            error,
+          }),
         ),
     );
     this.rpc.on("request", (msg) => {
@@ -304,7 +307,14 @@ export class CliWorker extends EventEmitter implements Worker {
         }
         throw error;
       });
-    if (!turn) return;
+    if (this.terminal && !turn) return;
+    if (typeof turn?.turn?.id !== "string" || !turn.turn.id.trim()) {
+      this.finish({
+        kind: "recoverable",
+        error: new RecoveryError("任务提交结果尚未确认，将核验原会话后继续"),
+      });
+      return;
+    }
     // Goal resume may already have admitted a turn. Its response must not
     // rewind a newer turn/started notification's ID.
     if (!this.turnId) await this.beginTurn(turn.turn.id);
@@ -389,15 +399,45 @@ export class CliWorker extends EventEmitter implements Worker {
   }
   private async readGoal() {
     if (!this.rpc || !this.threadId) return;
+    const revision = this.goalRevision;
     try {
-      const revision = this.goalRevision;
       const response = await this.rpc.call("thread/goal/get", {
         threadId: this.threadId,
       });
-      if (revision === this.goalRevision && Object.hasOwn(response, "goal"))
-        this.setGoal(response.goal);
-    } catch {
-      // Older CLI builds and explicitly disabled Goals still support chat.
+      // A notification received during this read is newer than its snapshot.
+      if (revision !== this.goalRevision) return;
+      const goal = response?.goal;
+      if (
+        goal !== null &&
+        (!goal ||
+          goal.threadId !== this.threadId ||
+          ![
+            "active",
+            "paused",
+            "blocked",
+            "usageLimited",
+            "budgetLimited",
+            "complete",
+          ].includes(goal.status))
+      )
+        throw new RecoveryError("目标状态尚未确认，将重新连接原会话");
+      this.setGoal(goal);
+    } catch (error) {
+      if (revision !== this.goalRevision) return;
+      const detail = (error as { detail?: { code?: number; message?: string } })
+        ?.detail;
+      const message =
+        detail?.message ?? (error instanceof Error ? error.message : "");
+      // Compatibility fallback requires explicit evidence that Goals are not
+      // supported. A timeout is not proof that the saved Goal disappeared.
+      if (
+        detail?.code === -32601 ||
+        /\bgoals?\b.*\b(?:disabled|not enabled)\b/i.test(message)
+      )
+        return;
+      if (errorKind(error) === "transient")
+        throw new RecoveryError("读取目标状态暂时失败，将重新连接原会话");
+      throw error;
     }
   }
   private async beginTurn(id: string) {
@@ -813,7 +853,17 @@ export class CliWorker extends EventEmitter implements Worker {
         if (this.quotaSeen && !this.terminal) void this.stop().catch(() => {});
         return;
       }
-      await this.readGoal();
+      try {
+        await this.readGoal();
+      } catch (error) {
+        // Authoritative quota/stop evidence outranks an unavailable Goal read.
+        if (
+          !this.quotaSeen &&
+          !this.stopRequested &&
+          errorKind(p.turn.error ?? this.lastError) !== "quota"
+        )
+          throw error;
+      }
       if (epoch !== this.turnEpoch || this.terminal) return;
       const error = p.turn.error ?? this.lastError;
       if (this.quotaSeen || errorKind(error) === "quota")

@@ -4,15 +4,19 @@ import { Rpc } from "../src/core/rpc";
 import { CliWorker } from "../src/core/cli-worker";
 import type { Job } from "../src/shared/types";
 import { ProcessSafetyError } from "../src/core/process-safety-error";
+import { RecoveryError } from "../src/core/auto-recovery";
 vi.mock("../src/core/rpc", () => ({ Rpc: { open: vi.fn() } }));
 class FakeRpc extends EventEmitter {
   used = 10;
   autoGoalTurn = true;
   interruptEmits = true;
+  goals = new Map<string, unknown>();
   calls: string[] = [];
   call = vi.fn(async (method: string, params: any): Promise<any> => {
     this.calls.push(method);
     if (method === "windowsSandbox/readiness") return { status: "ready" };
+    if (method === "thread/goal/get")
+      return { goal: this.goals.get(params.threadId) ?? null };
     if (method === "account/rateLimits/read")
       return {
         rateLimits: {
@@ -59,6 +63,8 @@ class FakeRpc extends EventEmitter {
     return {};
   });
   notify(method: string, params: any) {
+    if (method === "thread/goal/updated")
+      this.goals.set(params.threadId, params.goal);
     this.emit("notification", { method, params });
   }
   close = vi.fn(async () => {});
@@ -1757,5 +1763,167 @@ it("interrupts known child turns as well as the parent and never controls an unr
     turnId: "turn-2",
   });
   expect((await w.done).kind).toBe("interrupted");
+  await w.close();
+});
+
+describe("Goal state verification during recovery", () => {
+  it("retries a timed-out Goal read without losing its admission flags or pending input", async () => {
+    job.threadId = "thread-1";
+    job.goalResumeAfterQuota = true;
+    job.pendingMessage = "Keep this follow-up";
+    const original = rpc.call.getMockImplementation()!;
+    rpc.call.mockImplementation(async (method, params) => {
+      if (method === "thread/goal/get") throw Error("RPC timed out");
+      return original(method, params);
+    });
+    const w = worker();
+    await expect(w.start(auth)).rejects.toBeInstanceOf(RecoveryError);
+    expect(job.goalResumeAfterQuota).toBe(true);
+    expect(job.pendingMessage).toBe("Keep this follow-up");
+    expect(
+      rpc.call.mock.calls.some(([m]) =>
+        ["thread/resume", "turn/start", "turn/steer"].includes(m),
+      ),
+    ).toBe(false);
+    await w.close();
+  });
+  it.each([
+    undefined,
+    {},
+    { goal: { threadId: "wrong", status: "active" } },
+    { goal: { threadId: "thread-1", status: "unknown" } },
+  ])(
+    "recovers an unverified Goal response without inventing an absent Goal: %j",
+    async (response) => {
+      job.threadId = "thread-1";
+      job.goalStartRequested = true;
+      const original = rpc.call.getMockImplementation()!;
+      rpc.call.mockImplementation(async (method, params) =>
+        method === "thread/goal/get" ? response : original(method, params),
+      );
+      const w = worker();
+      await expect(w.start(auth)).rejects.toBeInstanceOf(RecoveryError);
+      expect(job.goalStartRequested).toBe(true);
+      expect(rpc.call.mock.calls.some(([m]) => m === "turn/start")).toBe(false);
+      await w.close();
+    },
+  );
+  it.each([
+    Object.assign(Error("Method not found"), {
+      detail: { code: -32601, message: "Method not found" },
+    }),
+    Error("Goals are not enabled"),
+  ])(
+    "keeps ordinary chat compatible when Goal support is explicitly unavailable",
+    async (failure) => {
+      job.threadId = "thread-1";
+      const original = rpc.call.getMockImplementation()!;
+      rpc.call.mockImplementation(async (method, params) => {
+        if (method === "thread/goal/get") throw failure;
+        return original(method, params);
+      });
+      const w = worker();
+      await w.start(auth);
+      expect(rpc.call.mock.calls.some(([m]) => m === "turn/start")).toBe(true);
+      await w.close();
+    },
+  );
+  it("preserves authorization errors instead of treating them as missing Goal support", async () => {
+    job.threadId = "thread-1";
+    const original = rpc.call.getMockImplementation()!;
+    const denied = Error("401 unauthorized");
+    rpc.call.mockImplementation(async (method, params) => {
+      if (method === "thread/goal/get") throw denied;
+      return original(method, params);
+    });
+    const w = worker();
+    await expect(w.start(auth)).rejects.toBe(denied);
+    await w.close();
+  });
+  it("uses a newer Goal notification even when an older read times out", async () => {
+    job.threadId = "thread-1";
+    job.goalStartRequested = true;
+    const original = rpc.call.getMockImplementation()!;
+    rpc.call.mockImplementation(async (method, params) => {
+      if (method === "thread/goal/get") {
+        rpc.notify("thread/goal/updated", {
+          threadId: job.threadId,
+          goal: { threadId: job.threadId, status: "active" },
+        });
+        throw Error("RPC timed out");
+      }
+      return original(method, params);
+    });
+    const w = worker();
+    await w.start(auth);
+    expect(job.turnId).toBe("native-goal-turn");
+    expect(rpc.call.mock.calls.some(([m]) => m === "turn/start")).toBe(false);
+    await w.close();
+  });
+  it.each([false, true])(
+    "preserves quota priority while recovering failed final Goal verification (exhausted=%s)",
+    async (exhausted) => {
+      const w = worker();
+      await w.start(auth);
+      const original = rpc.call.getMockImplementation()!;
+      rpc.call.mockImplementation(async (method, params) => {
+        if (method === "thread/goal/get") throw Error("RPC timed out");
+        return original(method, params);
+      });
+      if (exhausted) rpc.used = 100;
+      endParent();
+      await vi.advanceTimersByTimeAsync(1000);
+      expect((await w.done).kind).toBe(exhausted ? "quota" : "recoverable");
+      await w.close();
+    },
+  );
+});
+
+it.each([undefined, null, {}, { turn: { id: "" } }])(
+  "recovers an unverified submission acknowledgement without clearing pending input: %j",
+  async (response) => {
+    job.pendingMessage = "Check the existing files before continuing";
+    job.attachments = [
+      { type: "localImage", path: "/tmp/reference.png", name: "reference.png" },
+    ];
+    const original = rpc.call.getMockImplementation()!;
+    rpc.call.mockImplementation(async (method, params) =>
+      method === "turn/start" ? response : original(method, params),
+    );
+    const w = worker();
+    await w.start(auth);
+    expect(await w.done).toMatchObject({ kind: "recoverable" });
+    expect(job.submissionUncertain).toBe(true);
+    expect(job.pendingMessage).toBe(
+      "Check the existing files before continuing",
+    );
+    expect(job.attachments).toHaveLength(1);
+    expect(
+      rpc.call.mock.calls.filter(([m]) => m === "turn/start"),
+    ).toHaveLength(1);
+    await w.close();
+  },
+);
+it("does not lose terminal quota evidence when Goal verification also times out", async () => {
+  const w = worker();
+  await w.start(auth);
+  const original = rpc.call.getMockImplementation()!;
+  rpc.call.mockImplementation(async (method, params) => {
+    if (method === "thread/goal/get") throw Error("RPC timeout");
+    return original(method, params);
+  });
+  rpc.notify("turn/completed", {
+    threadId: job.threadId,
+    turn: {
+      id: job.turnId,
+      status: "failed",
+      error: {
+        codexErrorInfo: "usageLimitExceeded",
+        message: "Usage limit exceeded",
+      },
+    },
+  });
+  await vi.advanceTimersByTimeAsync(1000);
+  expect((await w.done).kind).toBe("quota");
   await w.close();
 });

@@ -1229,6 +1229,44 @@ describe("supervisor state transitions", () => {
       expect(restored.data.jobs[0].autoRecovery).toBeUndefined();
     },
   );
+  it.each(["pause", "cancel"] as const)(
+    "persists %s immediately while ownership recovery is still pending",
+    async (action) => {
+      const job = await scheduler.add({ ...input, cwd: root });
+      await until(() => workers[0]?.started);
+      workers[0].settle({ kind: "recoverable" });
+      await (scheduler as any).currentRun;
+      let finishRecovery!: () => void;
+      const recovering = vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            finishRecovery = resolve;
+          }),
+      );
+      (scheduler as any).recover = recovering;
+      job.autoRecovery!.nextAttemptAt = 0;
+      await (scheduler as any).tick();
+      await until(() => recovering.mock.calls.length === 1);
+      const stopping = scheduler.control(job.id, action);
+      try {
+        // The request must survive a restart before the ownership check finishes.
+        const restored = new Store(root);
+        await until(async () => {
+          await restored.load();
+          return restored.data.jobs[0].stopIntent === action;
+        });
+        await (scheduler as any).tick();
+        expect(workers).toHaveLength(1);
+      } finally {
+        finishRecovery();
+      }
+      await stopping;
+      await until(() => !(scheduler as any).recoveryTasks.size);
+      await (scheduler as any).tick();
+      expect(job.state).toBe(action === "pause" ? "paused" : "cancelled");
+      expect(workers).toHaveLength(1);
+    },
+  );
   it("honors Cancel after failed cleanup even if recovery later succeeds", async () => {
     const job = await scheduler.add({ ...input, cwd: root });
     await until(() => workers[0]?.started);
