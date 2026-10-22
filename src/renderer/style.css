@@ -1460,3 +1460,6 @@ button:disabled {
 .dependency-options input[type=checkbox] { width: auto; flex: 0 0 auto; }
 .dependency-options small { display: block; color: var(--muted); overflow-wrap: anywhere; }
 .task-dependencies { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.dispatch-controls { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:16px; border:1px solid var(--line); border-radius:12px; margin:16px 0; }
+.dispatch-controls p { color:var(--muted); font-size:12px; }
+.dispatch-controls button { flex-shrink:0; }

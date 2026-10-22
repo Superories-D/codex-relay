@@ -1,3 +1,4 @@
+import { dispatchHeld, projectKey } from "../shared/dispatch";
 import { dependencyBlockers } from "../shared/task-dependencies";
 import { TaskDependencies } from "./TaskDependencies";
 import React, { useState } from "react";
@@ -61,6 +62,12 @@ export function TaskCenter({
       (!j.existing || j.existing.phase === "managed"),
   );
   const targets = eligible.filter((j) => selected.includes(j.id));
+  const projectPaused = snapshot.dispatch?.projects.some(cwd => projectKey(cwd, snapshot.platform) === projectKey(project, snapshot.platform));
+  async function setDispatch(paused: boolean, cwd?: string) {
+    setBusy(true); setError("");
+    try { await call("scheduler.dispatch", {paused, ...(cwd ? {cwd} : {})}); }
+    catch (e) { setError(errorText(e)); } finally { setBusy(false); }
+  }
   const run = async (action: "pause" | "resume") => {
     setBusy(true);
     setError("");
@@ -91,6 +98,10 @@ export function TaskCenter({
         </div>
         <button onClick={close}>{t("返回聊天")}</button>
       </header>
+      <section className="dispatch-controls">
+        <div><strong>{t(snapshot.dispatch?.paused ? "调度已暂停" : "自动调度已开启")}</strong><p>{t("暂停调度只阻止新任务启动，当前任务会继续完成。设置在重启后保留。")}</p></div>
+        <button disabled={busy} onClick={() => void setDispatch(!snapshot.dispatch?.paused)}>{t(snapshot.dispatch?.paused ? "开启全局调度" : "暂停全局调度")}</button>
+      </section>
       <div className="task-summary">
         {[
           ["active", "进行中", jobs.filter(active).length],
@@ -127,13 +138,14 @@ export function TaskCenter({
           onChange={(e) => setProject(e.target.value)}
         >
           <option value="">{t("全部项目")}</option>
-          {[...new Set(jobs.map((j) => j.projectCwd || j.cwd))].map((cwd) => (
+          {[...new Set([...jobs.map((j) => j.projectCwd || j.cwd), ...(snapshot.dispatch?.projects || [])])].map((cwd) => (
             <option key={cwd} value={cwd}>
               {cwd}
             </option>
           ))}
         </select>
       </div>
+      {project && <button className="project-dispatch" disabled={busy} onClick={() => void setDispatch(!projectPaused, project)}>{t(projectPaused ? "开启此项目调度" : "暂停此项目调度")}</button>}
       <div className="queue-actions">
         <button
           disabled={busy || !eligible.length}
@@ -221,6 +233,7 @@ export function TaskCenter({
                     : "普通优先级",
               )}
             </small>
+            {dispatchHeld(snapshot, job, snapshot.platform) && ["queued", "waiting"].includes(job.state) && <p>{t("调度已暂停")}</p>}
             {!!job.dependsOn?.length && <p className="task-dependencies">{t("前置任务")} · {job.dependsOn.map(id => snapshot.jobs.find(j => j.id === id)?.title || t("已删除的任务")).join(" → ")} · {t("等待 {count} 项完成", { count: dependencyBlockers(job, snapshot.jobs).length })}</p>}
             {["queued", "waiting", "paused"].includes(job.state) && <button className="dependencies-trigger" onClick={() => setEditing(job)}>{t("设置前置任务")}</button>}
             {job.autoRecovery && <RecoveryNotice job={job} />}

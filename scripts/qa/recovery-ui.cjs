@@ -181,6 +181,11 @@ function fixture({ language, theme }) {
         listeners.forEach((fn) => fn(structuredClone(data)));
         return;
       }
+      if (name === "scheduler.dispatch") {
+        data.dispatch = { paused: args.paused, projects: [], updatedAt: Date.now() };
+        listeners.forEach(fn => fn(structuredClone(data)));
+        return data.dispatch;
+      }
       if (name === "job.dependencies") {
         job.dependsOn = args.ids;
         listeners.forEach(fn => fn(structuredClone(data)));
@@ -376,6 +381,10 @@ function fixture({ language, theme }) {
       await page.locator(".chat-search").waitFor({ state: "detached" });
       await page.locator(".task-queue-button").click();
       await page.locator(".task-center").waitFor();
+      await page.locator(".dispatch-controls button").click();
+      await page.waitForFunction(() => window.recoveryCalls.some(c => c.name === "scheduler.dispatch" && c.args.paused));
+      await page.locator(".dispatch-controls button").click();
+      await page.waitForFunction(() => window.recoveryCalls.some(c => c.name === "scheduler.dispatch" && !c.args.paused));
       await page.screenshot({
         path: path.join(output, `task-center-${language}.png`),
         fullPage: true,

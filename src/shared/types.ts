@@ -293,6 +293,7 @@ export interface Settings {
   };
 }
 export interface AppState {
+  dispatch?: { paused: boolean; projects: string[]; updatedAt: number };
   version: 1;
   accounts: Account[];
   jobs: Job[];

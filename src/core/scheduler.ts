@@ -1,3 +1,4 @@
+import { dispatchHeld, projectKey } from "../shared/dispatch";
 import { dependencyBlockers, validateDependencies } from "../shared/task-dependencies";
 import { EventEmitter } from "node:events";
 import { orderTasks } from "../shared/task-order";
@@ -631,6 +632,7 @@ export class Scheduler extends EventEmitter {
           (j) =>
             ["queued", "waiting"].includes(j.state) &&
             !j.autoRecovery &&
+            !dispatchHeld(this.store.data, j, process.platform) &&
             !dependencyBlockers(j, this.store.data.jobs).length &&
             !this.jobControls.has(this.store.jobHome(j.id)) &&
             !this.familyActive(j.id) &&
@@ -675,6 +677,7 @@ export class Scheduler extends EventEmitter {
           break;
         if (
           this.familyActive(job.id) ||
+          dispatchHeld(this.store.data, job, process.platform) ||
           dependencyBlockers(job, this.store.data.jobs).length > 0 ||
           job.autoRecovery ||
           this.jobControls.has(this.store.jobHome(job.id)) ||
@@ -1371,6 +1374,31 @@ export class Scheduler extends EventEmitter {
       );
       await this.store.save();
       this.changed();
+    });
+  }
+  dispatch(paused: boolean, cwd?: string) {
+    return this.queueMaintenance(async () => {
+      this.maintaining = true;
+      try {
+        await this.tickInFlight;
+        if (this.closing) throw Error("客户端正在关闭");
+        const previous = this.store.data.dispatch;
+        const next = structuredClone(previous || { paused: false, projects: [], updatedAt: 0 });
+        if (cwd !== undefined) {
+          const key = projectKey(cwd, process.platform);
+          next.projects = next.projects.filter(p => projectKey(p, process.platform) !== key);
+          if (paused) {
+            if (!this.store.data.jobs.some(j => projectKey(j.projectCwd || j.cwd, process.platform) === key)) throw Error("项目不存在");
+            if (next.projects.length >= 100) throw Error("最多暂停 100 个项目的调度");
+            next.projects.push(cwd);
+          }
+        } else next.paused = paused;
+        next.updatedAt = Date.now();
+        this.store.data.dispatch = next;
+        try { await this.store.save(); } catch (error) { this.store.data.dispatch = previous; throw error; }
+        this.changed();
+        return next;
+      } finally { this.maintaining = false; }
     });
   }
   dependencies(id: string, ids: string[]) {

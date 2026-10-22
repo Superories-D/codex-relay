@@ -1,6 +1,15 @@
 import { legacyEnglish } from "./legacy-en";
 import { nativeEnglish } from "./native-en";
 export const english: Record<string, string> = {
+  "调度已暂停": "Dispatch paused",
+  "自动调度已开启": "Automatic dispatch enabled",
+  "暂停全局调度": "Pause global dispatch",
+  "开启全局调度": "Enable global dispatch",
+  "暂停此项目调度": "Pause this project",
+  "开启此项目调度": "Enable this project",
+  "暂停调度只阻止新任务启动，当前任务会继续完成。设置在重启后保留。": "Pausing dispatch holds new starts while current tasks finish. This setting survives restarts.",
+  "项目不存在": "Project does not exist",
+  "最多暂停 100 个项目的调度": "Up to 100 projects can be held",
   "设置前置任务": "Set prerequisites",
   "前置任务": "Prerequisites",
   "已删除的任务": "Deleted task",

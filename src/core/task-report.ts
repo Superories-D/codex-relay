@@ -1,3 +1,4 @@
+import { dispatchHeld } from "../shared/dispatch";
 import { dependencyBlockers } from "../shared/task-dependencies";
 import type { Snapshot } from "../shared/types";
 import { redact } from "./redact";
@@ -16,6 +17,7 @@ export function taskReport(
   const approvals = snapshot.approvals.filter((a) => a.jobId === id).length;
   const enabled = snapshot.accounts.filter((a) => a.enabled);
   const blockers: string[] = [];
+  if (dispatchHeld(snapshot, job, environment.platform)) blockers.push("dispatch");
   if (dependencyBlockers(job, snapshot.jobs).length) blockers.push("dependencies");
   if (job.recoveryRequired) blockers.push("ownership");
   if (job.autoRecovery) blockers.push("recovery");

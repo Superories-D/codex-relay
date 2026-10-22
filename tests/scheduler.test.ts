@@ -1865,3 +1865,25 @@ it("rejects dependency cycles and restores dependencies when persistence fails",
   await (scheduler as any).tick();
   expect(workers).toHaveLength(0);
 });
+
+it("persists global dispatch holds while allowing active workers to finish", async () => {
+  const [a,b] = await queuedJobs(2); store.data.settings.maxConcurrentTasks = 1;
+  await (scheduler as any).tick(); await until(() => workers[0]?.started);
+  await scheduler.dispatch(true);
+  const loaded = new Store(root); await loaded.load();
+  expect(loaded.data.dispatch?.paused).toBe(true);
+  workers[0].settle({kind:"completed"}); await until(() => a.state === "completed");
+  await (scheduler as any).currentRun; await (scheduler as any).tick();
+  expect(workers).toHaveLength(1);
+  await scheduler.dispatch(false); await (scheduler as any).tick();
+  await until(() => workers[1]?.started); expect(workers[1].ctx.job.id).toBe(b.id);
+});
+it("holds only the selected project and rolls back failed dispatch saves", async () => {
+  const [a,b] = await queuedJobs(2); a.projectCwd = root + "/project-a";
+  await scheduler.dispatch(true, a.projectCwd);
+  vi.spyOn(store,"save").mockRejectedValueOnce(Error("disk full"));
+  await expect(scheduler.dispatch(false,a.projectCwd)).rejects.toThrow("disk full");
+  expect(store.data.dispatch?.projects).toEqual([a.projectCwd]);
+  await (scheduler as any).tick(); await until(() => workers[0]?.started);
+  expect(workers).toHaveLength(1); expect(workers[0].ctx.job.id).toBe(b.id);
+});
