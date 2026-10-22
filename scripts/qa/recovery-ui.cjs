@@ -181,6 +181,11 @@ function fixture({ language, theme }) {
         listeners.forEach((fn) => fn(structuredClone(data)));
         return;
       }
+      if (name === "scheduler.projectLimit") {
+        data.projectLimits = args.limit ? [{cwd:args.cwd,limit:args.limit}] : [];
+        listeners.forEach(fn => fn(structuredClone(data)));
+        return;
+      }
       if (name === "scheduler.dispatch") {
         data.dispatch = { paused: args.paused, projects: [], updatedAt: Date.now() };
         listeners.forEach(fn => fn(structuredClone(data)));
@@ -389,6 +394,10 @@ function fixture({ language, theme }) {
         path: path.join(output, `task-center-${language}.png`),
         fullPage: true,
       });
+      await page.locator(".task-filters select").selectOption({index:1});
+      await page.locator(".project-limit select").selectOption("1");
+      await page.waitForFunction(() => window.recoveryCalls.some(c => c.name === "scheduler.projectLimit" && c.args.limit === 1));
+      await page.locator(".task-filters select").selectOption("");
       await page.locator(".workflow-trigger").click();
       await page.locator(".workflow-builder input").nth(0).fill("Release workflow");
       await page.locator(".workflow-builder textarea").nth(0).fill("Implement and save results to implementation.md");

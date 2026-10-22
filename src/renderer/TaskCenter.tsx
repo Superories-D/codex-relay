@@ -1,5 +1,5 @@
 import { WorkflowBuilder } from "./WorkflowBuilder";
-import { dispatchHeld, projectKey } from "../shared/dispatch";
+import { dispatchHeld, projectKey, projectLimit } from "../shared/dispatch";
 import { dependencyBlockers } from "../shared/task-dependencies";
 import { TaskDependencies } from "./TaskDependencies";
 import React, { useState } from "react";
@@ -69,6 +69,11 @@ export function TaskCenter({
     setBusy(true); setError("");
     try { await call("scheduler.dispatch", {paused, ...(cwd ? {cwd} : {})}); }
     catch (e) { setError(errorText(e)); } finally { setBusy(false); }
+  }
+  async function setLimit(limit: number | null) {
+    setBusy(true); setError("");
+    try { await call("scheduler.projectLimit", {cwd:project,limit}); }
+    catch(e) { setError(errorText(e)); } finally {setBusy(false);}
   }
   const run = async (action: "pause" | "resume") => {
     setBusy(true);
@@ -141,7 +146,7 @@ export function TaskCenter({
           onChange={(e) => setProject(e.target.value)}
         >
           <option value="">{t("全部项目")}</option>
-          {[...new Set([...jobs.map((j) => j.projectCwd || j.cwd), ...(snapshot.dispatch?.projects || [])])].map((cwd) => (
+          {[...new Set([...jobs.map((j) => j.projectCwd || j.cwd), ...(snapshot.dispatch?.projects || []), ...(snapshot.projectLimits || []).map(p => p.cwd)])].map((cwd) => (
             <option key={cwd} value={cwd}>
               {cwd}
             </option>
@@ -149,6 +154,7 @@ export function TaskCenter({
         </select>
       </div>
       {project && <button className="project-dispatch" disabled={busy} onClick={() => void setDispatch(!projectPaused, project)}>{t(projectPaused ? "开启此项目调度" : "暂停此项目调度")}</button>}
+      {project && <label className="project-limit">{t("项目并发上限")}<select disabled={busy} value={projectLimit(snapshot, {cwd:project}, snapshot.platform) || ""} onChange={e => void setLimit(e.target.value ? Number(e.target.value) : null)}><option value="">{t("跟随全局上限")}</option>{[1,2,3,4,5,6,7,8].map(n => <option key={n} value={n}>{n}</option>)}</select><small>{t("降低上限不会中断正在运行的任务；名额释放后自动继续排队任务。")}</small></label>}
       <div className="queue-actions">
         <button
           disabled={busy || !eligible.length}

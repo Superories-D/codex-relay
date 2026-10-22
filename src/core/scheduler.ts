@@ -1,4 +1,4 @@
-import { dispatchHeld, projectKey } from "../shared/dispatch";
+import { dispatchHeld, projectKey, projectHasCapacity } from "../shared/dispatch";
 import { dependencyBlockers, validateDependencies } from "../shared/task-dependencies";
 import { EventEmitter } from "node:events";
 import { orderTasks } from "../shared/task-order";
@@ -633,6 +633,7 @@ export class Scheduler extends EventEmitter {
             ["queued", "waiting"].includes(j.state) &&
             !j.autoRecovery &&
             !dispatchHeld(this.store.data, j, process.platform) &&
+            projectHasCapacity(this.store.data, j, [...this.active.values()].map(r => r.job), process.platform) &&
             !dependencyBlockers(j, this.store.data.jobs).length &&
             !this.jobControls.has(this.store.jobHome(j.id)) &&
             !this.familyActive(j.id) &&
@@ -678,6 +679,7 @@ export class Scheduler extends EventEmitter {
         if (
           this.familyActive(job.id) ||
           dispatchHeld(this.store.data, job, process.platform) ||
+          !projectHasCapacity(this.store.data, job, [...this.active.values()].map(r => r.job), process.platform) ||
           dependencyBlockers(job, this.store.data.jobs).length > 0 ||
           job.autoRecovery ||
           this.jobControls.has(this.store.jobHome(job.id)) ||
@@ -1407,6 +1409,26 @@ export class Scheduler extends EventEmitter {
       } catch (error) {
         for (const job of created) await fs.rm(this.chats.file(job.id), {force: true}).catch(() => {});
         throw error;
+      } finally { this.maintaining = false; }
+    });
+  }
+  projectLimit(cwd: string, limit: number | null) {
+    return this.queueMaintenance(async () => {
+      this.maintaining = true;
+      try {
+        await this.tickInFlight;
+        if (this.closing || limit !== null && (!Number.isInteger(limit) || limit < 1 || limit > 8)) throw Error("项目并发上限必须为 1 至 8");
+        const key = projectKey(cwd, process.platform);
+        const previous = this.store.data.projectLimits;
+        const next = (previous || []).filter(p => projectKey(p.cwd, process.platform) !== key);
+        if (limit !== null) {
+          if (!this.store.data.jobs.some(j => projectKey(j.projectCwd || j.cwd, process.platform) === key)) throw Error("项目不存在");
+          if (next.length >= 100) throw Error("最多为 100 个项目设置并发上限");
+          next.push({cwd,limit});
+        }
+        this.store.data.projectLimits = next;
+        try { await this.store.save(); } catch(error) { this.store.data.projectLimits = previous; throw error; }
+        this.changed();
       } finally { this.maintaining = false; }
     });
   }

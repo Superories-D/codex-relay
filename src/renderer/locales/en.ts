@@ -1,6 +1,11 @@
 import { legacyEnglish } from "./legacy-en";
 import { nativeEnglish } from "./native-en";
 export const english: Record<string, string> = {
+  "项目并发上限": "Project concurrency limit",
+  "跟随全局上限": "Use global limit",
+  "降低上限不会中断正在运行的任务；名额释放后自动继续排队任务。": "Lowering the limit lets active tasks finish. Queued tasks start automatically as slots become available.",
+  "项目并发上限必须为 1 至 8": "Project concurrency must be between 1 and 8",
+  "最多为 100 个项目设置并发上限": "Set concurrency limits for up to 100 projects",
   "新建工作流": "New workflow",
   "工作流名称": "Workflow name",
   "各阶段使用独立会话并按顺序执行。通过工作目录中的文件交接成果，请在指令中写清交付路径。": "Stages run sequentially in separate conversations. Hand off results through workspace files and specify their paths in your instructions.",

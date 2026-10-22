@@ -1916,3 +1916,28 @@ it("never admits a partial workflow after validation or persistence failures", a
   await (scheduler as any).tick(); expect(workers).toHaveLength(0);
   expect(await scheduler.addWorkflow("retry","Retry",steps)).toHaveLength(2);
 });
+
+it("serializes one project while other projects keep running and admits the next task automatically", async () => {
+  const [a,b,c] = await queuedJobs(3); c.projectCwd=root+"/other";
+  await scheduler.projectLimit(root,1); await (scheduler as any).tick();
+  await until(()=>workers.length===2 && workers.every(w=>w.started));
+  expect(workers.map(w=>w.ctx.job.id)).toEqual([a.id,c.id]);
+  workers[0].settle({kind:"completed"}); await until(()=>a.state==="completed");
+  await until(() => !(scheduler as any).active.has(a.id));
+  await (scheduler as any).tick(); await until(()=>workers[2]?.started);
+  expect(workers[2].ctx.job.id).toBe(b.id);
+});
+it("persists project limits and does not preempt running work when reduced", async () => {
+  const jobs=await queuedJobs(3); store.data.settings.maxConcurrentTasks=2;
+  await (scheduler as any).tick(); await until(()=>workers.length===2 && workers.every(w=>w.started));
+  await scheduler.projectLimit(root,1);
+  expect(jobs[0].state).toBe("running"); expect(jobs[1].state).toBe("running");
+  const loaded=new Store(root); await loaded.load(); expect(loaded.data.projectLimits).toEqual([{cwd:root,limit:1}]);
+  vi.spyOn(store,"save").mockRejectedValueOnce(Error("disk full"));
+  await expect(scheduler.projectLimit(root,null)).rejects.toThrow("disk full");
+  expect(store.data.projectLimits).toEqual([{cwd:root,limit:1}]);
+  workers[0].settle({kind:"completed"}); await until(()=>!(scheduler as any).active.has(jobs[0].id));
+  await (scheduler as any).tick(); expect(workers).toHaveLength(2);
+  await scheduler.projectLimit(root,2); await (scheduler as any).tick();
+  await until(()=>workers[2]?.started);
+});

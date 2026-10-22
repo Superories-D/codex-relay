@@ -1236,6 +1236,10 @@ async function boot() {
         const a = z.object({ requestId: idSchema, title: z.string().trim().min(1).max(120), steps: z.array(newJobSchema).min(2).max(12) }).strict().parse(args);
         return scheduler.addWorkflow(a.requestId, a.title, a.steps);
       }
+      case "scheduler.projectLimit": {
+        const a = z.object({ cwd: z.string().min(1).max(32768), limit: z.number().int().min(1).max(8).nullable() }).strict().parse(args);
+        return scheduler.projectLimit(a.cwd, a.limit);
+      }
       case "scheduler.dispatch": {
         const a = z.object({ paused: z.boolean(), cwd: z.string().min(1).max(32768).optional() }).strict().parse(args);
         return scheduler.dispatch(a.paused, a.cwd);

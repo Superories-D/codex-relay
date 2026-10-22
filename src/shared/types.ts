@@ -294,6 +294,7 @@ export interface Settings {
   };
 }
 export interface AppState {
+  projectLimits?: { cwd: string; limit: number }[];
   dispatch?: { paused: boolean; projects: string[]; updatedAt: number };
   version: 1;
   accounts: Account[];

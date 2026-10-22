@@ -1,4 +1,4 @@
-import { dispatchHeld } from "../shared/dispatch";
+import { dispatchHeld, projectLimit } from "../shared/dispatch";
 import { dependencyBlockers } from "../shared/task-dependencies";
 import type { Snapshot } from "../shared/types";
 import { redact } from "./redact";
@@ -50,6 +50,7 @@ export function taskReport(
       threadId: job.threadId,
       model: job.model,
       effort: job.effort,
+      projectConcurrencyLimit: projectLimit(snapshot, job, environment.platform),
       dependsOn: job.dependsOn,
       priority: job.priority || "normal",
       rotations: job.rotations,

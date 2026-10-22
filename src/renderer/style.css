@@ -1470,3 +1470,5 @@ button:disabled {
 .workflow-steps { max-height:35vh; overflow:auto; }
 .workflow-steps article { padding:10px; border:1px solid var(--line); border-radius:10px; margin:10px 0; }
 .workflow-label { color:var(--muted); font-size:12px; }
+.project-limit { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin:12px 0; }
+.project-limit small { color:var(--muted); font-size:12px; }

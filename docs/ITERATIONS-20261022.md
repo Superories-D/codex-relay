@@ -63,3 +63,9 @@ Validation: build and 79 scheduler/localization/report tests passed, covering ac
 The task center now includes a 2–12-stage workflow builder with stage editing/reordering, project/model selection and explicit permission defaults. Stages use separate conversations, share workspace files for handoff, and run through automatically generated prerequisite chains. A single persisted batch prevents partial admission; request fingerprints deduplicate creation retries and reject changed reuse of an admitted request. Prepared journals are removed if admission fails. Stage position and workflow name appear on task cards.
 
 Validation: build and 79 scheduler/localization tests passed, including retry deduplication, restart persistence, invalid-directory rejection, save rollback and no-worker-before-admission. Three-language renderer QA submitted two-stage workflows through the actual form with zero renderer errors. No live model calls were made.
+
+## 14 — Per-project concurrency budgets
+
+Projects can now set independent concurrency limits (1–8), alongside the existing global limit. The scheduler reserves slots before starting workers, lets other projects use remaining global capacity, and automatically starts queued tasks when a slot is released. Lowering a limit never kills active work; restoring the global default removes the override. Limits persist across restarts and appear in diagnostic metadata.
+
+Validation: build and 83 scheduler/localization/report tests passed. Added coverage for project isolation, automatic slot reuse, lowering/raising limits, restart persistence and save rollback. Three-language production-renderer QA changed a project's concurrency through the task-center control with no renderer errors. This is scheduler coordination, not an OS filesystem lock against external processes.
