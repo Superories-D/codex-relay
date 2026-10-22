@@ -70,7 +70,8 @@ const { chromium } = require(
       page.on("pageerror", (e) => errors.push(e.message));
       if (language === "en") {
         let droppedStream = false,
-          droppedSubmit = false;
+          droppedSubmit = false,
+          droppedMessage = false;
         await page.route("**/api/events", async (route) => {
           if (!droppedStream) {
             droppedStream = true;
@@ -78,6 +79,15 @@ const { chromium } = require(
           } else await route.continue();
         });
         await page.route("**/api/command", async (route) => {
+          if (
+            !droppedMessage &&
+            route.request().postDataJSON()?.name === "chat.submit"
+          ) {
+            droppedMessage = true;
+            await route.fetch();
+            await route.abort();
+            return;
+          }
           if (
             !droppedSubmit &&
             route.request().postDataJSON()?.name === "job.submit"
@@ -136,6 +146,11 @@ const { chromium } = require(
         () =>
           !document.querySelector(".conversation-header .row button")?.disabled,
       );
+      await page.waitForFunction(() =>
+        /Paused|已暂停|一時停止/.test(
+          document.querySelector(".state-pill")?.textContent || "",
+        ),
+      );
       await page.evaluate(() => document.fonts.ready);
       await page.screenshot({
         path: `qa-output/remote-${language}-${width}.png`,
@@ -148,6 +163,26 @@ const { chromium } = require(
         `${language} horizontal overflow`,
       );
       if (language === "en") {
+        await page
+          .locator(".remote-followup textarea")
+          .fill("Exactly one remote follow-up");
+        await page.locator(".remote-followup button").click();
+        await page.waitForFunction(
+          () =>
+            document.querySelector(".remote-followup textarea")?.value === "",
+        );
+        await page.waitForFunction(async () => {
+          const response = await fetch("/api/snapshot", {
+            headers: {
+              Authorization: `Bearer ${sessionStorage.getItem("relay.remote.token")}`,
+            },
+          });
+          const snap = await response.json();
+          return (
+            snap.jobs.find((j) => j.title === "Remote QA en")?.messageReceipts
+              ?.length === 1
+          );
+        });
         await page.locator(".remote-workflow").click();
         await page
           .locator(".workflow-builder input")

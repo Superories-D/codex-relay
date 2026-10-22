@@ -66,3 +66,21 @@ After forwarding the HTTP port, open `http://127.0.0.1:7899/` and enter the serv
 The token and unsent task draft stay in this browser session; Disconnect removes them. SSE reconnects automatically without replaying mutations. A submission whose response was lost retains its request ID and can be reconciled from live snapshots or retried under that same ID. Closing the browser does not stop server tasks. Chat is plain text in this console; no model-produced HTML is executed, and a strict same-origin CSP applies.
 
 `RELAY_CHROMIUM_PATH=/path/to/chromium node scripts/qa/remote-ui.cjs` exercises the built browser UI against the real bundled server using synthetic account-free tasks. It covers lost creation acknowledgements, initial SSE failure/reconnection, task/chat controls, workflow submission, reload and 390/900/1280px layouts. OS-specific browser and live-subscription acceptance remain separate.
+
+## Remote CLI and reliable follow-up delivery
+
+`scripts/remote.cjs` controls the HTTP service without copying its data directory or requiring Electron. Keep a private local copy of the HTTP token and use an SSH tunnel or HTTPS endpoint:
+
+```sh
+node scripts/remote.cjs status --url http://127.0.0.1:7899 --token-file /private/http-token
+node scripts/remote.cjs run --cwd /srv/project --prompt-file task.txt --detach --token-file /private/http-token
+node scripts/remote.cjs send --id JOB_UUID --prompt-file followup.txt --token-file /private/http-token
+node scripts/remote.cjs watch --id JOB_UUID --token-file /private/http-token
+node scripts/remote.cjs workflow --file workflow.json --token-file /private/http-token
+```
+
+`run`, `send` and `workflow` print their request ID and use that same ID for bounded retries after network failures. `--request-id UUID` allows an exact retry across CLI invocations. `watch` resubscribes through interruptions, treats automatic recovery as ongoing, exits 0 only on completion, and exits 2 for paused/cancelled/manual-attention states. Other mutations are not automatically replayed. `respond --file` and `command --file` accept explicit JSON commands; `help` lists supported operations. Plain HTTP to non-loopback hosts is rejected.
+
+Reliable `chat.submit` receipts are saved atomically with the queue or pending message. They survive restart and are checked before new delivery. Reusing an ID with different text is rejected. Receipts are not silently evicted: after 1,000 reliable sends in one conversation, create a new conversation for further reliable delivery. The browser console uses this endpoint too, retains uncertain sends, and stores follow-up drafts separately for each task.
+
+`deploy/codex-relay.service` is an example systemd unit, not an installed service. Adjust the account, Node executable, installation path and workspace before installing it. It uses private state permissions and lets the supervisor confirm worker shutdown; if confirmation fails, systemd is configured not to force-kill the unconfirmed process tree.

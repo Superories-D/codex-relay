@@ -1308,11 +1308,18 @@ export class Scheduler extends EventEmitter {
     planMode?: boolean;
     multiAgent?: boolean;
     serviceTier?: string;
-  }) {
+  }, requestId?: string) {
     return this.queueControl(input.id, async () => {
       const job = this.store.data.jobs.find((j) => j.id === input.id);
       if (this.closing) throw new Error("Scheduler is shutting down");
       if (!job || job.mode !== "cli") throw new Error("请选择 CLI 会话");
+      const fingerprint = requestId ? createHash("sha256").update(JSON.stringify(input)).digest("hex") : undefined;
+      const receipt = requestId && job.messageReceipts?.find(r => r.id === requestId);
+      if (receipt) {
+        if (receipt.fingerprint !== fingerprint) throw Error("请求标识已用于不同消息");
+        return;
+      }
+      if (requestId && (input.action !== "queue" || (job.messageReceipts?.length || 0) >= 1000)) throw Error("可靠投递仅支持排队消息，每个会话最多保留 1000 个投递回执");
       if (
         this.active.has(job.id) &&
         ["completed", "cancelled", "paused"].includes(job.state)
@@ -1341,6 +1348,7 @@ export class Scheduler extends EventEmitter {
           "running",
           "pausing",
         ].includes(job.state);
+      const previous = !active && requestId ? structuredClone(job) : undefined;
       if (input.action === "steer") {
         const running = this.active.get(job.id);
         if (!running || !running.worker?.steer || job.state !== "running")
@@ -1351,7 +1359,9 @@ export class Scheduler extends EventEmitter {
           throw new Error("本轮仍在运行，请选择排队发送或立即补充");
         if ((job.queuedMessages?.length ?? 0) >= 100)
           throw new Error("待发送消息已达上限");
-        await this.persistQueue(job, [...(job.queuedMessages || []), {
+        const receipts = job.messageReceipts;
+        if (requestId) job.messageReceipts = [...(receipts || []), {id:requestId,fingerprint:fingerprint!}];
+        try { await this.persistQueue(job, [...(job.queuedMessages || []), {
           id: randomUUID(),
           text: input.text,
           attachments: input.attachments,
@@ -1361,7 +1371,7 @@ export class Scheduler extends EventEmitter {
           planMode: input.planMode,
           multiAgent: input.multiAgent,
           serviceTier: input.serviceTier,
-        }]);
+        }]); } catch(error) {job.messageReceipts=receipts;throw error;}
         return;
       } else {
         if (!(await fs.stat(job.cwd)).isDirectory())
@@ -1388,6 +1398,17 @@ export class Scheduler extends EventEmitter {
       }
       job.interactive = true;
       job.updatedAt = Date.now();
+      if (requestId) {
+        job.messageReceipts = [...(job.messageReceipts || []), {id:requestId,fingerprint:fingerprint!}];
+        try { await this.store.save(); }
+        catch(error) {
+          if (previous) {for (const key of Object.keys(job)) if (!(key in previous)) delete (job as any)[key];Object.assign(job,previous);}
+          throw error;
+        }
+        try {await this.chats.user(job.id,input.text,input.attachments.map(a=>a.path).join("\n"),`request:${requestId}`);}
+        catch(error) {this.log(error,"warning",job.id);}
+        this.changed();return;
+      }
       await this.chats.user(
         job.id,
         input.text,

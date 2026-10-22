@@ -1,6 +1,8 @@
 import { legacyEnglish } from "./legacy-en";
 import { nativeEnglish } from "./native-en";
 export const english: Record<string, string> = {
+  "请求标识已用于不同消息": "Request ID was used for a different message",
+  "可靠投递仅支持排队消息，每个会话最多保留 1000 个投递回执": "Reliable delivery supports queued messages, with up to 1,000 receipts per conversation",
   "连接": "Connect",
   "继续": "Resume",
   "暂停": "Pause",

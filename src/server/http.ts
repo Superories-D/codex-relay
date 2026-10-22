@@ -10,6 +10,7 @@ const allowed = new Set([
   "job.submit",
   "job.control",
   "chat.send",
+  "chat.submit",
   "chat.read",
   "approval.list",
   "approval.respond",
@@ -215,7 +216,7 @@ export async function openHttp(
         for (const step of args.steps) step.cwd = await workspace(step.cwd);
       }
       const attachments =
-        body.name === "job.submit"
+        ["job.submit", "chat.submit"].includes(body.name)
           ? args?.input?.attachments
           : body.name === "chat.send"
             ? args?.attachments

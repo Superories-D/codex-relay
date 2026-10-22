@@ -1951,3 +1951,22 @@ it("never admits unsaved idempotent submissions and accepts an exact retry after
   const retry=await scheduler.add({...input,cwd:root},undefined,undefined,"request-id");
   expect(retry.id).toBe(job.id);expect(store.data.jobs).toHaveLength(1);
 });
+
+it("deduplicates follow-up receipts before and after restart without adding two queue entries",async()=>{
+ const [job]=await queuedJobs(1);
+ const message={id:job.id,text:"Follow-up once",attachments:[],action:"queue" as const};
+ await Promise.all([scheduler.send(message,"message-id"),scheduler.send(message,"message-id")]);
+ expect(job.queuedMessages).toHaveLength(1);expect(job.messageReceipts).toHaveLength(1);
+ const loaded=new Store(root);await loaded.load();expect(loaded.data.jobs[0].messageReceipts).toEqual(job.messageReceipts);
+ await expect(scheduler.send({...message,text:"Changed"},"message-id")).rejects.toThrow("不同消息");
+});
+it("rolls back uncommitted follow-up receipts and inactive task state on disk failure",async()=>{
+ const [job]=await queuedJobs(1);await scheduler.control(job.id,"pause");
+ const message={id:job.id,text:"Durable follow-up",attachments:[],action:"queue" as const};
+ vi.spyOn(store,"save").mockRejectedValueOnce(Error("disk full"));
+ await expect(scheduler.send(message,"retry-message")).rejects.toThrow("disk full");
+ expect(job.state).toBe("paused");expect(job.messageReceipts).toBeUndefined();
+ await scheduler.send(message,"retry-message");await scheduler.send(message,"retry-message");
+ expect(job.state).toBe("queued");expect(job.pendingMessage).toBe(message.text);
+ const page=await scheduler.chats.read(job.id);expect(page.items.filter(i=>i.text===message.text)).toHaveLength(1);
+});

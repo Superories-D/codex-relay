@@ -58,6 +58,30 @@ function App() {
     [prompt, setPrompt] = useState(
       sessionStorage.getItem("relay.remote.draft") || "",
     );
+  const [pendingMessage, setPendingMessage] = useState<{
+    id: string;
+    requestId: string;
+    text: string;
+  } | null>(() => {
+    try {
+      return JSON.parse(
+        sessionStorage.getItem("relay.remote.message") || "null",
+      );
+    } catch {
+      return null;
+    }
+  });
+  const followupDrafts = useRef<Record<string, string>>(
+    (() => {
+      try {
+        return JSON.parse(
+          sessionStorage.getItem("relay.remote.followups") || "{}",
+        );
+      } catch {
+        return {};
+      }
+    })(),
+  );
   const [pending, setPending] = useState<Submission | null>(readPending),
     [followup, setFollowup] = useState("");
   const [chat, setChat] = useState<ChatItem[]>([]),
@@ -128,6 +152,72 @@ function App() {
       }
     }
   }, [snapshot, pending]);
+  useEffect(() => {
+    if (pendingMessage)
+      sessionStorage.setItem(
+        "relay.remote.message",
+        JSON.stringify(pendingMessage),
+      );
+    else sessionStorage.removeItem("relay.remote.message");
+  }, [pendingMessage]);
+  useEffect(() => {
+    setFollowup(
+      pendingMessage?.id === selected
+        ? pendingMessage.text
+        : followupDrafts.current[selected] || "",
+    );
+  }, [selected]);
+  function saveFollowups() {
+    try {
+      sessionStorage.setItem(
+        "relay.remote.followups",
+        JSON.stringify(followupDrafts.current),
+      );
+    } catch (e) {
+      setError(errorText(e));
+    }
+  }
+  function acknowledgeMessage(message: { id: string; text: string }) {
+    if (followupDrafts.current[message.id] === message.text) {
+      delete followupDrafts.current[message.id];
+      saveFollowups();
+      if (selection.current === message.id) setFollowup("");
+    }
+    setPendingMessage(null);
+  }
+  useEffect(() => {
+    if (
+      pendingMessage &&
+      snapshot?.jobs
+        .find((j) => j.id === pendingMessage.id)
+        ?.messageReceipts?.some((r) => r.id === pendingMessage.requestId)
+    )
+      acknowledgeMessage(pendingMessage);
+  }, [snapshot, pendingMessage]);
+  async function submitFollowup() {
+    if (!job || (pendingMessage && pendingMessage.id !== job.id)) return;
+    const message = pendingMessage || {
+      id: job.id,
+      text: followup,
+      requestId: crypto.randomUUID(),
+    };
+    setPendingMessage(message);
+    try {
+      await action("chat.submit", {
+        requestId: message.requestId,
+        input: {
+          id: message.id,
+          text: message.text,
+          attachments: [],
+          action: "queue",
+        },
+      });
+      acknowledgeMessage(message);
+    } catch (e) {
+      if (e instanceof CommandError && [400, 401, 403, 422].includes(e.status))
+        setPendingMessage(null);
+    }
+  }
   async function call(name: string, args?: any) {
     if (name === "workflow.report.save") {
       const preview = previews.current.get(args.previewId);
@@ -261,9 +351,12 @@ function App() {
     setSnapshot(undefined);
     setSelected("");
     setPending(null);
+    setPendingMessage(null);
+    followupDrafts.current = {};
+    setFollowup("");
     setPrompt("");
     previews.current.clear();
-    for (const key of ["token", "pending", "draft"])
+    for (const key of ["token", "pending", "draft", "message", "followups"])
       sessionStorage.removeItem(`relay.remote.${key}`);
   }
   return (
@@ -532,19 +625,7 @@ function App() {
                     className="remote-followup"
                     onSubmit={(e) => {
                       e.preventDefault();
-                      const submitted = followup;
-                      void action("chat.send", {
-                        id: job.id,
-                        text: submitted,
-                        attachments: [],
-                        action: "queue",
-                      })
-                        .then(() =>
-                          setFollowup((current) =>
-                            current === submitted ? "" : current,
-                          ),
-                        )
-                        .catch(() => {});
+                      void submitFollowup();
                     }}
                   >
                     <label>
@@ -553,11 +634,25 @@ function App() {
                         required
                         maxLength={100000}
                         value={followup}
-                        onChange={(e) => setFollowup(e.target.value)}
-                        disabled={busy}
+                        onChange={(e) => {
+                          setFollowup(e.target.value);
+                          followupDrafts.current[selected] = e.target.value;
+                          saveFollowups();
+                        }}
+                        disabled={busy || !!pendingMessage}
                       />
                     </label>
-                    <button disabled={busy}>{t("加入待发送队列")}</button>
+                    <button
+                      disabled={
+                        busy ||
+                        (!!pendingMessage && pendingMessage.id !== selected)
+                      }
+                    >
+                      {t(pendingMessage ? "重试同一提交" : "加入待发送队列")}
+                    </button>
+                    {pendingMessage && (
+                      <p>{t("提交结果尚未确认，重试会沿用同一请求编号。")}</p>
+                    )}
                     <span>
                       {t("待发送队列")} · {job.queuedMessages?.length || 0}
                     </span>

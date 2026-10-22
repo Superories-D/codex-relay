@@ -1,0 +1,22 @@
+[Unit]
+Description=Codex Relay headless task supervisor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=codex-relay
+Group=codex-relay
+WorkingDirectory=/opt/codex-relay
+StateDirectory=codex-relay
+StateDirectoryMode=0700
+UMask=0077
+ExecStart=/usr/bin/node /opt/codex-relay/dist/server/main.cjs --data-dir /var/lib/codex-relay --http-port 7899 --workspace /srv/projects
+Restart=on-failure
+RestartSec=5
+KillMode=mixed
+TimeoutStopSec=120
+SendSIGKILL=no
+
+[Install]
+WantedBy=multi-user.target

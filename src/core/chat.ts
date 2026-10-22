@@ -85,9 +85,9 @@ export class Chats {
     this.writes.set(id, next);
     return next;
   }
-  user(id: string, text: string, detail?: string) {
+  user(id: string, text: string, detail?: string, messageId: string = randomUUID()) {
     return this.append(id, {
-      id: randomUUID(),
+      id: messageId,
       role: "user",
       kind: "message",
       text,
