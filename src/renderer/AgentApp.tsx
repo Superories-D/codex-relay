@@ -1,5 +1,6 @@
 import { t, useI18n, setLanguage, errorText } from "./i18n";
 import { MessageQueue } from "./MessageQueue";
+import { loadDraftState, saveDraftState, remainingDraft, remainingFiles } from "./drafts";
 import { CopyButton } from "./CopyButton";
 import { RecoveryNotice, RecoveryHistory } from "./RecoveryNotice";
 import React, {
@@ -183,14 +184,10 @@ export function AgentApp({
   );
   const [rename, setRename] = useState(false);
   const [title, setTitle] = useState("");
-  const [drafts, setDrafts] = useState<Record<string, string>>(() => {
-    try {
-      return JSON.parse(localStorage.getItem("relay.drafts") || "{}");
-    } catch {
-      return {};
-    }
-  });
-  const [files, setFiles] = useState<Record<string, ChatAttachment[]>>({});
+  const [initialDrafts] = useState(() => loadDraftState(localStorage));
+  const [drafts, setDrafts] = useState(initialDrafts.drafts);
+  const [files, setFiles] = useState(initialDrafts.files);
+  const [draftSaveFailed, setDraftSaveFailed] = useState(false);
   const [pasting, setPasting] = useState<Record<string, number>>({});
   const pasteLocks = useRef(new Map<string, number>());
   const [cwd, setCwd] = useState(
@@ -270,7 +267,7 @@ export function AgentApp({
       setPreviewFile("");
     }
   }, [selected, questionsSignature]);
-  const key = selected ?? "new";
+  const key = selected ?? `new:${cwd}`;
   const draft = drafts[key] ?? "",
     attachments = files[key] ?? [];
   const call = async (name: string, args?: unknown): Promise<any> => {
@@ -339,19 +336,21 @@ export function AgentApp({
     return () => media.removeEventListener("change", update);
   }, []);
   useEffect(() => {
-    const timer = setTimeout(() => {
-      const values = Object.entries(drafts)
-        .filter(([, text]) => text.trim())
-        .slice(-20);
-      try {
-        localStorage.setItem(
-          "relay.drafts",
-          JSON.stringify(Object.fromEntries(values)),
-        );
-      } catch {}
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [drafts]);
+    const save = () => {
+      try { saveDraftState(localStorage, { drafts, files }); setDraftSaveFailed(false); }
+      catch { setDraftSaveFailed(true); }
+    };
+    const timer = setTimeout(save, 250);
+    window.addEventListener("pagehide", save);
+    window.addEventListener("beforeunload", save);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener("pagehide", save);
+      window.removeEventListener("beforeunload", save);
+      // Flush the previous render before switching chats or unmounting.
+      try { saveDraftState(localStorage, { drafts, files }); } catch {}
+    };
+  }, [drafts, files]);
   useLayoutEffect(() => {
     if (messageInput.current) fitComposer(messageInput.current);
   }, [draft, key, screen, manage, desktop.preferences?.uiFont]);
@@ -677,8 +676,8 @@ export function AgentApp({
         multiAgent,
       });
     }
-    setDrafts((d) => ({ ...d, [key]: "" }));
-    setFiles((f) => ({ ...f, [key]: [] }));
+    setDrafts((d) => ({ ...d, [key]: remainingDraft(d[key] || "", draft) }));
+    setFiles((f) => ({ ...f, [key]: remainingFiles(f[key] || [], attachments) }));
     following.current = true;
   };
   const jobs = useMemo(() => {
@@ -1489,6 +1488,7 @@ export function AgentApp({
                   </div>
                 </div>
                 <div className="agent-composer-wrap">
+                  {draftSaveFailed && <p role="alert" className="agent-history-note">{t("草稿暂未保存，请复制重要内容后再关闭窗口。")}</p>}
                   {job?.state === "waiting" && job.waitingFor === "model" && (
                     <div className="model-wait-note" role="status">
                       <span>

@@ -128,6 +128,7 @@ function fixture({ language, theme }) {
       return {};
     },
   };
+  if (!localStorage.getItem("relay.composer.v2")) localStorage.setItem("relay.composer.v2", JSON.stringify({ version: 2, drafts: {}, files: { [job.id]: [{ type: "mention", path: "D:/notes.txt", name: "notes.txt" }] } }));
   localStorage.setItem("relay.lastChat", job.id);
   localStorage.setItem("relay.inspector", "false");
 }
@@ -247,6 +248,13 @@ function fixture({ language, theme }) {
       report.checks.push(
         `${language}/${theme}/${width}: localized countdown, details, layout, Pause`,
       );
+      const composer = page.locator(".agent-composer-wrap textarea");
+      await composer.fill("Persist across restart");
+      await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
+      await page.reload();
+      await composer.waitFor();
+      assert.equal(await composer.inputValue(), "Persist across restart");
+      assert.equal(await page.locator(".draft-attachment").count(), 1);
       await page.close();
     }
     assert.deepEqual(report.rendererErrors, []);

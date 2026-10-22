@@ -969,4 +969,5 @@ export const english: Record<string, string> = {
   "上移": "Move up",
   "下移": "Move down",
   "队列已变化，请查看最新队列后重试": "The queue changed. Review it and try again.",
+  "草稿暂未保存，请复制重要内容后再关闭窗口。": "Draft could not be saved. Copy important content before closing.",
 };

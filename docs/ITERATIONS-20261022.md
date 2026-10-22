@@ -13,3 +13,7 @@ Chats now retain the latest 50 recovery events, including retry, reconnection, s
 ## 3. Editable pending-message queue
 
 Stable message IDs and queue revisions support editing, removing and reordering pending inputs. Stale views are rejected. Queue writes are durable before normal completion may drain them; failed writes restore the original queue. Pending text enters the transcript only when admitted. Build and 78 scheduler/storage/localization tests passed; three-language renderer checks exercise reorder/edit/remove.
+
+## 4. Resilient composer drafts
+
+Text and attachment references share a versioned local draft record, with migration from the old text-only format. New-chat drafts are isolated by project. Debounced writes flush on pagehide/window close; failed saves surface a warning. Successful sends clear only their own content, preserving newer input. Build and 10 draft/localization tests passed; three-language reload checks restore text and attachment-only drafts.
