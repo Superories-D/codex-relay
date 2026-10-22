@@ -135,7 +135,7 @@ export interface Job {
   effort: string;
   bucket: string;
   state: JobState;
-  waitingFor?: "model";
+  waitingFor?: "model" | "recovery";
   stage?: string;
   lastActivityAt?: number;
   lastHeartbeatAt?: number;
@@ -143,7 +143,17 @@ export interface Job {
   turnId?: string;
   accountId?: string;
   recoveryRequired?: boolean;
+  // Persist user intent before stopping so crash recovery never undoes it.
+  stopIntent?: "pause" | "cancel";
+  recoveryAttempts?: number;
+  autoRecovery?: {
+    reason: "process" | "interrupted" | "unknown";
+    attempt: number;
+    nextAttemptAt: number;
+  };
   desktopSubmissionPending?: boolean;
+  // Written before sending input; cleared only after a confirmed acceptance.
+  submissionUncertain?: boolean;
   completionMarker?: string;
   maxCompletionRetries?: number;
   completionRetries?: number;

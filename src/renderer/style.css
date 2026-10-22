@@ -1346,3 +1346,60 @@ button:disabled {
   flex-shrink: 0;
   white-space: nowrap;
 }
+
+/* Automatic recovery stays visible without presenting a blocking error. */
+.recovery-notice {
+  margin: 12px 0;
+  padding: 14px 16px;
+  border: 1px solid color-mix(in srgb, var(--accent, #6b8afd) 28%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--accent, #6b8afd) 7%, transparent);
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.recovery-notice-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.recovery-notice-heading strong {
+  font-size: 13px;
+}
+.recovery-notice-heading button {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.recovery-notice p {
+  margin: 7px 0 3px;
+}
+.recovery-notice small {
+  opacity: 0.72;
+}
+.recovery-notice details {
+  margin-top: 8px;
+}
+.recovery-notice summary {
+  cursor: pointer;
+  opacity: 0.75;
+}
+.recovery-notice details p {
+  white-space: pre-wrap;
+  font-size: 12px;
+}
+.recovery-spinner {
+  animation: recovery-spin 1.5s linear infinite;
+}
+@keyframes recovery-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .recovery-spinner {
+    animation: none;
+  }
+}

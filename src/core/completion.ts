@@ -1,11 +1,14 @@
 import type { Job } from "../shared/types";
 import type { Outcome, WorkerContext } from "./worker";
 
-export function taskPrompt(ctx: WorkerContext, uncertain = false): string {
+export function taskPrompt(
+  ctx: WorkerContext,
+  uncertain = !!ctx.job.submissionUncertain,
+): string {
   const { job } = ctx;
-  if (job.pendingMessage) return job.pendingMessage;
+  if (job.pendingMessage && !uncertain) return job.pendingMessage;
   let prompt = uncertain
-    ? `${ctx.resumePrompt}\n上次发送结果未确认，请先检查已有会话和文件，不要重复已经完成的操作。\n原始任务：\n${job.prompt}`
+    ? `${ctx.resumePrompt}\n上次发送结果未确认。请先核查已有会话、工具结果和文件，只继续尚未完成的部分；不要重复执行已经完成的修改、提交或外部操作。若任务已经完成，直接报告现有结果。\n上次请求：\n${job.pendingMessage || job.prompt}`
     : job.turnId || job.existing
       ? ctx.resumePrompt
       : job.prompt;

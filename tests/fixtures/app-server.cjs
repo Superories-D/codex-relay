@@ -6,6 +6,7 @@ const home = process.env.RELAY_TEST_HOME;
 const saved = path.join(home, "synthetic-thread.json");
 const parallel = fs.existsSync(path.join(home, "parallel-fixture.json"));
 const missingEvent = process.env.RELAY_TEST_MISSING_EVENT === "1";
+const recovery = process.env.RELAY_TEST_RECOVERY;
 let thread = parallel ? `synthetic-${path.basename(home)}` : "synthetic-thread",
   account = "";
 let runningTurn;
@@ -67,7 +68,33 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
         }) + "\n",
       );
       notify("turn/started", { threadId: thread, turn: { id: runningTurn } });
+      const firstRecoveryRun =
+        recovery &&
+        fs
+          .readFileSync(path.join(home, "synthetic-journal.jsonl"), "utf8")
+          .trim()
+          .split("\n").length === 1;
+      if (firstRecoveryRun && recovery === "lost-ack") {
+        // Input was accepted and journaled, but its RPC reply never arrives.
+        setTimeout(() => process.exit(0), 5);
+        return;
+      }
       const complete = () => {
+        if (firstRecoveryRun) {
+          if (recovery === "disconnect") {
+            process.exit(0);
+            return;
+          }
+          notify("turn/completed", {
+            threadId: thread,
+            turn: {
+              id: runningTurn,
+              status: recovery === "interrupted" ? "interrupted" : "unknown",
+              error: null,
+            },
+          });
+          return;
+        }
         if (account === "a")
           notify("error", {
             threadId: thread,

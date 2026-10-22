@@ -1157,6 +1157,129 @@ afterEach(async () => {
   await fs.rm(root, { recursive: true, force: true });
 });
 describe("supervisor state transitions", () => {
+  it.each(["interrupted", "recoverable"] as const)(
+    "automatically continues %s on the same thread only after its backoff",
+    async (kind) => {
+      const job = await scheduler.add({
+        ...input,
+        cwd: root,
+        interactive: true,
+      });
+      await until(() => workers[0]?.started);
+      workers[0].settle({ kind });
+      await (scheduler as any).currentRun;
+      expect(job).toMatchObject({
+        state: "waiting",
+        waitingFor: "recovery",
+        threadId: "stable-thread",
+      });
+      await (scheduler as any).tick();
+      expect(workers).toHaveLength(1); // A healthy account cannot bypass backoff.
+      job.autoRecovery!.nextAttemptAt = 0;
+      await (scheduler as any).tick();
+      await until(() => !job.autoRecovery);
+      await until(() => !(scheduler as any).recoveryTasks.size);
+      await (scheduler as any).tick();
+      await until(() => workers[1]?.started);
+      expect(workers[1].submitted).toBe(store.data.settings.resumePrompt);
+      expect(job.threadId).toBe("stable-thread");
+      expect(job.rotations).toBe(0);
+      workers[1].settle({ kind: "completed" });
+      await (scheduler as any).currentRun;
+      expect(job.state).toBe("completed");
+      expect(job.recoveryAttempts).toBe(0);
+    },
+  );
+  it("keeps retrying failed process cleanup automatically without admitting a duplicate", async () => {
+    const job = await scheduler.add({ ...input, cwd: root });
+    await until(() => workers[0]?.started);
+    workers[0].failClose = true;
+    workers[0].settle({ kind: "recoverable" });
+    await (scheduler as any).currentRun;
+    job.autoRecovery!.nextAttemptAt = 0;
+    await (scheduler as any).tick();
+    await until(() => job.autoRecovery?.attempt === 2);
+    expect(job.recoveryRequired).toBe(true);
+    expect(workers).toHaveLength(1);
+    workers[0].failClose = false;
+    job.autoRecovery!.nextAttemptAt = 0;
+    await until(() => !(scheduler as any).recoveryTasks.size);
+    await (scheduler as any).tick();
+    await until(() => !job.recoveryRequired);
+    await until(() => !(scheduler as any).recoveryTasks.size);
+    await (scheduler as any).tick();
+    await until(() => workers[1]?.started);
+    expect(workers[1].ctx.job.threadId).toBe("stable-thread");
+  });
+  it.each(["pause", "cancel"] as const)(
+    "%s cancels automatic continuation during a retry countdown",
+    async (action) => {
+      const job = await scheduler.add({ ...input, cwd: root });
+      await until(() => workers[0]?.started);
+      workers[0].settle({ kind: "interrupted" });
+      await (scheduler as any).currentRun;
+      await scheduler.control(job.id, action);
+      expect(job.state).toBe(action === "pause" ? "paused" : "cancelled");
+      expect(job.autoRecovery).toBeUndefined();
+      await (scheduler as any).tick();
+      expect(workers).toHaveLength(1);
+      const restored = new Store(root);
+      await restored.load();
+      expect(restored.data.jobs[0].stopIntent).toBe(action);
+      expect(restored.data.jobs[0].autoRecovery).toBeUndefined();
+    },
+  );
+  it("honors Cancel after failed cleanup even if recovery later succeeds", async () => {
+    const job = await scheduler.add({ ...input, cwd: root });
+    await until(() => workers[0]?.started);
+    workers[0].failClose = true;
+    workers[0].settle({ kind: "recoverable" });
+    await (scheduler as any).currentRun;
+    await expect(scheduler.control(job.id, "cancel")).rejects.toThrow();
+    expect(job.stopIntent).toBe("cancel");
+    workers[0].failClose = false;
+    job.autoRecovery!.nextAttemptAt = 0;
+    await (scheduler as any).tick();
+    await until(() => job.state === "cancelled");
+    expect(job.recoveryRequired).toBe(false);
+    await (scheduler as any).tick();
+    expect(workers).toHaveLength(1);
+  });
+  it("does not release the process gate until recovery is durably saved", async () => {
+    const job = await scheduler.add({ ...input, cwd: root });
+    await until(() => workers[0]?.started);
+    workers[0].failClose = true;
+    workers[0].settle({ kind: "recoverable" });
+    await (scheduler as any).currentRun;
+    workers[0].failClose = false;
+    vi.spyOn(store, "save").mockRejectedValueOnce(Error("disk unavailable"));
+    job.autoRecovery!.nextAttemptAt = 0;
+    await (scheduler as any).tick();
+    await until(() => job.autoRecovery?.attempt === 2);
+    expect(job.recoveryRequired).toBe(true);
+    expect(workers).toHaveLength(1);
+    expect(job.lastError).toContain("disk unavailable");
+  });
+  it("does not auto-answer approvals or retry configuration failures", async () => {
+    const job = await scheduler.add({ ...input, cwd: root });
+    await until(() => workers[0]?.started);
+    const respond = vi.spyOn(workers[0], "respond");
+    workers[0].emit("approval", {
+      id: "approval",
+      jobId: job.id,
+      kind: "command",
+      params: {},
+    });
+    await (scheduler as any).tick();
+    expect(respond).not.toHaveBeenCalled();
+    expect(job.autoRecovery).toBeUndefined();
+    workers[0].settle({ kind: "error", error: Error("invalid configuration") });
+    await (scheduler as any).currentRun;
+    await (scheduler as any).tick();
+    expect(job.state).toBe("needs_attention");
+    expect(job.autoRecovery).toBeUndefined();
+    expect(workers).toHaveLength(1);
+  });
   it("rotates on exhaustion, keeps the thread and finishes only after a successful run", async () => {
     const job = await scheduler.add({ ...input, cwd: root });
     await until(() => workers[0]?.started);

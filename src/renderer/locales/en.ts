@@ -1,6 +1,21 @@
 import { legacyEnglish } from "./legacy-en";
 import { nativeEnglish } from "./native-en";
 export const english: Record<string, string> = {
+  自动恢复: "Automatic recovery",
+  正在确认停止: "Confirming stop",
+  正在自动恢复: "Recovering automatically",
+  暂停自动恢复: "Pause recovery",
+  "已记住你的停止请求，核验结束后不会自动运行。":
+    "Your stop request is saved. The task will stay stopped after verification.",
+  "正在确认原进程已退出，确认后会自动继续原会话。":
+    "Checking that the previous process has exited, then continuing the same conversation automatically.",
+  "会话和进度已保留，无需点击继续。":
+    "Your conversation and progress are saved. No need to click Continue.",
+  "{seconds} 秒后重试 · 第 {attempt} 次恢复":
+    "Retrying in {seconds}s · Recovery attempt {attempt}",
+  "正在检查连接与会话状态…": "Checking the connection and conversation…",
+  查看中断原因: "Interruption details",
+
   "正在等待思考摘要…": "Waiting for a reasoning summary…",
   "此条记录未提供可显示的思考摘要。":
     "No displayable reasoning summary was provided for this item.",

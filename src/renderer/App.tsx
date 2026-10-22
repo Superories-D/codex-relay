@@ -21,6 +21,7 @@ import type { Diagnostic } from "../core/diagnostics";
 import { Dialog } from "./Dialog";
 import { operationKey, operationLabel } from "./operations";
 import { AgentApp } from "./AgentApp";
+import { RecoveryNotice } from "./RecoveryNotice";
 import { QuestionRequest } from "./QuestionPanel";
 import { fiveHour, timerEvidence } from "../shared/reset-window";
 declare global {
@@ -1234,19 +1235,27 @@ function JobStatus({ job }: { job: Job }) {
   };
   return (
     <div className="job-status" role="status">
-      <b>
-        {["preparing", "running", "rotating", "watching"].includes(job.state)
-          ? t(job.stage ?? states[job.state])
-          : job.state === "waiting" && job.waitingFor === "model"
-            ? t("等待模型账户")
-            : t(states[job.state])}
-      </b>
-      <p>
-        {explanation[job.state] ??
-          (job.mode === "desktop"
-            ? t("需要审批或输入时，请打开受管客户端处理。")
-            : t("正在执行原始任务，长时间思考不等于卡死。"))}
-      </p>
+      {job.autoRecovery ? (
+        <RecoveryNotice job={job} />
+      ) : (
+        <>
+          <b>
+            {["preparing", "running", "rotating", "watching"].includes(
+              job.state,
+            )
+              ? t(job.stage ?? states[job.state])
+              : job.state === "waiting" && job.waitingFor === "model"
+                ? t("等待模型账户")
+                : t(states[job.state])}
+          </b>
+          <p>
+            {explanation[job.state] ??
+              (job.mode === "desktop"
+                ? t("需要审批或输入时，请打开受管客户端处理。")
+                : t("正在执行原始任务，长时间思考不等于卡死。"))}
+          </p>
+        </>
+      )}
       {job.lastHeartbeatAt && (
         <small>
           {t("最近连接确认：")}

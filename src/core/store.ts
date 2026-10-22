@@ -1,5 +1,6 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { scheduleRecovery } from "./auto-recovery";
 import { randomUUID } from "node:crypto";
 import type { AppState } from "../shared/types";
 export const defaults: AppState = {
@@ -91,7 +92,7 @@ export class Store {
           desktop: { ...defaults.settings.desktop, ...raw.settings?.desktop },
         },
       };
-      for (const j of this.data.jobs)
+      for (const j of this.data.jobs) {
         if (j.existing && j.existing.phase !== "managed") {
           if (!["completed", "cancelled"].includes(j.state)) {
             j.state = "needs_attention";
@@ -99,13 +100,18 @@ export class Store {
               "已有会话接入需要恢复检查；原窗口可能仍在运行。选择继续监控或完成交接。";
           }
         } else if (
-          ["running", "preparing", "pausing", "rotating"].includes(j.state)
+          ["running", "preparing", "pausing", "rotating"].includes(j.state) ||
+          j.recoveryRequired
         ) {
+          // Old versions did not persist stop intent. Treat an old 'pausing'
+          // state conservatively; a crash must never undo a user's Stop click.
+          if (j.state === "pausing") j.stopIntent ||= "pause";
           j.recoveryRequired = true;
           j.state = "needs_attention";
-          j.lastError =
-            "上次进程意外退出。确认原进程停止后点击继续，恢复已有会话。";
+          j.lastError = "上次进程意外退出，正在自动核验并恢复原会话。";
+          if (!j.autoRecovery) scheduleRecovery(j, "process");
         }
+      }
     } catch (error: any) {
       if (error.code !== "ENOENT") throw error;
     }

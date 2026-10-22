@@ -196,7 +196,7 @@ it("records uncertain submission before sending and includes original goal on re
   await w.submitPrompt();
   expect(w.cdp.fill).toHaveBeenLastCalledWith(
     expect.any(String),
-    expect.stringContaining("原始任务：\noriginal"),
+    expect.stringContaining("上次请求：\noriginal"),
   );
   records({ type: "task_started", turn_id: "new-turn" });
   w.turnStarted = false;

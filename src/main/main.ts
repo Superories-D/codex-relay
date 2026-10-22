@@ -256,6 +256,7 @@ async function boot() {
         desktop.data.preferences.notifications &&
         previous &&
         previous !== job.state &&
+        !job.autoRecovery &&
         ["completed", "needs_attention"].includes(job.state) &&
         !window?.isFocused() &&
         Notification.isSupported()

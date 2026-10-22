@@ -31,6 +31,9 @@ vi.mock("../src/core/process", async (importOriginal) => {
             RELAY_TEST_HOME: home,
             RELAY_TEST_MISSING_EVENT:
               _cli === "fixture-missing-event" ? "1" : "",
+            RELAY_TEST_RECOVERY: _cli.startsWith("fixture-recovery-")
+              ? _cli.slice("fixture-recovery-".length)
+              : "",
           },
           stdio: ["pipe", "pipe", "pipe"],
           windowsHide: true,
@@ -539,3 +542,112 @@ it("runs real isolated JSONL processes concurrently on one account and pauses on
     await fs.rm(root, { recursive: true, force: true });
   }
 }, 15000);
+
+it.each(["unknown", "interrupted", "disconnect", "lost-ack"])(
+  "automatically recovers %s through real JSONL process replacement without a Continue click",
+  async (scenario) => {
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), "relay-auto-recovery-"),
+    );
+    const store = new Store(root);
+    store.data.settings.cliPath = `fixture-recovery-${scenario}`;
+    store.data.settings.resetWarmupEnabled = false;
+    store.data.accounts = [
+      {
+        id: "b",
+        identity: "b",
+        label: "test",
+        email: "",
+        plan: "test",
+        enabled: true,
+        status: "ready",
+        failureCount: 0,
+        blockedUntil: null,
+        quotas: {
+          codex: {
+            limitId: "codex",
+            reached: false,
+            observedAt: Date.now(),
+            primary: {
+              usedPercent: 10,
+              windowDurationMins: 300,
+              resetsAt: Date.now() + 3600000,
+            },
+            secondary: null,
+          },
+        },
+      },
+    ];
+    const accounts: any = {
+      busy: new Set(),
+      cancelLogin: async () => {},
+      inspect: async () => ({
+        auth: { tokens: { access_token: "synthetic" } },
+        models: [],
+        quotas: store.data.accounts[0].quotas,
+      }),
+    };
+    const scheduler = new Scheduler(store, accounts, {
+      cli: (ctx) => new CliWorker(ctx),
+      desktop: () => {
+        throw Error("not used");
+      },
+    });
+    try {
+      const job = await scheduler.add({
+        title: "Automatic recovery",
+        prompt: "Original request",
+        cwd: root,
+        interactive: true,
+        mode: "cli",
+        model: "",
+        effort: "",
+        bucket: "codex",
+        approvalPolicy: "on-request",
+        sandbox: "workspaceWrite",
+      });
+      await vi.waitFor(() => expect(job.autoRecovery).toBeDefined(), {
+        timeout: 5000,
+      });
+      await (scheduler as any).currentRun;
+      const journalPath = path.join(
+        store.jobHome(job.id),
+        "synthetic-journal.jsonl",
+      );
+      const first = JSON.parse((await fs.readFile(journalPath, "utf8")).trim());
+      expect(() => process.kill(first.pid, 0)).toThrow();
+      expect(job.threadId).toBe("synthetic-thread");
+      expect(job.submissionUncertain).toBe(scenario === "lost-ack");
+      // Start the normal scheduler loop and let the persisted backoff elapse.
+      scheduler.start();
+      await vi.waitFor(() => expect(job.state).toBe("completed"), {
+        timeout: 8000,
+      });
+      await (scheduler as any).currentRun;
+      const journal = (await fs.readFile(journalPath, "utf8"))
+        .trim()
+        .split("\n")
+        .map((s) => JSON.parse(s));
+      expect(journal).toHaveLength(2);
+      expect(journal[0].pid).not.toBe(journal[1].pid);
+      expect(journal.map((j) => j.threadId)).toEqual([
+        "synthetic-thread",
+        "synthetic-thread",
+      ]);
+      expect(journal[0].input).toBe("Original request");
+      if (scenario === "lost-ack") {
+        expect(journal[1].input).toContain("上次发送结果未确认");
+        expect(journal[1].input).toContain("Original request");
+        expect(journal[1].input).not.toBe(journal[0].input);
+      } else expect(journal[1].input).toBe(store.data.settings.resumePrompt);
+      expect(job.pendingMessage).toBeUndefined();
+      expect(job.autoRecovery).toBeUndefined();
+      expect(job.recoveryAttempts).toBe(0);
+      expect(job.rotations).toBe(0);
+    } finally {
+      await scheduler.shutdown();
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  },
+  15000,
+);

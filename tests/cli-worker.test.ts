@@ -296,7 +296,7 @@ it("holds a new native Goal turn open when the previous turn's final verificatio
     turn: { id: "goal-next", status: "completed" },
   });
   await vi.advanceTimersByTimeAsync(1000);
-  expect((await w.done).kind).toBe("error");
+  expect((await w.done).kind).toBe("recoverable");
   await w.close();
 });
 it("keeps an active native Goal alive across a delayed continuation instead of completing its first round", async () => {
@@ -645,7 +645,9 @@ it("preserves ordinary chat input when a started turn loses its acknowledgement"
     return value;
   });
   const w = worker();
-  await expect(w.start(auth)).rejects.toThrow("启动结果不确定");
+  await w.start(auth);
+  expect((await w.done).kind).toBe("recoverable");
+  expect(job.submissionUncertain).toBe(true);
   expect(job.turnId).toBe("turn-2");
   expect(job.pendingMessage).toBe("NORMAL_PENDING_42");
   expect(job.attachments).toHaveLength(1);
@@ -702,7 +704,9 @@ it("preserves unconfirmed Goal input on transport failure without falling back t
       : call(method, params),
   );
   const w = worker();
-  await expect(w.start(auth)).rejects.toThrow("不会自动重发");
+  await w.start(auth);
+  expect((await w.done).kind).toBe("recoverable");
+  expect(job.submissionUncertain).toBe(true);
   expect(job.pendingMessage).toBe("FOLLOWUP_KEEP_42");
   expect(job.attachments).toHaveLength(1);
   expect(rpc.call.mock.calls.filter(([m]) => m === "turn/steer")).toHaveLength(
@@ -816,7 +820,7 @@ it("bounds missing Goal admission and retains the pending message", async () => 
   rpc.autoGoalTurn = false;
   const w = worker(),
     start = w.start(auth);
-  const rejected = expect(start).rejects.toThrow("待发送消息已保留");
+  const rejected = expect(start).rejects.toThrow("将重新连接原会话");
   await vi.advanceTimersByTimeAsync(11000);
   await rejected;
   expect(job.pendingMessage).toBe("FOLLOWUP_KEEP_42");
@@ -867,7 +871,7 @@ it("bounds uncertain native Goal admission and never falls back to a second turn
   );
   const w = worker();
   const start = w.start(auth);
-  const rejected = expect(start).rejects.toThrow("不会补发任务");
+  const rejected = expect(start).rejects.toThrow("将重新连接原会话");
   await vi.advanceTimersByTimeAsync(11000);
   await rejected;
   expect(rpc.call.mock.calls.some(([m]) => m === "turn/start")).toBe(false);
@@ -1599,7 +1603,7 @@ it("unknown final quota does not turn commentary into task completion", async ()
     turn: { id: "turn-2", status: "completed" },
   });
   await vi.advanceTimersByTimeAsync(800);
-  expect((await w.done).kind).toBe("error");
+  expect((await w.done).kind).toBe("recoverable");
 });
 it("a new thread is materialized before a task can pause during preparation", async () => {
   const w = worker();

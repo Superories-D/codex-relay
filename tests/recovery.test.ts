@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Store } from "../src/core/store";
 import { Rpc } from "../src/core/rpc";
 import { recoverJob } from "../src/core/recovery";
+import { Scheduler } from "../src/core/scheduler";
+import { vi } from "vitest";
 let root: string;
 beforeEach(async () => {
   root = await fs.mkdtemp(path.join(os.tmpdir(), "relay-recovery-"));
@@ -20,7 +22,85 @@ describe("crash recovery refuses duplicate writers", () => {
     expect(restored.data.jobs[0]).toMatchObject({
       state: "needs_attention",
       recoveryRequired: true,
+      autoRecovery: { reason: "process", attempt: 1 },
     });
+  });
+  it.each(["pause", "cancel"] as const)(
+    "retains a persisted %s through crash recovery",
+    async (stopIntent) => {
+      const s = new Store(root);
+      s.data.jobs = [
+        { id: "a", mode: "cli", state: "running", stopIntent } as any,
+      ];
+      await s.save();
+      const restored = new Store(root);
+      await restored.load();
+      const job = restored.data.jobs[0];
+      job.autoRecovery!.nextAttemptAt = 0;
+      const factory = vi.fn();
+      const accounts = { busy: new Set(), cancelLogin: async () => {} } as any;
+      const scheduler = new Scheduler(
+        restored,
+        accounts,
+        { cli: factory, desktop: factory },
+        (j) => recoverJob(j, restored, accounts, root),
+      );
+      try {
+        await (scheduler as any).tick();
+        await Promise.all([...(scheduler as any).recoveryTasks.values()]);
+        expect(job.state).toBe(stopIntent === "pause" ? "paused" : "cancelled");
+        expect(job.recoveryRequired).toBe(false);
+        expect(factory).not.toHaveBeenCalled();
+      } finally {
+        await scheduler.shutdown();
+      }
+    },
+  );
+  it("keeps checking a live owner after restart and automatically releases the gate only once it is idle", async () => {
+    const s = new Store(root);
+    s.data.jobs = [
+      { id: "a", mode: "cli", state: "running", threadId: "original" } as any,
+    ];
+    const home = s.jobHome("a");
+    await fs.mkdir(home, { recursive: true });
+    const lock = path.join(home, "relay-owner.json");
+    await fs.writeFile(
+      lock,
+      JSON.stringify({ pid: process.pid, nonce: "test-owned" }),
+    );
+    await s.save();
+    const restored = new Store(root);
+    await restored.load();
+    const job = restored.data.jobs[0];
+    const factory = vi.fn();
+    const accounts = { busy: new Set(), cancelLogin: async () => {} } as any;
+    const scheduler = new Scheduler(
+      restored,
+      accounts,
+      { cli: factory, desktop: factory },
+      (j) => recoverJob(j, restored, accounts, root),
+    );
+    try {
+      job.autoRecovery!.nextAttemptAt = 0;
+      await (scheduler as any).tick();
+      await Promise.all([...(scheduler as any).recoveryTasks.values()]);
+      expect(job.recoveryRequired).toBe(true);
+      expect(await fs.readFile(lock, "utf8")).toContain("test-owned");
+      expect(job.autoRecovery!.attempt).toBe(2);
+      // Fixture owner relinquishes its own lock. Recovery never removes a live lock.
+      await fs.rm(lock);
+      job.autoRecovery!.nextAttemptAt = 0;
+      await (scheduler as any).tick();
+      await Promise.all([...(scheduler as any).recoveryTasks.values()]);
+      expect(job).toMatchObject({
+        state: "queued",
+        recoveryRequired: false,
+        threadId: "original",
+      });
+      expect(factory).not.toHaveBeenCalled();
+    } finally {
+      await scheduler.shutdown();
+    }
   });
   it("refuses a still-live owner instead of deleting its lock", async () => {
     const file = path.join(root, "relay-owner.json");

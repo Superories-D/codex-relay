@@ -1,5 +1,6 @@
 import { t, useI18n, setLanguage, errorText } from "./i18n";
 import { CopyButton } from "./CopyButton";
+import { RecoveryNotice } from "./RecoveryNotice";
 import React, {
   useEffect,
   useLayoutEffect,
@@ -106,19 +107,22 @@ const names: Record<string, string> = {
 };
 const running = (j?: Job) =>
   !!j &&
-  [
-    "queued",
-    "preparing",
-    "running",
-    "pausing",
-    "rotating",
-    "waiting",
-    "watching",
-  ].includes(j.state);
+  (!!j.autoRecovery ||
+    [
+      "queued",
+      "preparing",
+      "running",
+      "pausing",
+      "rotating",
+      "waiting",
+      "watching",
+    ].includes(j.state));
 const jobLabel = (j: Job) =>
-  j.state === "waiting" && j.waitingFor === "model"
-    ? "等待模型账户"
-    : names[j.state];
+  j.autoRecovery
+    ? "正在自动恢复"
+    : j.state === "waiting" && j.waitingFor === "model"
+      ? "等待模型账户"
+      : names[j.state];
 const basename = (p: string) => p.split(/[\\/]/).filter(Boolean).at(-1) || p;
 function fitComposer(input: HTMLTextAreaElement) {
   input.style.height = "auto";
@@ -1017,7 +1021,9 @@ export function AgentApp({
                           ) : null}
                         </span>
                         <span>{j.title}</span>
-                        {j.state === "needs_attention" && <b>!</b>}
+                        {j.state === "needs_attention" && !j.autoRecovery && (
+                          <b>!</b>
+                        )}
                       </button>
                     ))}
                   {group.length > (visibleThreads[dir] || 20) && (
@@ -1454,10 +1460,24 @@ export function AgentApp({
                         <ChevronRight size={17} />
                       </button>
                     )}
-                    {job?.lastError && (
+                    {job?.autoRecovery && (
+                      <RecoveryNotice
+                        job={job}
+                        pending={pending}
+                        onPause={() =>
+                          action(() =>
+                            call("job.control", {
+                              id: job.id,
+                              action: "pause",
+                            }),
+                          )
+                        }
+                      />
+                    )}
+                    {job?.lastError && !job.autoRecovery && (
                       <div className="agent-history-note">{job.lastError}</div>
                     )}
-                    {running(job) && (
+                    {running(job) && !job?.autoRecovery && (
                       <div className="agent-activity">
                         <span className="agent-pulse">●</span>{" "}
                         {t(job?.stage || jobLabel(job!))}
@@ -2182,20 +2202,24 @@ export function AgentApp({
                     <Archive size={15} />
                     {job.archived ? t("取消归档") : t("归档会话")}
                   </button>
-                  {["paused", "needs_attention"].includes(job.state) && (
-                    <button
-                      role="menuitem"
-                      onClick={() => {
-                        action(() =>
-                          call("job.control", { id: job.id, action: "resume" }),
-                        );
-                        setThreadMenu(false);
-                      }}
-                    >
-                      <Undo2 size={15} />
-                      {t("继续未完成任务")}
-                    </button>
-                  )}
+                  {!job.autoRecovery &&
+                    ["paused", "needs_attention"].includes(job.state) && (
+                      <button
+                        role="menuitem"
+                        onClick={() => {
+                          action(() =>
+                            call("job.control", {
+                              id: job.id,
+                              action: "resume",
+                            }),
+                          );
+                          setThreadMenu(false);
+                        }}
+                      >
+                        <Undo2 size={15} />
+                        {t("继续未完成任务")}
+                      </button>
+                    )}
                   <hr />
                   <button
                     role="menuitem"

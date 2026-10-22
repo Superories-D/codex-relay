@@ -7,8 +7,8 @@ import { Accounts, parseAuth, matchesAuth } from "./accounts";
 import { Store } from "./store";
 import { Rpc } from "./rpc";
 import { windowsPowerShellEnv } from "./powershell";
-// A crash never authorizes a second writer. Recovery is invoked by the explicit
-// Continue / Cancel control; the entire queue stays frozen until it succeeds.
+// Both automatic recovery and explicit controls must prove the old owner idle.
+// A crash never authorizes a second writer or killing an unidentified process.
 export async function recoverJob(
   job: Job,
   store: Store,

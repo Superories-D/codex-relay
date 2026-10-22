@@ -24,6 +24,7 @@ import type {
 } from "../shared/types";
 import { ensureWindowsSandbox } from "./windows-sandbox";
 import { ProcessSafetyError } from "./process-safety-error";
+import { RecoveryError } from "./auto-recovery";
 import { redact } from "./redact";
 import { threadTokenUsage } from "../shared/token-usage";
 const activeAgentStatuses = new Set([
@@ -63,6 +64,7 @@ export class CliWorker extends EventEmitter implements Worker {
   private requests = new Map<string, number | string>();
   private pendingRequests = new Set<Promise<void>>();
   private closing = false;
+  private disconnected = false;
   private refreshStopFailure?: ProcessSafetyError;
   private agents = new Map<string, AgentState>();
   private parentEnded = false;
@@ -75,6 +77,19 @@ export class CliWorker extends EventEmitter implements Worker {
     super();
   }
   async start(auth: {
+    accessToken: string;
+    chatgptAccountId: string;
+    chatgptPlanType: string;
+  }) {
+    try {
+      await this.startOnce(auth);
+    } catch (error) {
+      if (this.disconnected && !(error instanceof ProcessSafetyError))
+        throw new RecoveryError("Codex 连接中断，将重新连接原会话");
+      throw error;
+    }
+  }
+  private async startOnce(auth: {
     accessToken: string;
     chatgptAccountId: string;
     chatgptPlanType: string;
@@ -96,12 +111,13 @@ export class CliWorker extends EventEmitter implements Worker {
       void task.then(release, release);
     });
     this.rpc.on("diagnostic", (text) => this.emit("log", text));
-    this.rpc.on("disconnected", () =>
+    this.rpc.on("disconnected", () => {
+      this.disconnected = true;
       this.finish({
-        kind: "error",
+        kind: "recoverable",
         error: new Error("Codex 连接中断，会话已保存"),
-      }),
-    );
+      });
+    });
     await this.rpc.call("account/login/start", {
       type: "chatgptAuthTokens",
       ...auth,
@@ -118,6 +134,7 @@ export class CliWorker extends EventEmitter implements Worker {
         this.ctx.job.goalResumeAfterModelChange
       ) &&
       !this.ctx.job.pendingMessage &&
+      !this.ctx.job.submissionUncertain &&
       !this.ctx.job.review;
     this.threadId = this.ctx.job.threadId;
     if (this.threadId) {
@@ -152,7 +169,9 @@ export class CliWorker extends EventEmitter implements Worker {
       this.finish({ kind: "interrupted" });
       return;
     }
-    const review = this.ctx.job.review;
+    // An uncertain review is continued as a normal inspection turn, rather
+    // than blindly launching review/start a second time.
+    const review = this.ctx.job.review && !this.ctx.job.submissionUncertain;
     const goalOwnsTurn = this.goal?.status === "active" && !review;
     // Snapshot before resume: a native Goal can emit turn/started before the
     // resume reply, and a turn checkpoint is not proof this message was sent.
@@ -164,7 +183,13 @@ export class CliWorker extends EventEmitter implements Worker {
           (this.ctx.job.planMode
             ? "当前为规划模式：只调查、分析并提出计划，允许只读工具。不要修改文件、执行写入或采取外部行动。需要用户选择时请求输入。\n\n"
             : "") +
-          taskPrompt(this.ctx, !!this.ctx.job.desktopSubmissionPending),
+          taskPrompt(
+            this.ctx,
+            !!(
+              this.ctx.job.desktopSubmissionPending ||
+              this.ctx.job.submissionUncertain
+            ),
+          ),
       },
       ...(this.ctx.job.attachments ?? []).map(({ type, path, name }) =>
         type === "localImage" ? { type, path } : { type, path, name },
@@ -220,6 +245,8 @@ export class CliWorker extends EventEmitter implements Worker {
       }
       if (target) {
         this.emit("stage", "向目标当前轮次补充消息");
+        this.ctx.job.submissionUncertain = true;
+        await this.ctx.checkpoint(this.threadId!);
         try {
           await this.rpc.call("turn/steer", {
             threadId: this.threadId,
@@ -236,10 +263,10 @@ export class CliWorker extends EventEmitter implements Worker {
             )
               this.ctx.job.goalResumeAfterQuota = true;
           }
-          if (errorKind(error) === "transient")
-            throw new Error(
-              "补充消息提交结果不确定，请检查原会话后继续；不会自动重发",
-            );
+          if (errorKind(error) === "transient") {
+            this.finish({ kind: "recoverable", error });
+            return;
+          }
           throw error;
         }
         await this.acceptSubmission(target);
@@ -250,6 +277,8 @@ export class CliWorker extends EventEmitter implements Worker {
       // state cannot auto-admit another turn; submit the user's actual request.
     }
     this.emit("stage", "发送任务，等待执行确认");
+    this.ctx.job.submissionUncertain = true;
+    await this.ctx.checkpoint(this.threadId!);
     const turn = await this.rpc
       .call(
         review ? "review/start" : "turn/start",
@@ -269,10 +298,13 @@ export class CliWorker extends EventEmitter implements Worker {
             },
       )
       .catch((error) => {
-        if (errorKind(error) === "transient")
-          throw new Error("任务启动结果不确定，请检查保存的会话后再继续");
+        if (errorKind(error) === "transient") {
+          this.finish({ kind: "recoverable", error });
+          return undefined;
+        }
         throw error;
       });
+    if (!turn) return;
     // Goal resume may already have admitted a turn. Its response must not
     // rewind a newer turn/started notification's ID.
     if (!this.turnId) await this.beginTurn(turn.turn.id);
@@ -283,6 +315,7 @@ export class CliWorker extends EventEmitter implements Worker {
   }
   private async acceptSubmission(turnId: string) {
     this.submissionPending = false;
+    this.ctx.job.submissionUncertain = false;
     await this.ctx.checkpoint(this.threadId!, this.turnId || turnId, true);
     if (
       this.deferredOutcome &&
@@ -320,9 +353,7 @@ export class CliWorker extends EventEmitter implements Worker {
       };
       const timer = setTimeout(() => {
         clean();
-        reject(
-          new Error("目标轮次尚未确认，待发送消息已保留；不会补发第二轮任务"),
-        );
+        reject(new RecoveryError("目标轮次尚未确认，将重新连接原会话"));
       }, 10000);
       this.on("rootTurnStarted", check);
       this.on("rootTurnEnded", check);
@@ -410,9 +441,7 @@ export class CliWorker extends EventEmitter implements Worker {
       };
       const timer = setTimeout(() => {
         clean();
-        reject(
-          new Error("未收到目标自动启动事件，请检查会话后继续；不会补发任务"),
-        );
+        reject(new RecoveryError("未收到目标自动启动事件，将重新连接原会话"));
       }, 10000);
       this.on("rootTurnStarted", started);
       this.on("settled", ended);
@@ -791,10 +820,10 @@ export class CliWorker extends EventEmitter implements Worker {
         this.completeAfterChildren({ kind: "quota", error });
       else if (this.stopRequested)
         this.completeAfterChildren({ kind: "interrupted" });
-      else if (error || !["completed", "interrupted"].includes(p.turn.status))
+      else if (error)
         this.finish({
           kind: "error",
-          error: error ?? new Error(`Unexpected turn status: ${p.turn.status}`),
+          error,
         });
       else if (
         this.goal &&
@@ -806,6 +835,11 @@ export class CliWorker extends EventEmitter implements Worker {
         this.completeAfterChildren(this.goalStopOutcome);
       } else if (p.turn.status === "interrupted")
         this.completeAfterChildren({ kind: "interrupted" });
+      else if (p.turn.status !== "completed")
+        this.finish({
+          kind: "recoverable",
+          error: new Error(`Unexpected turn status: ${p.turn.status}`),
+        });
       else if (quotaKnown && this.goal?.status === "active") {
         this.waitingForGoal = true;
         this.emit("stage", "目标仍在执行，等待下一轮");
@@ -814,8 +848,8 @@ export class CliWorker extends EventEmitter implements Worker {
         (!this.finalText.trim() && this.goal?.status !== "complete")
       )
         this.finish({
-          kind: "error",
-          error: new Error("终止原因不明确，需核查额度后继续"),
+          kind: "recoverable",
+          error: new Error("终止原因不明确，将核查额度并自动恢复原会话"),
         });
       else {
         const outcome = completionOutcome(this.ctx.job, this.finalText);

@@ -5,6 +5,7 @@ export interface Outcome {
     | "completed"
     | "quota"
     | "interrupted"
+    | "recoverable"
     | "error"
     | "incomplete"
     | "goalStopped"
