@@ -1,6 +1,14 @@
-import type { Job } from "../shared/types";
+import { redact } from "./redact";
+import type { RecoveryEvent, Job } from "../shared/types";
 
 export class RecoveryError extends Error {}
+
+export function recordRecovery(job: Job, kind: RecoveryEvent["kind"], detail?: string, at = Date.now()) {
+  job.recoveryHistory = [...(job.recoveryHistory || []), {
+    at, kind, attempt: job.recoveryAttempts || 0,
+    ...(detail ? { detail: redact(detail).slice(0, 2000) } : {}),
+  }].slice(-50);
+}
 
 // Retry only known interruptions. Configuration errors and rejected approvals
 // are not evidence that replaying a turn is safe.
@@ -19,6 +27,7 @@ export function scheduleRecovery(
     job.waitingFor = "recovery";
     job.nextWakeAt = now + delay;
   }
+  recordRecovery(job, "scheduled", job.lastError, now);
   job.updatedAt = now;
 }
 

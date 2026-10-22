@@ -957,4 +957,11 @@ export const english: Record<string, string> = {
     "Git state changed. Refresh the changes list and try again.",
   "文件差异已变化，请刷新后重新检查":
     "The file diff changed. Refresh and review it again.",
+  "恢复记录": "Recovery history",
+  "安排重试": "Retry scheduled",
+  "已接回原会话": "Original chat reconnected",
+  "恢复已停止": "Recovery stopped",
+  "恢复后已完成": "Completed after recovery",
+  "第 {attempt} 次恢复": "Recovery attempt {attempt}",
+  "保留最近 50 条记录": "Last 50 events retained",
 };

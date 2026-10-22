@@ -1,6 +1,6 @@
 import { t, useI18n, setLanguage, errorText } from "./i18n";
 import { CopyButton } from "./CopyButton";
-import { RecoveryNotice } from "./RecoveryNotice";
+import { RecoveryNotice, RecoveryHistory } from "./RecoveryNotice";
 import React, {
   useEffect,
   useLayoutEffect,
@@ -1474,6 +1474,7 @@ export function AgentApp({
                         }
                       />
                     )}
+                    {job && <RecoveryHistory job={job} />}
                     {job?.lastError && !job.autoRecovery && (
                       <div className="agent-history-note">{job.lastError}</div>
                     )}

@@ -1403,3 +1403,10 @@ button:disabled {
     animation: none;
   }
 }
+
+.recovery-history { margin: 10px 0; padding: 12px; border: 1px solid var(--border); border-radius: 12px; font-size: 13px; }
+.recovery-history summary { cursor: pointer; }
+.recovery-history ol { max-height: 300px; overflow: auto; padding: 0 0 0 20px; }
+.recovery-history li { padding: 8px 4px; }
+.recovery-history time, .recovery-history small { display: block; opacity: .7; font-size: 12px; }
+.recovery-history p { white-space: pre-wrap; overflow-wrap: anywhere; }

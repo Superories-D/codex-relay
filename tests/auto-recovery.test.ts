@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { scheduleRecovery } from "../src/core/auto-recovery";
+import { scheduleRecovery, recordRecovery } from "../src/core/auto-recovery";
 import { taskPrompt } from "../src/core/completion";
 import type { Job } from "../src/shared/types";
 
@@ -32,4 +32,15 @@ it("continues uncertain input with an explicit inspection instruction instead of
       resumePrompt: "continue",
     } as any),
   ).toBe(job.pendingMessage);
+});
+
+it("keeps a bounded, redacted recovery history through completion", () => {
+  const job = {} as Job;
+  for (let i = 0; i < 60; i++) scheduleRecovery(job, "unknown", i);
+  recordRecovery(job, "resumed", "Bearer secret-example-token-123456789");
+  recordRecovery(job, "completed");
+  expect(job.recoveryHistory).toHaveLength(50);
+  expect(job.recoveryHistory!.at(-1)?.kind).toBe("completed");
+  expect(JSON.stringify(job.recoveryHistory)).not.toContain("secret-example-token");
+  expect(job.recoveryHistory![0].at).toBe(12);
 });

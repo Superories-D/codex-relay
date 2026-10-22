@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { LoaderCircle, Pause } from "lucide-react";
 import type { Job } from "../shared/types";
-import { t, useI18n } from "./i18n";
+import { t, useI18n, formatDate } from "./i18n";
 
 export function RecoveryNotice({
   job,
@@ -64,4 +64,20 @@ export function RecoveryNotice({
       )}
     </section>
   );
+}
+
+
+export function RecoveryHistory({ job }: { job: Job }) {
+  useI18n();
+  if (!job.recoveryHistory?.length) return null;
+  const labels = { scheduled: "安排重试", resumed: "已接回原会话", stopped: "恢复已停止", completed: "恢复后已完成" };
+  return <details className="recovery-history">
+    <summary>{t("恢复记录")} · {job.recoveryHistory.length}</summary>
+    <ol>{[...job.recoveryHistory].reverse().map((event, index) => <li key={`${event.at}-${index}`}>
+      <strong>{t(labels[event.kind])}</strong><time dateTime={new Date(event.at).toISOString()}>{formatDate(event.at)}</time>
+      <small>{t("第 {attempt} 次恢复", { attempt: event.attempt })}</small>
+      {event.detail && <p>{event.detail}</p>}
+    </li>)}</ol>
+    <small>{t("保留最近 50 条记录")}</small>
+  </details>;
 }

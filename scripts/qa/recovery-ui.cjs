@@ -21,6 +21,7 @@ function fixture({ language, theme }) {
     state: "waiting",
     waitingFor: "recovery",
     autoRecovery: { reason: "unknown", attempt: 3, nextAttemptAt: now + 60000 },
+    recoveryHistory: [{ at: now - 1000, kind: "scheduled", attempt: 3, detail: "Synthetic interruption" }],
     lastError:
       "Codex connection interrupted. The previous process has stopped.",
     threadId: "original-thread",
@@ -205,6 +206,9 @@ function fixture({ language, theme }) {
         geometry.content <= geometry.width + 1,
         "Recovery notice must not overflow",
       );
+      const history = page.locator(".recovery-history");
+      await history.locator("summary").click();
+      assert.equal(await history.locator("li").count(), 1);
       await notice.locator("button").click();
       await notice.waitFor({ state: "detached" });
       const controls = await page.evaluate(() =>

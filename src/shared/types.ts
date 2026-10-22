@@ -86,7 +86,14 @@ export interface JobTokenUsage extends TokenCounts {
   last?: TokenCounts;
   modelContextWindow?: number | null;
 }
+export interface RecoveryEvent {
+  at: number;
+  kind: "scheduled" | "resumed" | "stopped" | "completed";
+  attempt: number;
+  detail?: string;
+}
 export interface Job {
+  recoveryHistory?: RecoveryEvent[];
   schedule?: { taskId: string; runId: string; requestedAt: number };
   projectCwd?: string;
   agentOrigin?: { jobId: string; parentThreadId: string };

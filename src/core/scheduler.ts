@@ -40,6 +40,7 @@ import {
   clearRecovery,
   scheduleRecovery,
   RecoveryError,
+  recordRecovery,
 } from "./auto-recovery";
 import {
   MODEL_ACCESS_TTL,
@@ -536,6 +537,7 @@ export class Scheduler extends EventEmitter {
           // gate, including when Pause or Cancel was requested before a crash.
           const previous = {
             state: job.state,
+            recoveryHistory: job.recoveryHistory,
             recoveryRequired: job.recoveryRequired,
             autoRecovery: job.autoRecovery,
             waitingFor: job.waitingFor,
@@ -562,6 +564,7 @@ export class Scheduler extends EventEmitter {
             job.state === "queued" ? "已恢复，等待继续原会话" : undefined;
           job.lastError = undefined;
           job.updatedAt = Date.now();
+          recordRecovery(job, job.state === "queued" ? "resumed" : "stopped");
           try {
             await this.store.save();
           } catch (error) {
@@ -1118,6 +1121,7 @@ export class Scheduler extends EventEmitter {
       this.log(job.lastError, "warning", job.id);
     } else if (outcome?.kind === "completed") {
       job.state = "completed";
+      if (job.recoveryAttempts) recordRecovery(job, "completed");
       clearRecovery(job);
       job.recoveryAttempts = 0;
       this.log("Codex 正常完成本轮任务，未检测到额度中断", "info", job.id);
@@ -1967,6 +1971,7 @@ export class Scheduler extends EventEmitter {
       throw new Error("终止任务不可再次操作，请新建任务");
     if (action !== "resume") {
       job.stopIntent = action;
+      if (job.autoRecovery) recordRecovery(job, "stopped");
       const active = this.active.get(id);
       if (active) active.reason = action;
       // Keep the process-check loop alive after a failed stop, but never resume
