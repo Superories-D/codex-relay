@@ -90,6 +90,7 @@ export async function startCommandServer(
               ![
                 "snapshot",
                 "job.add",
+                "job.report",
                 "job.control",
                 "approval.respond",
                 "session.scan",

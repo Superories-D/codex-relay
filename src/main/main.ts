@@ -1232,6 +1232,10 @@ async function boot() {
         return scheduler.snapshot();
       case "job.add":
         return scheduler.add(newJobSchema.parse(args));
+      case "job.dependencies": {
+        const a = z.object({ id: idSchema, ids: z.array(idSchema).max(20) }).strict().parse(args);
+        return scheduler.dependencies(a.id, a.ids);
+      }
       case "jobs.control": {
         const a = z.object({ ids: z.array(idSchema).min(1).max(100), action: z.enum(["pause", "resume"]) }).strict().parse(args);
         return scheduler.controlMany(a.ids, a.action);

@@ -31,6 +31,7 @@ export function TaskReport({
     };
   }, [id]);
   const labels: Record<string, string> = {
+    dependencies: "前置任务",
     ownership: "正在核验原进程",
     recovery: "等待自动恢复",
     approval: "等待你的审批或回答",

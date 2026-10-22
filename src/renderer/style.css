@@ -1454,3 +1454,9 @@ button:disabled {
 .template-trigger { flex: 0 0 auto; align-self: flex-end; }
 
 .task-report-preview pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 360px; overflow: auto; font-size: 12px; padding: 12px; border: 1px solid var(--line, #454545); }
+
+.dependency-options { max-height: 340px; overflow: auto; margin: 12px 0; }
+.dependency-options label { display: flex; align-items: flex-start; gap: 10px; padding: 10px; border-bottom: 1px solid var(--line); }
+.dependency-options input[type=checkbox] { width: auto; flex: 0 0 auto; }
+.dependency-options small { display: block; color: var(--muted); overflow-wrap: anywhere; }
+.task-dependencies { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }

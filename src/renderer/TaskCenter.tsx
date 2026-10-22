@@ -1,3 +1,5 @@
+import { dependencyBlockers } from "../shared/task-dependencies";
+import { TaskDependencies } from "./TaskDependencies";
 import React, { useState } from "react";
 import type { Job, Snapshot } from "../shared/types";
 import { orderTasks } from "../shared/task-order";
@@ -30,6 +32,7 @@ export function TaskCenter({
   close: () => void;
 }) {
   useI18n();
+  const [editing, setEditing] = useState<Job>();
   const [filter, setFilter] = useState("active");
   const [project, setProject] = useState("");
   const [query, setQuery] = useState("");
@@ -184,6 +187,7 @@ export function TaskCenter({
             ))}
         </div>
       )}
+      {editing && <TaskDependencies job={snapshot.jobs.find(j => j.id === editing.id) || editing} jobs={snapshot.jobs} call={call} close={() => setEditing(undefined)} />}
       <div className="task-list">
         {filtered.map((job) => (
           <article key={job.id}>
@@ -217,6 +221,8 @@ export function TaskCenter({
                     : "普通优先级",
               )}
             </small>
+            {!!job.dependsOn?.length && <p className="task-dependencies">{t("前置任务")} · {job.dependsOn.map(id => snapshot.jobs.find(j => j.id === id)?.title || t("已删除的任务")).join(" → ")} · {t("等待 {count} 项完成", { count: dependencyBlockers(job, snapshot.jobs).length })}</p>}
+            {["queued", "waiting", "paused"].includes(job.state) && <button className="dependencies-trigger" onClick={() => setEditing(job)}>{t("设置前置任务")}</button>}
             {job.autoRecovery && <RecoveryNotice job={job} />}
             {job.lastError && !job.autoRecovery && (
               <p className="task-error">{job.lastError}</p>

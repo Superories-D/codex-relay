@@ -45,3 +45,9 @@ CLI watch reconnects with bounded exponential backoff, reloads the local IPC cre
 The user extended this sequence to 15 iterations while iteration 10 was in progress. Native Windows process-tree/dialog/installation and real-account inference acceptance remain separate from this Linux test environment.
 
 Round 10 verification: full `npm run check` passed (53 files, 490 passed, 2 Windows-only skipped); production-renderer QA passed Chinese/English/Japanese with zero renderer errors. Native Windows dialogs/process acceptance remains outside this Linux fixture.
+
+## 11 — Persistent task prerequisites
+
+Tasks can wait for up to 20 prerequisites, configured in the task center. The scheduler admits them only after every prerequisite completes; missing or cancelled prerequisites keep dependents blocked. Graph updates reject cycles and changes to running tasks, serialize with task controls, and roll back failed saves. Reports include prerequisite blockers. Also fixed the server allowlist for read-only CLI reports (native save dialogs remain desktop-only).
+
+Validation: build and 77 scheduler/localization/report tests passed, plus 8 IPC tests. Three-language production-renderer QA exercised prerequisite editing with no renderer errors. Tests cover ordered admission, cancelled/missing prerequisites, cyclic graphs and persistence failure.

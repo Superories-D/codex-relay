@@ -1,6 +1,16 @@
 import { legacyEnglish } from "./legacy-en";
 import { nativeEnglish } from "./native-en";
 export const english: Record<string, string> = {
+  "设置前置任务": "Set prerequisites",
+  "前置任务": "Prerequisites",
+  "已删除的任务": "Deleted task",
+  "等待 {count} 项完成": "Waiting for {count} tasks",
+  "全部前置任务完成后才会执行；取消或删除前置任务不会跳过等待。": "Runs after all prerequisites complete. Cancelled or deleted prerequisites keep this task waiting.",
+  "保存依赖": "Save prerequisites",
+  "任务依赖不能形成循环": "Task dependencies cannot form a cycle",
+  "前置任务不存在": "Prerequisite task does not exist",
+  "最多选择 20 个不同的前置任务": "Select up to 20 distinct prerequisites",
+  "只能调整尚未运行或已暂停任务的依赖": "Prerequisites can only be changed for queued, waiting, or paused tasks",
   自动恢复: "Automatic recovery",
   正在确认停止: "Confirming stop",
   正在自动恢复: "Recovering automatically",

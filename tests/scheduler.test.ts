@@ -1833,3 +1833,35 @@ it("bulk resume does not take over unmanaged windows or rerun completed work", a
   expect((await scheduler.controlMany([job.id], "resume")).results[0].ok).toBe(false);
   expect(workers).toHaveLength(0);
 });
+
+it("dispatches dependent tasks only after every prerequisite completes", async () => {
+  const [first, second, third] = await queuedJobs(3);
+  await scheduler.dependencies(second.id, [first.id]);
+  await scheduler.dependencies(third.id, [first.id, second.id]);
+  await (scheduler as any).tick();
+  await until(() => workers[0]?.started);
+  expect(workers.map(w => w.ctx.job.id)).toEqual([first.id]);
+  workers[0].settle({ kind: "completed" });
+  await until(() => first.state === "completed");
+  await (scheduler as any).currentRun;
+  await (scheduler as any).tick();
+  await until(() => workers[1]?.started);
+  expect(workers[1].ctx.job.id).toBe(second.id);
+  expect(["queued", "waiting"]).toContain(third.state);
+  await scheduler.control(second.id, "cancel");
+  await (scheduler as any).tick();
+  expect(workers).toHaveLength(2);
+});
+it("rejects dependency cycles and restores dependencies when persistence fails", async () => {
+  const [a,b] = await queuedJobs(2);
+  await scheduler.dependencies(a.id, [b.id]);
+  await expect(scheduler.dependencies(b.id,[a.id])).rejects.toThrow("循环");
+  await expect(scheduler.dependencies(a.id,[a.id])).rejects.toThrow("循环");
+  await expect(scheduler.dependencies(a.id,["missing"])).rejects.toThrow("不存在");
+  vi.spyOn(store,"save").mockRejectedValueOnce(Error("disk full"));
+  await expect(scheduler.dependencies(a.id,[])).rejects.toThrow("disk full");
+  expect(a.dependsOn).toEqual([b.id]);
+  store.data.jobs = [a];
+  await (scheduler as any).tick();
+  expect(workers).toHaveLength(0);
+});

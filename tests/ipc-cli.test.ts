@@ -369,3 +369,22 @@ it("CLI does not replay an unacknowledged task creation after disconnect", async
     await cleanup(server, root);
   }
 });
+
+it("allows authenticated report requests but keeps native file dialogs unavailable to CLI", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "relay-report-ipc-"));
+  const fake: any = new EventEmitter(); fake.snapshot = () => ({jobs:[]});
+  const command = vi.fn(async () => ({schemaVersion:1}));
+  const server = await startCommandServer(root, fake, command);
+  const socket = net.createConnection({port: portOf(server), host:"127.0.0.1"});
+  const lines = readline.createInterface({input: socket});
+  try {
+    const token = await fs.readFile(path.join(root,"ipc-token"),"utf8");
+    let reply = once(lines,"line");
+    socket.write(JSON.stringify({token,id:1,command:"job.report",args:"task"})+"\n");
+    expect(JSON.parse((await reply)[0]).result.schemaVersion).toBe(1);
+    reply = once(lines,"line");
+    socket.write(JSON.stringify({id:2,command:"job.report.save",args:"task"})+"\n");
+    expect(JSON.parse((await reply)[0]).error).toMatch("not allowed");
+    expect(command).toHaveBeenCalledTimes(1);
+  } finally { lines.close(); socket.destroy(); await cleanup(server,root); }
+});

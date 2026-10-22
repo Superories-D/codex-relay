@@ -93,6 +93,7 @@ export interface RecoveryEvent {
   detail?: string;
 }
 export interface Job {
+  dependsOn?: string[];
   priority?: "high" | "normal" | "low";
   enqueuedAt?: number;
   recoveryHistory?: RecoveryEvent[];

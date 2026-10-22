@@ -1,3 +1,4 @@
+import { dependencyBlockers, validateDependencies } from "../shared/task-dependencies";
 import { EventEmitter } from "node:events";
 import { orderTasks } from "../shared/task-order";
 import { randomUUID } from "node:crypto";
@@ -630,6 +631,7 @@ export class Scheduler extends EventEmitter {
           (j) =>
             ["queued", "waiting"].includes(j.state) &&
             !j.autoRecovery &&
+            !dependencyBlockers(j, this.store.data.jobs).length &&
             !this.jobControls.has(this.store.jobHome(j.id)) &&
             !this.familyActive(j.id) &&
             this.selectAccount(j),
@@ -673,6 +675,7 @@ export class Scheduler extends EventEmitter {
           break;
         if (
           this.familyActive(job.id) ||
+          dependencyBlockers(job, this.store.data.jobs).length > 0 ||
           job.autoRecovery ||
           this.jobControls.has(this.store.jobHome(job.id)) ||
           !["queued", "waiting"].includes(job.state)
@@ -1368,6 +1371,21 @@ export class Scheduler extends EventEmitter {
       );
       await this.store.save();
       this.changed();
+    });
+  }
+  dependencies(id: string, ids: string[]) {
+    return this.queueMaintenance(async () => {
+      this.maintaining = true;
+      try {
+        await this.tickInFlight;
+        const job = this.store.data.jobs.find(j => j.id === id);
+        if (!job || this.closing || this.familyActive(id) || job.recoveryRequired || job.existing && job.existing.phase !== "managed" || !["queued", "waiting", "paused"].includes(job.state)) throw Error("只能调整尚未运行或已暂停任务的依赖");
+        validateDependencies(this.store.data.jobs, id, ids);
+        const previous = job.dependsOn;
+        job.dependsOn = [...ids];
+        try { await this.store.save(); } catch (error) { job.dependsOn = previous; throw error; }
+        this.changed();
+      } finally { this.maintaining = false; }
     });
   }
   priority(id: string, priority: NonNullable<Job["priority"]>) {

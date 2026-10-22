@@ -181,6 +181,11 @@ function fixture({ language, theme }) {
         listeners.forEach((fn) => fn(structuredClone(data)));
         return;
       }
+      if (name === "job.dependencies") {
+        job.dependsOn = args.ids;
+        listeners.forEach(fn => fn(structuredClone(data)));
+        return;
+      }
       if (name === "jobs.control") {
         job.state = args.action === "pause" ? "paused" : "queued";
         job.autoRecovery = undefined;
@@ -379,6 +384,10 @@ function fixture({ language, theme }) {
       await page.locator(".task-center > .queue-actions button").nth(1).click();
       await page.locator(".task-report").waitFor();
       await page.locator(".task-summary button").nth(3).click();
+      await page.locator(".dependencies-trigger").click();
+      await page.getByRole("dialog").waitFor();
+      await page.getByRole("dialog").locator("button").last().click();
+      await page.waitForFunction(() => window.recoveryCalls.some(c => c.name === "job.dependencies" && c.args.ids.length === 0));
       assert.equal(await page.locator(".task-list article").count(), 1);
       await page.locator(".task-card-title button").click();
       await page.locator(".template-trigger").click();
