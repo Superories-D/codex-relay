@@ -886,6 +886,18 @@ async function boot() {
         scheduler.changed();
         return result;
       }
+      case "chat.search": {
+        const a = z.object({ id: idSchema, query: z.string().trim().min(1).max(200), offset: z.number().int().min(0).max(10000000).default(0), role: z.enum(["user", "assistant", "tool", "system"]).optional() }).strict().parse(args);
+        if (!store.data.jobs.some((j) => j.id === a.id)) throw Error("会话不存在");
+        return scheduler.chats.search(a.id, a.query, a.offset, a.role);
+      }
+      case "chat.searchItem": {
+        const a = z.object({ id: idSchema, itemId: z.string().min(1).max(1000) }).strict().parse(args);
+        if (!store.data.jobs.some((j) => j.id === a.id)) throw Error("会话不存在");
+        const item = await scheduler.chats.item(a.id, a.itemId);
+        if (!item) throw Error("消息不存在");
+        return { text: item.text.slice(0, 500000), detail: item.detail?.slice(0, 500000), truncated: item.text.length > 500000 || (item.detail?.length || 0) > 500000 };
+      }
       case "chat.read": {
         const a = z
           .object({ id: idSchema, before: z.number().int().min(0).optional() })

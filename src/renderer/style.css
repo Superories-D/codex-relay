@@ -1419,3 +1419,10 @@ button:disabled {
 .message-queue textarea { width: 100%; min-height: 90px; }
 .queue-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .queue-actions button { font-size: 12px; padding: 4px 8px; }
+
+.chat-search > input { width: 100%; margin-bottom: 8px; }
+.search-results { display: grid; gap: 8px; max-height: 320px; overflow: auto; }
+.search-results button { display: grid; gap: 6px; text-align: left; padding: 12px; }
+.search-results span, .search-detail pre { white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
+.search-results small { opacity: .65; }
+.search-detail { max-height: 350px; overflow: auto; margin-top: 12px; }

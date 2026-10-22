@@ -371,6 +371,7 @@ export class Chats {
       }
     } catch (e: any) {
       if (e.code !== "ENOENT") throw e;
+      this.cache.delete(id);
     }
     const live = this.live.get(id);
     const extra = [...(live?.values() ?? [])].filter(
@@ -389,6 +390,26 @@ export class Chats {
       total,
       ...(start ? { before: start } : {}),
     };
+  }
+  async search(id: string, query: string, offset = 0, role?: ChatItem["role"]) {
+    const needle = query.trim().normalize("NFKC").toLowerCase();
+    if (!needle || needle.length > 200) return { items: [], total: 0 };
+    await this.read(id);
+    const rows = new Map((this.cache.get(id)?.rows || []).map((item) => [item.id, item]));
+    for (const item of this.live.get(id)?.values() || []) rows.set(item.id, item);
+    const items: { id: string; role: ChatItem["role"]; at: number; excerpt: string }[] = [];
+    let total = 0, scanned = 0;
+    for (const item of [...rows.values()].reverse()) {
+      if (++scanned % 250 === 0) await new Promise<void>((resolve) => setImmediate(resolve));
+      if (role && item.role !== role) continue;
+      const text = [item.text, item.detail].filter(Boolean).join("\n").normalize("NFKC");
+      const index = text.toLowerCase().indexOf(needle);
+      if (index < 0) continue;
+      if (total++ < offset || items.length >= 30) continue;
+      const start = Math.max(0, index - 100);
+      items.push({ id: item.id, role: item.role, at: item.at, excerpt: (start ? "…" : "") + text.slice(start, start + 600) + (text.length > start + 600 ? "…" : "") });
+    }
+    return { items, total, ...(offset + items.length < total ? { next: offset + items.length } : {}) };
   }
   async item(id: string, itemId: string) {
     await this.read(id);

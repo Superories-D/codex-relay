@@ -266,3 +266,30 @@ it("merges live updates, completed replacements and external journal edits witho
   ]);
   expect((await new Chats(store.root).read(id)).items).toEqual(page.items);
 });
+
+
+it("searches full history beyond the latest page with role filters and stable pagination", async () => {
+  for (let i = 0; i < 95; i++) await chats.append("search", { id: String(i), role: i % 2 ? "tool" : "assistant", kind: "message", text: `needle ${i}`, detail: i === 0 ? "hidden diagnostic" : undefined, at: i });
+  const first = await chats.search("search", "NEEDLE");
+  expect(first.total).toBe(95);
+  expect(first.items).toHaveLength(30);
+  expect(first.items[0].id).toBe("94");
+  const next = await chats.search("search", "needle", first.next);
+  expect(next.items[0].id).toBe("64");
+  expect((await chats.search("search", "needle", 0, "tool")).total).toBe(47);
+  expect((await chats.search("search", "hidden diagnostic")).items[0].id).toBe("0");
+});
+it("searches updated records once and handles Unicode width without regular expressions", async () => {
+  await chats.append("search", { id: "one", role: "user", kind: "message", text: "obsolete", at: 1 });
+  await chats.append("search", { id: "one", role: "user", kind: "message", text: "ＡＢＣ 中文 [literal]", at: 1 });
+  expect((await chats.search("search", "obsolete")).total).toBe(0);
+  expect((await chats.search("search", "abc 中文")).total).toBe(1);
+  expect((await chats.search("search", "[literal]")).total).toBe(1);
+  expect((await chats.search("search", "  ")).total).toBe(0);
+});
+it("does not return stale cached search results after the journal is removed", async () => {
+  await chats.user("search", "temporary needle");
+  expect((await chats.search("search", "needle")).total).toBe(1);
+  await fs.rm(chats.file("search"));
+  expect((await chats.search("search", "needle")).total).toBe(0);
+});

@@ -1,6 +1,7 @@
 import { t, useI18n, setLanguage, errorText } from "./i18n";
 import { MessageQueue } from "./MessageQueue";
 import { loadDraftState, saveDraftState, remainingDraft, remainingFiles } from "./drafts";
+import { ChatSearch } from "./ChatSearch";
 import { CopyButton } from "./CopyButton";
 import { RecoveryNotice, RecoveryHistory } from "./RecoveryNotice";
 import React, {
@@ -141,6 +142,7 @@ export function AgentApp({
 
   const [snapshot, setSnapshot] = useState<Snapshot>();
   const [turnHistory, setTurnHistory] = useState(false);
+  const [contentSearch, setContentSearch] = useState(false);
   const [visibleProjects, setVisibleProjects] = useState(30),
     [visibleThreads, setVisibleThreads] = useState<Record<string, number>>({});
   const [selected, setSelected] = useState<string | undefined>(
@@ -2172,6 +2174,7 @@ export function AgentApp({
                     <Pencil size={15} />
                     {t("会话历史与编辑")}
                   </button>
+                  <button role="menuitem" onClick={() => { setContentSearch(true); setThreadMenu(false); }}><Search size={15} />{t("搜索会话内容")}</button>
                   <button
                     role="menuitem"
                     onClick={() => {
@@ -2339,6 +2342,7 @@ export function AgentApp({
             />
           )}
         </ModalPresence>
+        <ModalPresence>{contentSearch && job && <ChatSearch key={job.id} id={job.id} call={call} close={() => setContentSearch(false)} />}</ModalPresence>
         <ModalPresence>
           {rename && job && (
             <Dialog title={t("重命名会话")} onClose={() => setRename(false)}>

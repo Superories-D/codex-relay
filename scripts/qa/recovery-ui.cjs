@@ -83,6 +83,8 @@ function fixture({ language, theme }) {
       if (name === "account.models" || name === "workspace.files") return [];
       if (name === "workspace.changes")
         return { root: job.cwd, branch: "main", files: [] };
+      if (name === "chat.search") return { total: 1, items: [{ id: "found", role: "assistant", at: now, excerpt: "needle in earlier history" }] };
+      if (name === "chat.searchItem") return { text: "Full original needle message", detail: "diagnostic context" };
       if (name === "chat.assets") return { files: [], images: [], sources: [] };
       if (name === "chat.read")
         return {
@@ -255,6 +257,12 @@ function fixture({ language, theme }) {
       await composer.waitFor();
       assert.equal(await composer.inputValue(), "Persist across restart");
       assert.equal(await page.locator(".draft-attachment").count(), 1);
+      await page.locator(".desktop-product").click();
+      await page.locator(".thread-menu button:has(svg.lucide-search)").click();
+      await page.locator(".chat-search input").fill("needle");
+      await page.locator(".search-results button").click();
+      await page.waitForFunction(() => document.querySelector(".search-detail")?.textContent.includes("Full original needle message"));
+      await page.keyboard.press("Escape");
       await page.close();
     }
     assert.deepEqual(report.rendererErrors, []);

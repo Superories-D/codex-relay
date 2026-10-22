@@ -17,3 +17,7 @@ Stable message IDs and queue revisions support editing, removing and reordering 
 ## 4. Resilient composer drafts
 
 Text and attachment references share a versioned local draft record, with migration from the old text-only format. New-chat drafts are isolated by project. Debounced writes flush on pagehide/window close; failed saves surface a warning. Successful sends clear only their own content, preserving newer input. Build and 10 draft/localization tests passed; three-language reload checks restore text and attachment-only drafts.
+
+## 5. Full conversation search
+
+Search persisted and live messages beyond the current history page, including tool details, literal code fragments and Unicode-width variants. Role filters, bounded excerpts, pagination and original-message inspection/copy are available from the conversation menu. Latest journal revisions win; stale results are ignored by the renderer. Build and 15 history/localization tests passed; three-language UI checks search and inspect a result.
