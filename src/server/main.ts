@@ -56,7 +56,12 @@ async function main() {
   let web: Awaited<ReturnType<typeof openHttp>> | undefined;
   try {
     if (httpPort !== undefined)
-      web = await openHttp(runtime, httpPort, values.workspace || []);
+      web = await openHttp(
+        runtime,
+        httpPort,
+        values.workspace || [],
+        path.join(__dirname, "ui"),
+      );
   } catch (error) {
     server.close();
     await runtime.close();

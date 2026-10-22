@@ -89,3 +89,9 @@ Validation: build and 88 runtime/IPC/scheduler tests passed. The bundled daemon 
 Added a loopback HTTP API with a persistent private bearer token, same-origin/Host checks, a bounded command allowlist, request/stream limits and SSE status snapshots. Creation roots are canonicalized, symlink escapes and private-data overlap are rejected, and credential import stays local. Introduced persisted idempotent task submissions so concurrent exact retries return one task while altered reuse is rejected; failed task saves now also remove uncommitted in-memory admission. The server exposes existing workflow, dependency, queue and project-control capabilities through validated commands.
 
 Validation: build, 79 scheduler/HTTP tests and 6 HTTP/runtime tests passed. The bundled daemon + real CLI smoke test also verified unauthenticated HTTP rejection and authenticated workspace metadata. Tests use synthetic account-free tasks; no external deployment or model calls.
+
+## 18 — Responsive remote browser console
+
+Added a separately bundled web control surface served by the Linux supervisor, with session-only token/draft storage, automatic SSE reconnection, request-ID recovery after lost creation acknowledgements, task/workflow creation, live recovery notices, paged conversations, follow-up queues, task controls and explicit approvals. Workflow handoff previews download locally in the browser. The web UI uses a strict same-origin CSP and plain-text conversation rendering. Localization auditing now covers the server UI as well as desktop UI.
+
+Validation: build and 7 HTTP/localization tests passed. Real Chromium-to-bundled-server QA passed Chinese mobile (390px), Japanese (900px) and English desktop (1280px), including deliberately dropped status-stream connections and creation responses, without duplicate tasks or renderer errors. Screenshots inspected with a CJK font. No live model or subscription use.

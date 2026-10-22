@@ -24,6 +24,7 @@ export async function openHttp(
   runtime: ServerRuntime,
   port: number,
   workspaces: string[],
+  uiDirectory?: string,
 ) {
   const roots = [
     ...new Set(
@@ -120,6 +121,27 @@ export async function openHttp(
         return send(res, 403, {
           error: "Cross-origin requests are not allowed",
         });
+      if (
+        req.method === "GET" &&
+        uiDirectory &&
+        ["/", "/app.js", "/app.css"].includes(req.url || "")
+      ) {
+        const file = req.url === "/" ? "index.html" : req.url!.slice(1);
+        const content = await fs.readFile(path.join(uiDirectory, file));
+        res.setHeader(
+          "Content-Security-Policy",
+          "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+        );
+        res.writeHead(200, {
+          "Content-Type": file.endsWith(".js")
+            ? "application/javascript"
+            : file.endsWith(".css")
+              ? "text/css"
+              : "text/html; charset=utf-8",
+        });
+        res.end(content);
+        return;
+      }
       const presented = Buffer.from(
           (req.headers.authorization || "").replace(/^Bearer /, ""),
         ),

@@ -58,3 +58,11 @@ The HTTP endpoint binds only to loopback. It requires `Authorization: Bearer <ht
 For task creation use `job.submit` with `{ "requestId": "UUID", "input": { ...NewJob } }`. Exact retries return the same retained job; reuse with different input is rejected. This prevents duplicate work after a lost response. Other mutations are never automatically replayed by the service. `workflow.add` has its own persistent request ID. Available operations cover task controls, queued messages, approvals, paged chat, dependencies, dispatch, project limits and reports. Credential import and native file dialogs are not exposed over HTTP.
 
 Requests are capped at 1 MiB with bounded in-flight commands, status streams and buffered output. The HTTP tests exercise real loopback requests, SSE, origin/authentication rejection, symlink escape and concurrent duplicate submissions.
+
+## Remote browser console
+
+After forwarding the HTTP port, open `http://127.0.0.1:7899/` and enter the server's HTTP token. The console has responsive phone/desktop layouts and Chinese, English and Japanese text. It supports task creation, workflow creation, realtime task states, automatic recovery notices, paged chat, follow-up queues, pause/resume/cancel, global dispatch control, and explicit approvals/input answers. Workflow reports download through the browser after preview.
+
+The token and unsent task draft stay in this browser session; Disconnect removes them. SSE reconnects automatically without replaying mutations. A submission whose response was lost retains its request ID and can be reconciled from live snapshots or retried under that same ID. Closing the browser does not stop server tasks. Chat is plain text in this console; no model-produced HTML is executed, and a strict same-origin CSP applies.
+
+`RELAY_CHROMIUM_PATH=/path/to/chromium node scripts/qa/remote-ui.cjs` exercises the built browser UI against the real bundled server using synthetic account-free tasks. It covers lost creation acknowledgements, initial SSE failure/reconnection, task/chat controls, workflow submission, reload and 390/900/1280px layouts. OS-specific browser and live-subscription acceptance remain separate.

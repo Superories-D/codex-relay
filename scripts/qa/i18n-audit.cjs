@@ -24,7 +24,7 @@ function audit(language = "en") {
   const files = fs
     .readdirSync(path.join(root, "src/renderer"))
     .map((name) => path.join("src/renderer", name));
-  files.push("src/main/main.ts");
+  files.push("src/main/main.ts", ...fs.readdirSync(path.join(root,"src/server/ui")).map(name=>path.join("src/server/ui",name)));
   for (const file of files) {
     const name = path.basename(file);
     if (!/\.tsx?$/.test(name) || name === "i18n.ts") continue;
