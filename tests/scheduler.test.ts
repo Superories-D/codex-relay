@@ -1780,3 +1780,34 @@ describe("editable message queue", () => {
     expect(job.queuedMessages!.map((m) => m.text)).toEqual(["second"]);
   });
 });
+
+
+it("admits high-priority eligible tasks first without preempting an active worker", async () => {
+  const [first, high, low] = await queuedJobs(3);
+  store.data.settings.maxConcurrentTasks = 1;
+  await scheduler.priority(high.id, "high");
+  await scheduler.priority(low.id, "low");
+  await (scheduler as any).tick();
+  await until(() => workers[0]?.started);
+  expect(workers[0].ctx.job.id).toBe(high.id);
+  await scheduler.priority(first.id, "high");
+  await (scheduler as any).tick();
+  expect(workers).toHaveLength(1);
+  workers[0].settle({ kind: "completed" });
+  await (scheduler as any).currentRun;
+  await (scheduler as any).tick();
+  await until(() => workers[1]?.started);
+  expect(workers[1].ctx.job.id).toBe(first.id);
+});
+it("rolls back an unsaved priority and never bypasses recovery backoff", async () => {
+  const [first, second] = await queuedJobs(2);
+  store.data.settings.maxConcurrentTasks = 1;
+  vi.spyOn(store, "save").mockRejectedValueOnce(Error("disk full"));
+  await expect(scheduler.priority(first.id, "high")).rejects.toThrow("disk full");
+  expect(first.priority).toBeUndefined();
+  first.priority = "high";
+  first.autoRecovery = { reason: "unknown", attempt: 1, nextAttemptAt: Date.now() + 60000 };
+  await (scheduler as any).tick();
+  await until(() => workers[0]?.started);
+  expect(workers[0].ctx.job.id).toBe(second.id);
+});

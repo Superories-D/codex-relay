@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { orderTasks } from "../shared/task-order";
 import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
@@ -625,7 +626,7 @@ export class Scheduler extends EventEmitter {
       )
         return;
       const findRunnable = () =>
-        this.store.data.jobs.find(
+        orderTasks(this.store.data.jobs).find(
           (j) =>
             ["queued", "waiting"].includes(j.state) &&
             !j.autoRecovery &&
@@ -667,7 +668,7 @@ export class Scheduler extends EventEmitter {
         1,
         Math.min(8, this.store.data.settings.maxConcurrentTasks ?? 3),
       );
-      for (const job of this.store.data.jobs) {
+      for (const job of orderTasks(this.store.data.jobs)) {
         if (this.closing || this.maintaining || this.active.size >= limit)
           break;
         if (
@@ -1143,6 +1144,7 @@ export class Scheduler extends EventEmitter {
         job.completionMarker = undefined;
         job.completionRetries = 0;
         job.state = "queued";
+        job.enqueuedAt = Date.now();
       }
     } else if (
       outcome?.kind === "recoverable" ||
@@ -1330,6 +1332,7 @@ export class Scheduler extends EventEmitter {
         if (input.serviceTier !== undefined)
           job.serviceTier = input.serviceTier;
         job.state = "queued";
+        job.enqueuedAt = Date.now();
         job.lastError = undefined;
         job.nextWakeAt = undefined;
         job.completionRetries = 0;
@@ -1349,6 +1352,17 @@ export class Scheduler extends EventEmitter {
         input.attachments.map((a) => a.path).join("\n"),
       );
       await this.store.save();
+      this.changed();
+    });
+  }
+  priority(id: string, priority: NonNullable<Job["priority"]>) {
+    return this.queueControl(id, async () => {
+      const job = this.store.data.jobs.find((j) => j.id === id);
+      if (!job || this.closing) throw Error("会话不可用");
+      const previous = job.priority;
+      job.priority = priority;
+      try { await this.store.save(); }
+      catch (error) { job.priority = previous; throw error; }
       this.changed();
     });
   }
@@ -2037,6 +2051,7 @@ export class Scheduler extends EventEmitter {
       if (["completed", "cancelled"].includes(job.state))
         throw new Error("终止任务不可恢复，请新建任务");
       job.state = "queued";
+      job.enqueuedAt = Date.now();
       job.stopIntent = undefined;
       clearRecovery(job);
       job.recoveryAttempts = 0;

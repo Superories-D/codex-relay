@@ -1426,3 +1426,5 @@ button:disabled {
 .search-results span, .search-detail pre { white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
 .search-results small { opacity: .65; }
 .search-detail { max-height: 350px; overflow: auto; margin-top: 12px; }
+
+.task-priority { max-width: 115px; min-height: 30px; font-size: 12px; }

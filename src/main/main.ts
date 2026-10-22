@@ -920,6 +920,10 @@ async function boot() {
         }
         return scheduler.chats.read(a.id, a.before);
       }
+      case "chat.priority": {
+        const a = z.object({ id: idSchema, priority: z.enum(["high", "normal", "low"]) }).strict().parse(args);
+        return scheduler.priority(a.id, a.priority);
+      }
       case "chat.queue":
         return scheduler.editQueue(z.object({
           id: idSchema, messageId: z.string().uuid(), revision: z.number().int().nonnegative(),

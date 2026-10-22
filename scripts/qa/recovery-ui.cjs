@@ -106,6 +106,11 @@ function fixture({ language, theme }) {
             },
           ],
         };
+      if (name === "chat.priority") {
+        job.priority = args.priority;
+        listeners.forEach((fn) => fn(structuredClone(data)));
+        return;
+      }
       if (name === "chat.queue") {
         const assertQueueRevision = args.revision === job.queueRevision;
         if (!assertQueueRevision) throw Error("stale queue");
@@ -257,6 +262,8 @@ function fixture({ language, theme }) {
       await composer.waitFor();
       assert.equal(await composer.inputValue(), "Persist across restart");
       assert.equal(await page.locator(".draft-attachment").count(), 1);
+      await page.locator(".task-priority").selectOption("high");
+      await page.waitForFunction(() => document.querySelector(".task-priority")?.value === "high" && window.recoveryCalls.some((c) => c.name === "chat.priority"));
       await page.locator(".desktop-product").click();
       await page.locator(".thread-menu button:has(svg.lucide-search)").click();
       await page.locator(".chat-search input").fill("needle");

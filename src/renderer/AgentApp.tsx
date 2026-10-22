@@ -1227,6 +1227,10 @@ export function AgentApp({
               <div>
                 {job && (
                   <>
+                    <select className="task-priority" aria-label={t("任务优先级")} title={t("优先级影响下一次调度，不打断正在运行的任务。")}
+                      disabled={pending} value={job.priority || "normal"} onChange={(e) => action(() => call("chat.priority", { id: job.id, priority: e.target.value }))}>
+                      <option value="high">{t("优先执行")}</option><option value="normal">{t("普通优先级")}</option><option value="low">{t("空闲时执行")}</option>
+                    </select>
                     <button
                       aria-label={t("会话菜单")}
                       title={t("更多操作")}

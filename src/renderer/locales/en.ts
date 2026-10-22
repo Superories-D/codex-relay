@@ -981,4 +981,9 @@ export const english: Record<string, string> = {
   "内容较长，仅显示前段，请导出会话查看完整内容。": "Long content is truncated here. Export the chat to read it in full.",
   "用户": "User",
   "助手": "Assistant",
+  "任务优先级": "Task priority",
+  "优先执行": "High priority",
+  "普通优先级": "Normal priority",
+  "空闲时执行": "Low priority",
+  "优先级影响下一次调度，不打断正在运行的任务。": "Priority affects the next admission; running tasks are not interrupted.",
 };

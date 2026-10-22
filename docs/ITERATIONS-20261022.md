@@ -21,3 +21,7 @@ Text and attachment references share a versioned local draft record, with migrat
 ## 5. Full conversation search
 
 Search persisted and live messages beyond the current history page, including tool details, literal code fragments and Unicode-width variants. Role filters, bounded excerpts, pagination and original-message inspection/copy are available from the conversation menu. Latest journal revisions win; stale results are ignored by the renderer. Build and 15 history/localization tests passed; three-language UI checks search and inspect a result.
+
+## 6. Priority-aware task admission
+
+High/normal/low priorities are editable from the conversation header and persist across restart. Eligible work is ordered by priority then enqueue/creation time; explicit resumes and new inputs acquire a fresh enqueue time. Running work is never preempted and process/account/recovery gates remain authoritative. Failed priority writes roll back. Build and 71 scheduler/localization tests passed; three-language UI checks change priority.

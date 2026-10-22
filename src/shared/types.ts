@@ -93,6 +93,8 @@ export interface RecoveryEvent {
   detail?: string;
 }
 export interface Job {
+  priority?: "high" | "normal" | "low";
+  enqueuedAt?: number;
   recoveryHistory?: RecoveryEvent[];
   schedule?: { taskId: string; runId: string; requestedAt: number };
   projectCwd?: string;
