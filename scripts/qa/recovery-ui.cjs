@@ -23,10 +23,25 @@ function fixture({ language, theme }) {
     autoRecovery: { reason: "unknown", attempt: 3, nextAttemptAt: now + 60000 },
     queueRevision: 0,
     queuedMessages: [
-      { id: "22222222-2222-4222-8222-222222222222", text: "First pending instruction", attachments: [] },
-      { id: "33333333-3333-4333-8333-333333333333", text: "Second pending instruction", attachments: [] },
+      {
+        id: "22222222-2222-4222-8222-222222222222",
+        text: "First pending instruction",
+        attachments: [],
+      },
+      {
+        id: "33333333-3333-4333-8333-333333333333",
+        text: "Second pending instruction",
+        attachments: [],
+      },
     ],
-    recoveryHistory: [{ at: now - 1000, kind: "scheduled", attempt: 3, detail: "Synthetic interruption" }],
+    recoveryHistory: [
+      {
+        at: now - 1000,
+        kind: "scheduled",
+        attempt: 3,
+        detail: "Synthetic interruption",
+      },
+    ],
     lastError:
       "Codex connection interrupted. The previous process has stopped.",
     threadId: "original-thread",
@@ -72,11 +87,22 @@ function fixture({ language, theme }) {
     onChat: () => () => {},
     command: async (name, args) => {
       window.recoveryCalls.push({ name, args });
-      if (name === "job.report") return { schemaVersion: 1, blockers: ["recovery"], task: { id: job.id, state: job.state }, recovery: [], logs: [] };
+      if (name === "job.report")
+        return {
+          schemaVersion: 1,
+          blockers: ["recovery"],
+          task: { id: job.id, state: job.state },
+          recovery: [],
+          logs: [],
+        };
       if (name === "job.report.save") return { saved: true };
       if (name === "templates.list") return structuredClone(templates);
       if (name === "templates.save") {
-        templates.items.push({ ...args.template, id: "44444444-4444-4444-8444-444444444444", updatedAt: now });
+        templates.items.push({
+          ...args.template,
+          id: "44444444-4444-4444-8444-444444444444",
+          updatedAt: now,
+        });
         templates.revision++;
         return structuredClone(templates);
       }
@@ -92,8 +118,23 @@ function fixture({ language, theme }) {
       if (name === "account.models" || name === "workspace.files") return [];
       if (name === "workspace.changes")
         return { root: job.cwd, branch: "main", files: [] };
-      if (name === "chat.search") return { total: 1, items: [{ id: "found", role: "assistant", at: now, excerpt: "needle in earlier history" }] };
-      if (name === "chat.searchItem") return { text: "Full original needle message", detail: "diagnostic context" };
+      if (name === "chat.search")
+        return {
+          total: 1,
+          items: [
+            {
+              id: "found",
+              role: "assistant",
+              at: now,
+              excerpt: "needle in earlier history",
+            },
+          ],
+        };
+      if (name === "chat.searchItem")
+        return {
+          text: "Full original needle message",
+          detail: "diagnostic context",
+        };
       if (name === "chat.assets") return { files: [], images: [], sources: [] };
       if (name === "chat.read")
         return {
@@ -123,12 +164,18 @@ function fixture({ language, theme }) {
       if (name === "chat.queue") {
         const assertQueueRevision = args.revision === job.queueRevision;
         if (!assertQueueRevision) throw Error("stale queue");
-        const index = job.queuedMessages.findIndex((m) => m.id === args.messageId);
+        const index = job.queuedMessages.findIndex(
+          (m) => m.id === args.messageId,
+        );
         if (args.action === "remove") job.queuedMessages.splice(index, 1);
-        else if (args.action === "edit") job.queuedMessages[index].text = args.text;
+        else if (args.action === "edit")
+          job.queuedMessages[index].text = args.text;
         else {
           const target = index + (args.action === "up" ? -1 : 1);
-          [job.queuedMessages[index], job.queuedMessages[target]] = [job.queuedMessages[target], job.queuedMessages[index]];
+          [job.queuedMessages[index], job.queuedMessages[target]] = [
+            job.queuedMessages[target],
+            job.queuedMessages[index],
+          ];
         }
         job.queueRevision++;
         listeners.forEach((fn) => fn(structuredClone(data)));
@@ -150,7 +197,19 @@ function fixture({ language, theme }) {
       return {};
     },
   };
-  if (!localStorage.getItem("relay.composer.v2")) localStorage.setItem("relay.composer.v2", JSON.stringify({ version: 2, drafts: {}, files: { [job.id]: [{ type: "mention", path: "D:/notes.txt", name: "notes.txt" }] } }));
+  if (!localStorage.getItem("relay.composer.v2"))
+    localStorage.setItem(
+      "relay.composer.v2",
+      JSON.stringify({
+        version: 2,
+        drafts: {},
+        files: {
+          [job.id]: [
+            { type: "mention", path: "D:/notes.txt", name: "notes.txt" },
+          ],
+        },
+      }),
+    );
   localStorage.setItem("relay.lastChat", job.id);
   localStorage.setItem("relay.inspector", "false");
 }
@@ -250,13 +309,23 @@ function fixture({ language, theme }) {
       );
       const queue = page.locator(".message-queue");
       await queue.locator("li").nth(1).locator("button").nth(1).click();
-      await page.waitForFunction(() => document.querySelector(".message-queue li p")?.textContent === "Second pending instruction");
+      await page.waitForFunction(
+        () =>
+          document.querySelector(".message-queue li p")?.textContent ===
+          "Second pending instruction",
+      );
       await queue.locator("li").first().locator("button").first().click();
       await queue.locator("textarea").fill("Updated pending instruction");
       await queue.locator("li").first().locator("button").first().click();
-      await page.waitForFunction(() => document.querySelector(".message-queue li p")?.textContent === "Updated pending instruction");
+      await page.waitForFunction(
+        () =>
+          document.querySelector(".message-queue li p")?.textContent ===
+          "Updated pending instruction",
+      );
       await queue.locator("li").first().locator("button").last().click();
-      await page.waitForFunction(() => document.querySelectorAll(".message-queue li").length === 1);
+      await page.waitForFunction(
+        () => document.querySelectorAll(".message-queue li").length === 1,
+      );
       const history = page.locator(".recovery-history");
       await history.locator("summary").click();
       assert.equal(await history.locator("li").count(), 1);
@@ -268,7 +337,7 @@ function fixture({ language, theme }) {
       assert.equal(controls.length, 1);
       assert.equal(controls[0].args.action, "pause");
       report.checks.push(
-        `${language}/${theme}/${width}: localized countdown, details, layout, Pause`,
+        `${language}/${theme}/${width}: recovery/history, queue edits, draft reload, search, priority, bulk pause, templates, report preview`,
       );
       const composer = page.locator(".agent-composer-wrap textarea");
       await composer.fill("Persist across restart");
@@ -284,17 +353,28 @@ function fixture({ language, theme }) {
       assert.equal(await composer.inputValue(), "Persist across restart");
       assert.equal(await page.locator(".draft-attachment").count(), 1);
       await page.locator(".task-priority").selectOption("high");
-      await page.waitForFunction(() => document.querySelector(".task-priority")?.value === "high" && window.recoveryCalls.some((c) => c.name === "chat.priority"));
+      await page.waitForFunction(
+        () =>
+          document.querySelector(".task-priority")?.value === "high" &&
+          window.recoveryCalls.some((c) => c.name === "chat.priority"),
+      );
       await page.locator(".desktop-product").click();
       await page.locator(".thread-menu button:has(svg.lucide-search)").click();
       await page.locator(".chat-search input").fill("needle");
       await page.locator(".search-results button").click();
-      await page.waitForFunction(() => document.querySelector(".search-detail")?.textContent.includes("Full original needle message"));
+      await page.waitForFunction(() =>
+        document
+          .querySelector(".search-detail")
+          ?.textContent.includes("Full original needle message"),
+      );
       await page.keyboard.press("Escape");
       await page.locator(".chat-search").waitFor({ state: "detached" });
       await page.locator(".task-queue-button").click();
       await page.locator(".task-center").waitFor();
-      await page.screenshot({ path: path.join(output, `task-center-${language}.png`), fullPage: true });
+      await page.screenshot({
+        path: path.join(output, `task-center-${language}.png`),
+        fullPage: true,
+      });
       await page.locator(".task-center > .queue-actions button").nth(0).click();
       await page.locator(".task-center > .queue-actions button").nth(1).click();
       await page.locator(".task-report").waitFor();
@@ -303,18 +383,42 @@ function fixture({ language, theme }) {
       await page.locator(".task-card-title button").click();
       await page.locator(".template-trigger").click();
       await page.locator(".task-templates input").fill("Recovery checklist");
-      await page.locator(".task-templates textarea").fill("Inspect before resuming");
+      await page
+        .locator(".task-templates textarea")
+        .fill("Inspect before resuming");
       await page.locator(".task-templates button[type=submit]").click();
-      await page.locator(".template-list article .queue-actions button").first().click();
+      await page
+        .locator(".template-list article .queue-actions button")
+        .first()
+        .click();
       await page.locator(".task-templates").waitFor({ state: "detached" });
-      assert.equal(await composer.inputValue(), "Persist across restart\n\nInspect before resuming");
-      assert.equal(await page.evaluate(() => window.recoveryCalls.filter((c) => c.name === "chat.send" || c.name === "job.add").length), 0);
+      assert.equal(
+        await composer.inputValue(),
+        "Persist across restart\n\nInspect before resuming",
+      );
+      assert.equal(
+        await page.evaluate(
+          () =>
+            window.recoveryCalls.filter(
+              (c) => c.name === "chat.send" || c.name === "job.add",
+            ).length,
+        ),
+        0,
+      );
       await page.locator(".desktop-product").click();
       await page.locator(".task-report-trigger").click();
       await page.locator(".task-report-preview pre").waitFor();
-      const reportText = await page.locator(".task-report-preview pre").innerText();
-      assert.equal(JSON.parse(reportText).task.id, "11111111-1111-4111-8111-111111111111");
-      await page.locator(".task-report-preview .queue-actions button").last().click();
+      const reportText = await page
+        .locator(".task-report-preview pre")
+        .innerText();
+      assert.equal(
+        JSON.parse(reportText).task.id,
+        "11111111-1111-4111-8111-111111111111",
+      );
+      await page
+        .locator(".task-report-preview .queue-actions button")
+        .last()
+        .click();
       await page.locator(".task-report-preview [role=status]").last().waitFor();
       await page.keyboard.press("Escape");
       await page.close();

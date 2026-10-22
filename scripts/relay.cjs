@@ -20,13 +20,14 @@ if (operation === "help") {
   node scripts/relay.cjs run --cwd C:\\Project --prompt-file task.txt
   node scripts/relay.cjs run --cwd C:\\Project --prompt "Finish the task" --completion-marker "[TASK_DONE]" --completion-retries 3
   node scripts/relay.cjs report --id JOB_ID
-  node scripts/relay.cjs status
-  node scripts/relay.cjs watch [--id JOB_ID]
+  node scripts/relay.cjs status [--json]
+  node scripts/relay.cjs watch [--id JOB_ID] [--json] [--no-reconnect]
   node scripts/relay.cjs pause|resume|cancel --id JOB_ID
   node scripts/relay.cjs sessions [--home C:\\Users\\you\\.codex]
   node scripts/relay.cjs attach --session THREAD_UUID [--home PATH] [--when quota|now] [--mode cli|desktop] [--allow-stop]
   node scripts/relay.cjs handoff --id JOB_ID
   --allow-stop authorizes ending the identified Codex instance and its children at handoff, including other chats in that desktop instance.
+  Watch reconnects automatically after a lost connection; it never replays task commands.
   Ctrl+C disconnects the viewer; the task continues in the desktop app.
   --data-dir PATH overrides the default app data location.`);
   process.exit(0);
@@ -47,25 +48,52 @@ const endpoint =
   process.platform === "win32"
     ? `\\\\.\\pipe\\codex-relay-${key}`
     : path.join(root, "relay.sock");
-let token;
-try {
-  token = fs.readFileSync(path.join(root, "ipc-token"), "utf8");
-} catch {
-  console.error("请先启动 Codex Relay 桌面程序。");
-  process.exit(1);
-}
-const socket = net.createConnection(endpoint);
+let token, socket, reconnectTimer;
+let reconnectAttempt = 0;
 let expectedClose = false;
+const canReconnect = () =>
+  options["no-reconnect"] !== true && (watching || operation === "watch");
 const disconnect = () => {
   expectedClose = true;
-  socket.end();
+  clearTimeout(reconnectTimer);
+  socket?.end();
 };
-socket.on("close", () => {
-  if (!expectedClose) {
+const lostConnection = () => {
+  if (expectedClose) return;
+  if (!canReconnect()) {
     console.error("连接中断，任务状态未知；请重新连接查看，不能视为任务完成。");
     process.exitCode = 1;
+    return;
   }
-});
+  const delay = Math.min(30000, 2000 * 2 ** Math.min(reconnectAttempt++, 4));
+  console.error(
+    `连接中断，${delay / 1000} 秒后自动重连；只订阅状态，不重发任务。`,
+  );
+  clearTimeout(reconnectTimer);
+  reconnectTimer = setTimeout(connect, delay);
+};
+function connect() {
+  if (expectedClose) return;
+  try {
+    token = fs.readFileSync(path.join(root, "ipc-token"), "utf8");
+  } catch {
+    lostConnection();
+    return;
+  }
+  buffer = "";
+  const current = net.createConnection(endpoint);
+  socket = current;
+  current.setEncoding("utf8");
+  current.on("connect", onConnect);
+  current.on("data", onData);
+  current.on("close", () => {
+    if (socket === current) lostConnection();
+  });
+  current.on("error", (error) => {
+    console.error(`连接失败：${error.message}。请保持桌面程序运行。`);
+    if (!canReconnect()) process.exitCode = 1;
+  });
+}
 let buffer = "";
 let watching = false;
 let jobId = options.id;
@@ -73,7 +101,11 @@ let lastLogs = new Map();
 let shownApprovals = new Set();
 const send = (id, command, args) =>
   socket.write(JSON.stringify({ id, token, command, args }) + "\n");
-socket.on("connect", () => {
+function onConnect() {
+  if (watching) {
+    send(2, "watch");
+    return;
+  }
   if (["sessions", "attach"].includes(operation)) {
     if (operation === "attach" && typeof options.session !== "string") {
       console.error(
@@ -128,9 +160,39 @@ socket.on("connect", () => {
     disconnect();
     process.exitCode = 1;
   }
-});
+}
+let lastStatus = "",
+  lastRecovery = "";
+function taskStatus(job, approvals) {
+  return {
+    id: job.id,
+    title: job.title,
+    state: job.state,
+    priority: job.priority || "normal",
+    rotations: job.rotations,
+    recovering: !!job.autoRecovery,
+    recovery: job.autoRecovery,
+    waitingFor: job.waitingFor,
+    nextWakeAt: job.nextWakeAt,
+    queuedMessages: job.queuedMessages?.length || 0,
+    pendingApprovals: approvals.filter((a) => a.jobId === job.id).length,
+  };
+}
 function show(snapshot) {
   if (!snapshot?.jobs) return;
+  reconnectAttempt = 0;
+  const statuses = snapshot.jobs
+    .filter((j) => !jobId || j.id === jobId)
+    .map((j) => taskStatus(j, snapshot.approvals || []));
+  if (options.json === true) {
+    const value = JSON.stringify({ event: "status", tasks: statuses });
+    if (operation === "status" || value !== lastStatus) console.log(value);
+    lastStatus = value;
+    if (operation === "status") {
+      disconnect();
+      return;
+    }
+  }
   if (operation === "status") {
     console.table(
       snapshot.jobs.map((j) => ({
@@ -143,7 +205,9 @@ function show(snapshot) {
     disconnect();
     return;
   }
-  for (const log of snapshot.logs.filter((l) => !jobId || l.jobId === jobId)) {
+  for (const log of (options.json ? [] : snapshot.logs || []).filter(
+    (l) => !jobId || l.jobId === jobId,
+  )) {
     const before = lastLogs.get(log.id) || "";
     if (before !== log.message) {
       const delta = log.message.startsWith(before)
@@ -155,24 +219,33 @@ function show(snapshot) {
   }
   if (lastLogs.size > 2000) lastLogs = new Map([...lastLogs].slice(-1000));
   const j = snapshot.jobs.find((j) => j.id === jobId);
-  for (const a of snapshot.approvals.filter((a) => a.jobId === jobId)) {
+  for (const a of (snapshot.approvals || []).filter((a) => a.jobId === jobId)) {
     const key = a.jobId + ":" + a.id;
     if (!shownApprovals.has(key)) {
       shownApprovals.add(key);
       process.stderr.write("\n需要审批：请在 Codex Relay 窗口中处理。\n");
     }
   }
+  if (j?.autoRecovery && options.json !== true) {
+    const signature = JSON.stringify(j.autoRecovery);
+    if (signature !== lastRecovery)
+      console.error(
+        `[自动恢复 #${j.autoRecovery.attempt}] ${j.stopIntent ? "正在确认停止" : "无需点击继续"}`,
+      );
+    lastRecovery = signature;
+  }
   if (
     j &&
+    !j.autoRecovery &&
     ["completed", "cancelled", "needs_attention", "paused"].includes(j.state)
   ) {
-    console.log(`\n[${j.state}] ${j.lastError || ""}`);
+    if (options.json !== true)
+      console.log(`\n[${j.state}] ${j.lastError || ""}`);
     disconnect();
     process.exitCode = j.state === "completed" ? 0 : 2;
   }
 }
-socket.setEncoding("utf8");
-socket.on("data", (data) => {
+function onData(data) {
   buffer += data;
   if (buffer.length > 32 * 1024 * 1024) {
     socket.destroy(new Error("Frame too large"));
@@ -245,30 +318,34 @@ socket.on("data", (data) => {
         });
     } else if (m.id === 12) {
       jobId = m.result.id;
-      console.log(`Attached task ${jobId}`);
+      (options.json ? console.error : console.log)(`Attached task ${jobId}`);
       watching = true;
       send(2, "watch");
     } else if (m.event === "snapshot" || m.id === 2) show(m.data || m.result);
     else if (m.id === 1) {
       if (operation === "run") {
         jobId = m.result.id;
-        console.log(`Task ${jobId}`);
+        (options.json ? console.error : console.log)(`Task ${jobId}`);
         watching = true;
         send(2, "watch");
       } else if (operation === "status") show(m.result);
-      else if (operation === "report") { console.log(JSON.stringify(m.result, null, 2)); disconnect(); }
-      else {
+      else if (operation === "report") {
+        console.log(JSON.stringify(m.result, null, 2));
+        disconnect();
+      } else {
         console.log("OK");
         disconnect();
       }
     }
   }
-});
-socket.on("error", (e) => {
-  console.error(`连接失败：${e.message}。请保持桌面程序运行。`);
-  process.exitCode = 1;
-});
+}
 process.on("SIGINT", () => {
   disconnect();
   process.exit(130);
 });
+
+process.on("SIGTERM", () => {
+  disconnect();
+  process.exit(143);
+});
+connect();

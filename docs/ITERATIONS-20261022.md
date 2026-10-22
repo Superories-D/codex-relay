@@ -1,4 +1,4 @@
-# Ten sequential iterations — 2026-10-22
+# Fifteen sequential iterations — 2026-10-22
 
 Each iteration is validated and pushed before the next begins. These are source changes; no new binaries or native installation.
 
@@ -37,3 +37,11 @@ Save/edit/delete named instructions with model, reasoning and planning preferenc
 ## 9. Task diagnostic reports
 
 A previewable JSON report explains known blockers and includes a whitelisted task/environment summary, bounded recovery history and recent diagnostic logs. It excludes account credential objects, prompt fields and output logs, and redacts diagnostic strings. Users can copy/export it locally or run `relay.cjs report --id JOB_ID`. Build and 11 report/IPC/localization tests passed; three-language UI checks preview and request export. Native save dialogs remain an OS acceptance boundary.
+
+## 10. Resilient CLI monitoring
+
+CLI watch reconnects with bounded exponential backoff, reloads the local IPC credential on each attempt and only resubscribes to snapshots. Acknowledged run/attach operations switch to read-only monitoring; unacknowledged creation is never replayed. Recovery attention states remain observable until recovery finishes. `status --json` and `watch --json` expose a compact task projection without account credentials or prompt fields; `--no-reconnect` preserves fail-fast behavior. Real CLI subprocess fixtures verify token rotation, resubscription and no duplicate creation.
+
+The user extended this sequence to 15 iterations while iteration 10 was in progress. Native Windows process-tree/dialog/installation and real-account inference acceptance remain separate from this Linux test environment.
+
+Round 10 verification: full `npm run check` passed (53 files, 490 passed, 2 Windows-only skipped); production-renderer QA passed Chinese/English/Japanese with zero renderer errors. Native Windows dialogs/process acceptance remains outside this Linux fixture.

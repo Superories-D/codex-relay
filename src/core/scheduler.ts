@@ -1404,11 +1404,16 @@ export class Scheduler extends EventEmitter {
   }
   private async persistQueue(job: Job, next: NonNullable<Job["queuedMessages"]>) {
     const previous = job.queuedMessages, revision = job.queueRevision;
+    const interactive = job.interactive, updatedAt = job.updatedAt;
+    job.interactive = true;
+    job.updatedAt = Date.now();
     job.queuedMessages = next;
     job.queueRevision = (revision || 0) + 1;
     const write = this.store.save().catch((error) => {
       job.queuedMessages = previous;
       job.queueRevision = revision;
+      job.interactive = interactive;
+      job.updatedAt = updatedAt;
       throw error;
     });
     this.queueWrites.set(job.id, write);

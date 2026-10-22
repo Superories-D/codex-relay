@@ -57,6 +57,7 @@ it("CLI watch reports a lost supervisor connection as non-success", async () => 
         path.join(process.cwd(), "tests/fixtures/pipe-over-tcp.cjs"),
         path.join(process.cwd(), "scripts/relay.cjs"),
         "watch",
+        "--no-reconnect",
         "--id",
         "job",
         "--data-dir",
@@ -214,6 +215,157 @@ it("CLI attaches only after process inspection and explicit stop authorization",
       allowStop: true,
     });
   } finally {
+    await cleanup(server, root);
+  }
+});
+
+it.each(["watch", "run"])(
+  "CLI %s reconnects with a rotated token and never replays creation during automatic recovery",
+  async (operation) => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "relay-reconnect-"));
+    await fs.writeFile(path.join(root, "ipc-token"), "first-token");
+    const commands: string[] = [],
+      tokens: string[] = [],
+      sockets: net.Socket[] = [];
+    let watches = 0;
+    const server = net.createServer((socket) => {
+      sockets.push(socket);
+      readline.createInterface({ input: socket }).on("line", (line) => {
+        const message = JSON.parse(line);
+        commands.push(message.command);
+        tokens.push(message.token);
+        if (message.command === "job.add")
+          socket.write(
+            JSON.stringify({ id: message.id, result: { id: "job" } }) + "\n",
+          );
+        else if (message.command === "watch") {
+          watches++;
+          const snapshot = {
+            jobs: [
+              {
+                id: "job",
+                state: watches === 1 ? "needs_attention" : "completed",
+                ...(watches === 1
+                  ? {
+                      autoRecovery: {
+                        reason: "process",
+                        attempt: 1,
+                        nextAttemptAt: Date.now(),
+                      },
+                    }
+                  : {}),
+                prompt: "PRIVATE PROMPT",
+              },
+            ],
+            logs: [],
+            approvals: [],
+            accounts: [{ accessToken: "PRIVATE SECRET" }],
+          };
+          socket.write(
+            JSON.stringify({ id: message.id, result: snapshot }) + "\n",
+          );
+          if (watches === 1)
+            void fs
+              .writeFile(path.join(root, "ipc-token"), "second-token")
+              .then(() => socket.end());
+        }
+      });
+    });
+    server.listen(pipeName(root));
+    await once(server, "listening");
+    const child = spawn(
+      process.execPath,
+      [
+        "--require",
+        path.join(process.cwd(), "tests/fixtures/pipe-over-tcp.cjs"),
+        path.join(process.cwd(), "scripts/relay.cjs"),
+        operation,
+        "--id",
+        "job",
+        "--json",
+        "--prompt",
+        "synthetic",
+        "--data-dir",
+        root,
+      ],
+      {
+        env: { ...process.env, RELAY_TEST_PORT: String(portOf(server)) },
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    let stdout = "",
+      stderr = "";
+    child.stdout.on("data", (data) => {
+      stdout += data;
+    });
+    child.stderr.on("data", (data) => {
+      stderr += data;
+    });
+    const timer = setTimeout(() => child.kill("SIGKILL"), 8000);
+    try {
+      expect((await once(child, "close"))[0]).toBe(0);
+      expect(commands).toEqual(
+        operation === "run"
+          ? ["job.add", "watch", "watch"]
+          : ["watch", "watch"],
+      );
+      expect(tokens.at(-1)).toBe("second-token");
+      const events = stdout
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      expect(events[0].tasks[0].recovering).toBe(true);
+      expect(events.at(-1).tasks[0].state).toBe("completed");
+      expect(stdout).not.toContain("PRIVATE");
+      expect(stderr).toContain("自动重连");
+    } finally {
+      clearTimeout(timer);
+      child.kill();
+      sockets.forEach((s) => s.destroy());
+      await cleanup(server, root);
+    }
+  },
+  12000,
+);
+
+it("CLI does not replay an unacknowledged task creation after disconnect", async () => {
+  const root = await fs.mkdtemp(
+    path.join(os.tmpdir(), "relay-uncertain-create-"),
+  );
+  await fs.writeFile(path.join(root, "ipc-token"), "synthetic");
+  const commands: string[] = [];
+  const server = net.createServer((socket) =>
+    socket.once("data", (line) => {
+      commands.push(JSON.parse(line.toString()).command);
+      socket.end();
+    }),
+  );
+  server.listen(pipeName(root));
+  await once(server, "listening");
+  const child = spawn(
+    process.execPath,
+    [
+      "--require",
+      path.join(process.cwd(), "tests/fixtures/pipe-over-tcp.cjs"),
+      path.join(process.cwd(), "scripts/relay.cjs"),
+      "run",
+      "--prompt",
+      "synthetic",
+      "--data-dir",
+      root,
+    ],
+    {
+      env: { ...process.env, RELAY_TEST_PORT: String(portOf(server)) },
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  child.stdout.resume();
+  child.stderr.resume();
+  try {
+    expect((await once(child, "close"))[0]).toBe(1);
+    expect(commands).toEqual(["job.add"]);
+  } finally {
+    child.kill();
     await cleanup(server, root);
   }
 });
