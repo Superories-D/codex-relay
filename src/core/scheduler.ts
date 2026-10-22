@@ -85,6 +85,7 @@ export class Scheduler extends EventEmitter {
         (!runningOnly || run.job.state === "running"),
     );
   }
+  private queueWrites = new Map<string, Promise<void>>();
   private queueControl<T>(id: string, fn: () => Promise<T>): Promise<T> {
     const key = this.store.jobHome(id);
     const dependencies = [this.controls, this.jobControls.get(key)];
@@ -1047,6 +1048,7 @@ export class Scheduler extends EventEmitter {
       for (const agent of job.agents ?? [])
         await this.chats.flush(agent.threadId);
     }
+    await this.queueWrites.get(job.id)?.catch(() => {});
     const stopReason = active.reason || job.stopIntent;
     if (stopReason) {
       job.goalResumeAfterQuota = false;
@@ -1125,8 +1127,11 @@ export class Scheduler extends EventEmitter {
       clearRecovery(job);
       job.recoveryAttempts = 0;
       this.log("Codex 正常完成本轮任务，未检测到额度中断", "info", job.id);
-      const next = job.queuedMessages?.shift();
+      const next = job.queuedMessages?.[0];
       if (next) {
+        job.queuedMessages = job.queuedMessages!.slice(1);
+        job.queueRevision = (job.queueRevision || 0) + 1;
+        await this.chats.user(job.id, next.text, next.attachments.map((a) => a.path).join("\n"));
         job.pendingMessage = next.text;
         job.attachments = next.attachments;
         if (next.model !== undefined) job.model = next.model;
@@ -1302,7 +1307,8 @@ export class Scheduler extends EventEmitter {
           throw new Error("本轮仍在运行，请选择排队发送或立即补充");
         if ((job.queuedMessages?.length ?? 0) >= 100)
           throw new Error("待发送消息已达上限");
-        (job.queuedMessages ??= []).push({
+        await this.persistQueue(job, [...(job.queuedMessages || []), {
+          id: randomUUID(),
           text: input.text,
           attachments: input.attachments,
           model: input.model,
@@ -1311,7 +1317,8 @@ export class Scheduler extends EventEmitter {
           planMode: input.planMode,
           multiAgent: input.multiAgent,
           serviceTier: input.serviceTier,
-        });
+        }]);
+        return;
       } else {
         if (!(await fs.stat(job.cwd)).isDirectory())
           throw new Error("项目目录不存在，请先重新选择目录");
@@ -1345,6 +1352,41 @@ export class Scheduler extends EventEmitter {
       this.changed();
     });
   }
+  editQueue(input: { id: string; messageId: string; revision: number; action: "edit" | "remove" | "up" | "down"; text?: string }) {
+    return this.queueControl(input.id, async () => {
+      const job = this.store.data.jobs.find((j) => j.id === input.id);
+      if (!job || this.closing) throw Error("会话不可用");
+      if ((job.queueRevision || 0) !== input.revision) throw Error("队列已变化，请查看最新队列后重试");
+      const previous = job.queuedMessages || [];
+      const index = previous.findIndex((m) => m.id === input.messageId);
+      if (index < 0) throw Error("该消息已发送或移除");
+      const next = previous.map((m) => ({ ...m }));
+      if (input.action === "remove") next.splice(index, 1);
+      else if (input.action === "edit") {
+        if (!input.text?.trim() || input.text.length > 100000) throw Error("消息不能为空或过长");
+        next[index].text = input.text.trim();
+      } else {
+        const target = index + (input.action === "up" ? -1 : 1);
+        if (target < 0 || target >= next.length) return;
+        [next[index], next[target]] = [next[target], next[index]];
+      }
+      await this.persistQueue(job, next);
+    });
+  }
+  private async persistQueue(job: Job, next: NonNullable<Job["queuedMessages"]>) {
+    const previous = job.queuedMessages, revision = job.queueRevision;
+    job.queuedMessages = next;
+    job.queueRevision = (revision || 0) + 1;
+    const write = this.store.save().catch((error) => {
+      job.queuedMessages = previous;
+      job.queueRevision = revision;
+      throw error;
+    });
+    this.queueWrites.set(job.id, write);
+    try { await write; }
+    finally { this.queueWrites.delete(job.id); this.changed(); }
+  }
+
   operation(id: string, method: string, params: Record<string, unknown>) {
     if (!capabilities.some((c) => c.method === method))
       return Promise.reject(new Error("此操作须通过会话或账户界面执行"));

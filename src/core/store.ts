@@ -93,6 +93,7 @@ export class Store {
         },
       };
       for (const j of this.data.jobs) {
+        for (const message of j.queuedMessages || []) message.id ||= randomUUID();
         if (j.existing && j.existing.phase !== "managed") {
           if (!["completed", "cancelled"].includes(j.state)) {
             j.state = "needs_attention";

@@ -112,7 +112,9 @@ export interface Job {
   interactive?: boolean;
   pendingMessage?: string;
   attachments?: ChatAttachment[];
+  queueRevision?: number;
   queuedMessages?: {
+    id?: string;
     text: string;
     attachments: ChatAttachment[];
     model?: string;

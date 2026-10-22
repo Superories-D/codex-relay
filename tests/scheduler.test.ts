@@ -1740,3 +1740,43 @@ it("stops every parallel worker even when one fails to close and retains the rec
   expect(b.state).toBe("paused");
   expect((scheduler as any).active.size).toBe(1);
 });
+
+
+describe("editable message queue", () => {
+  async function queued() {
+    const job = await scheduler.add({ ...input, cwd: root, interactive: true });
+    await until(() => workers[0]?.started);
+    for (const text of ["first", "second"])
+      await scheduler.send({ id: job.id, text, attachments: [], action: "queue" });
+    return job;
+  }
+  it("edits, reorders and removes stable messages without accepting a stale queue", async () => {
+    const job = await queued();
+    const [first, second] = job.queuedMessages!;
+    await scheduler.editQueue({ id: job.id, messageId: second.id!, revision: job.queueRevision!, action: "up" });
+    expect(job.queuedMessages![0].text).toBe("second");
+    await expect(scheduler.editQueue({ id: job.id, messageId: first.id!, revision: 2, action: "remove" })).rejects.toThrow("队列已变化");
+    await scheduler.editQueue({ id: job.id, messageId: second.id!, revision: job.queueRevision!, action: "edit", text: "updated" });
+    await scheduler.editQueue({ id: job.id, messageId: first.id!, revision: job.queueRevision!, action: "remove" });
+    workers[0].settle({ kind: "completed" });
+    await (scheduler as any).currentRun;
+    expect(job.pendingMessage).toBe("updated");
+    expect(job.queuedMessages).toHaveLength(0);
+  });
+  it("does not drain an edit until it is durable and restores the old message after a failed save", async () => {
+    const job = await queued();
+    let reject!: (error: Error) => void;
+    vi.spyOn(store, "save").mockImplementationOnce(() => new Promise((_, fail) => { reject = fail; }));
+    const editing = scheduler.editQueue({ id: job.id, messageId: job.queuedMessages![0].id!, revision: job.queueRevision!, action: "edit", text: "not saved" });
+    const failed = expect(editing).rejects.toThrow("disk full");
+    await until(() => !!reject);
+    workers[0].settle({ kind: "completed" });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(job.pendingMessage).not.toBe("not saved");
+    reject(Error("disk full"));
+    await failed;
+    await (scheduler as any).currentRun;
+    expect(job.pendingMessage).toBe("first");
+    expect(job.queuedMessages!.map((m) => m.text)).toEqual(["second"]);
+  });
+});

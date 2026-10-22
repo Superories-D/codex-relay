@@ -1410,3 +1410,12 @@ button:disabled {
 .recovery-history li { padding: 8px 4px; }
 .recovery-history time, .recovery-history small { display: block; opacity: .7; font-size: 12px; }
 .recovery-history p { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.message-queue { margin: 12px 0; padding: 12px; border: 1px solid var(--border); border-radius: 12px; }
+.message-queue summary { cursor: pointer; font-weight: 600; }
+.message-queue ol { max-height: 350px; overflow: auto; padding-left: 24px; }
+.message-queue li { padding: 10px 0; }
+.message-queue p { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 120px; overflow: auto; }
+.message-queue textarea { width: 100%; min-height: 90px; }
+.queue-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.queue-actions button { font-size: 12px; padding: 4px 8px; }

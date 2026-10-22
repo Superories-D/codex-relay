@@ -1,4 +1,5 @@
 import { t, useI18n, setLanguage, errorText } from "./i18n";
+import { MessageQueue } from "./MessageQueue";
 import { CopyButton } from "./CopyButton";
 import { RecoveryNotice, RecoveryHistory } from "./RecoveryNotice";
 import React, {
@@ -1484,13 +1485,7 @@ export function AgentApp({
                         {t(job?.stage || jobLabel(job!))}
                       </div>
                     )}
-                    {!!job?.queuedMessages?.length && (
-                      <div className="agent-history-note">
-                        {t("已排队")}
-                        {job.queuedMessages.length}{" "}
-                        {t("条消息，将在本轮结束后发送。")}
-                      </div>
-                    )}
+                    {job && <MessageQueue key={job.id} job={job} pending={pending} onChange={(args) => action(() => call("chat.queue", args))} />}
                   </div>
                 </div>
                 <div className="agent-composer-wrap">

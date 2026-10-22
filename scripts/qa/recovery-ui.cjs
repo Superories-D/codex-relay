@@ -21,6 +21,11 @@ function fixture({ language, theme }) {
     state: "waiting",
     waitingFor: "recovery",
     autoRecovery: { reason: "unknown", attempt: 3, nextAttemptAt: now + 60000 },
+    queueRevision: 0,
+    queuedMessages: [
+      { id: "22222222-2222-4222-8222-222222222222", text: "First pending instruction", attachments: [] },
+      { id: "33333333-3333-4333-8333-333333333333", text: "Second pending instruction", attachments: [] },
+    ],
     recoveryHistory: [{ at: now - 1000, kind: "scheduled", attempt: 3, detail: "Synthetic interruption" }],
     lastError:
       "Codex connection interrupted. The previous process has stopped.",
@@ -99,6 +104,20 @@ function fixture({ language, theme }) {
             },
           ],
         };
+      if (name === "chat.queue") {
+        const assertQueueRevision = args.revision === job.queueRevision;
+        if (!assertQueueRevision) throw Error("stale queue");
+        const index = job.queuedMessages.findIndex((m) => m.id === args.messageId);
+        if (args.action === "remove") job.queuedMessages.splice(index, 1);
+        else if (args.action === "edit") job.queuedMessages[index].text = args.text;
+        else {
+          const target = index + (args.action === "up" ? -1 : 1);
+          [job.queuedMessages[index], job.queuedMessages[target]] = [job.queuedMessages[target], job.queuedMessages[index]];
+        }
+        job.queueRevision++;
+        listeners.forEach((fn) => fn(structuredClone(data)));
+        return;
+      }
       if (name === "job.control") {
         job.state = "paused";
         job.stopIntent = "pause";
@@ -206,6 +225,15 @@ function fixture({ language, theme }) {
         geometry.content <= geometry.width + 1,
         "Recovery notice must not overflow",
       );
+      const queue = page.locator(".message-queue");
+      await queue.locator("li").nth(1).locator("button").nth(1).click();
+      await page.waitForFunction(() => document.querySelector(".message-queue li p")?.textContent === "Second pending instruction");
+      await queue.locator("li").first().locator("button").first().click();
+      await queue.locator("textarea").fill("Updated pending instruction");
+      await queue.locator("li").first().locator("button").first().click();
+      await page.waitForFunction(() => document.querySelector(".message-queue li p")?.textContent === "Updated pending instruction");
+      await queue.locator("li").first().locator("button").last().click();
+      await page.waitForFunction(() => document.querySelectorAll(".message-queue li").length === 1);
       const history = page.locator(".recovery-history");
       await history.locator("summary").click();
       assert.equal(await history.locator("li").count(), 1);

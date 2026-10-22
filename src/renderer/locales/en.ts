@@ -964,4 +964,9 @@ export const english: Record<string, string> = {
   "恢复后已完成": "Completed after recovery",
   "第 {attempt} 次恢复": "Recovery attempt {attempt}",
   "保留最近 50 条记录": "Last 50 events retained",
+  "待发送队列": "Message queue",
+  "编辑排队消息": "Edit queued message",
+  "上移": "Move up",
+  "下移": "Move down",
+  "队列已变化，请查看最新队列后重试": "The queue changed. Review it and try again.",
 };

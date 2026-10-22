@@ -908,6 +908,11 @@ async function boot() {
         }
         return scheduler.chats.read(a.id, a.before);
       }
+      case "chat.queue":
+        return scheduler.editQueue(z.object({
+          id: idSchema, messageId: z.string().uuid(), revision: z.number().int().nonnegative(),
+          action: z.enum(["edit", "remove", "up", "down"]), text: z.string().trim().min(1).max(100000).optional(),
+        }).strict().parse(args));
       case "chat.send":
         return scheduler.send(chatSendSchema.parse(args));
       case "chat.model": {
