@@ -94,12 +94,20 @@ function App() {
   selection.current = selected;
   const job = snapshot?.jobs.find((j) => j.id === selected);
   useEffect(() => {
-    sessionStorage.setItem("relay.remote.draft", prompt);
+    try {
+      sessionStorage.setItem("relay.remote.draft", prompt);
+    } catch (e) {
+      setError(errorText(e));
+    }
   }, [prompt]);
   useEffect(() => {
-    if (pending)
-      sessionStorage.setItem("relay.remote.pending", JSON.stringify(pending));
-    else sessionStorage.removeItem("relay.remote.pending");
+    try {
+      if (pending)
+        sessionStorage.setItem("relay.remote.pending", JSON.stringify(pending));
+      else sessionStorage.removeItem("relay.remote.pending");
+    } catch (e) {
+      setError(errorText(e));
+    }
   }, [pending]);
   useEffect(() => {
     if (!token) return;
@@ -153,12 +161,16 @@ function App() {
     }
   }, [snapshot, pending]);
   useEffect(() => {
-    if (pendingMessage)
-      sessionStorage.setItem(
-        "relay.remote.message",
-        JSON.stringify(pendingMessage),
-      );
-    else sessionStorage.removeItem("relay.remote.message");
+    try {
+      if (pendingMessage)
+        sessionStorage.setItem(
+          "relay.remote.message",
+          JSON.stringify(pendingMessage),
+        );
+      else sessionStorage.removeItem("relay.remote.message");
+    } catch (e) {
+      setError(errorText(e));
+    }
   }, [pendingMessage]);
   useEffect(() => {
     setFollowup(
@@ -203,6 +215,7 @@ function App() {
     };
     setPendingMessage(message);
     try {
+      sessionStorage.setItem("relay.remote.message", JSON.stringify(message));
       await action("chat.submit", {
         requestId: message.requestId,
         input: {
@@ -214,6 +227,7 @@ function App() {
       });
       acknowledgeMessage(message);
     } catch (e) {
+      setError(errorText(e));
       if (e instanceof CommandError && [400, 401, 403, 422].includes(e.status))
         setPendingMessage(null);
     }
@@ -278,11 +292,13 @@ function App() {
     };
     setPending(payload);
     try {
+      sessionStorage.setItem("relay.remote.pending", JSON.stringify(payload));
       const accepted = await action("job.submit", payload);
       setSelected(accepted.id);
       setPending(null);
       setPrompt((current) => (current === payload.input.prompt ? "" : current));
     } catch (e) {
+      setError(errorText(e));
       if (e instanceof CommandError && [400, 401, 403, 422].includes(e.status))
         setPending(null); /* Keep the request ID on transport failures. */
     }

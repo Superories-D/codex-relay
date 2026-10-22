@@ -84,3 +84,7 @@ node scripts/remote.cjs workflow --file workflow.json --token-file /private/http
 Reliable `chat.submit` receipts are saved atomically with the queue or pending message. They survive restart and are checked before new delivery. Reusing an ID with different text is rejected. Receipts are not silently evicted: after 1,000 reliable sends in one conversation, create a new conversation for further reliable delivery. The browser console uses this endpoint too, retains uncertain sends, and stores follow-up drafts separately for each task.
 
 `deploy/codex-relay.service` is an example systemd unit, not an installed service. Adjust the account, Node executable, installation path and workspace before installing it. It uses private state permissions and lets the supervisor confirm worker shutdown; if confirmation fails, systemd is configured not to force-kill the unconfirmed process tree.
+
+## Optional Telegram control
+
+The service also supports an explicitly enabled private-chat controller with encrypted configuration and numeric sender allowlisting. See [TELEGRAM.md](TELEGRAM.md) for setup, supported commands, replay protection and test scope. It is disabled by default.

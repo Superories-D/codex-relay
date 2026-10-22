@@ -124,6 +124,33 @@ const { chromium } = require(
       await page.locator(".connect-card button").click();
       await page.locator(".connection-bar.online").waitFor();
       await page.locator(".new-task textarea").fill(`Remote QA ${language}`);
+      if (language === "en") {
+        await page.evaluate(() => {
+          window.__qaSetItem = Storage.prototype.setItem;
+          Storage.prototype.setItem = function (key, value) {
+            if (key === "relay.remote.pending")
+              throw new DOMException("QA storage full", "QuotaExceededError");
+            return window.__qaSetItem.call(this, key, value);
+          };
+        });
+        await page.locator(".new-task button[type=submit]").click();
+        await page
+          .getByText("QA storage full", { exact: false })
+          .first()
+          .waitFor();
+        const count = await page.evaluate(async () => {
+          const r = await fetch("/api/snapshot", {
+            headers: {
+              Authorization: `Bearer ${sessionStorage.getItem("relay.remote.token")}`,
+            },
+          });
+          return (await r.json()).jobs.length;
+        });
+        assert.equal(count, 0, "storage failure must prevent task submission");
+        await page.evaluate(() => {
+          Storage.prototype.setItem = window.__qaSetItem;
+        });
+      }
       await page.locator(".new-task button[type=submit]").click();
       await page.waitForFunction(
         (text) =>

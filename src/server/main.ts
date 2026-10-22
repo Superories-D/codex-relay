@@ -1,3 +1,4 @@
+import { telegramConfig, TelegramBridge } from "./telegram";
 import { openHttp } from "./http";
 import os from "node:os";
 import path from "node:path";
@@ -14,6 +15,8 @@ async function main() {
       "ipc-port": { type: "string" },
       "http-port": { type: "string" },
       workspace: { type: "string", multiple: true },
+      telegram: { type: "boolean" },
+      "telegram-config": { type: "string" },
     },
   });
   const root = path.resolve(
@@ -35,6 +38,21 @@ async function main() {
   )
     throw Error("Invalid HTTP port");
   const runtime = await ServerRuntime.open(root, values.cli);
+  let botConfig;
+  try {
+    if (values.telegram || values["telegram-config"])
+      botConfig = await telegramConfig(
+        runtime.store.root,
+        values["telegram-config"],
+      );
+    if (values.telegram && !botConfig)
+      throw Error(
+        "Import a private Telegram config before enabling the bridge",
+      );
+  } catch (error) {
+    await runtime.close();
+    throw error;
+  }
   if (values.check) {
     await runtime.close();
     console.log("Server data, encryption and ownership checks passed");
@@ -67,11 +85,29 @@ async function main() {
     await runtime.close();
     throw error;
   }
+  let bot: TelegramBridge | undefined;
+  try {
+    if (values.telegram)
+      bot = await TelegramBridge.open(
+        runtime,
+        botConfig!,
+        values.workspace || [],
+      );
+  } catch (error) {
+    await web?.close();
+    server.close();
+    await runtime.close();
+    throw error;
+  }
+  bot?.start((error) =>
+    console.error(redact(error instanceof Error ? error.message : error)),
+  );
   let stopping = false;
   const stop = async () => {
     if (stopping) return;
     stopping = true;
     try {
+      await bot?.stop();
       await runtime.close();
       server.close();
       await web?.close();

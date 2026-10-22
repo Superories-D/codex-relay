@@ -1,3 +1,4 @@
+import { prepareWorkspaces, resolveWorkspace } from "./workspaces";
 import http from "node:http";
 import { promises as fs } from "node:fs";
 import path from "node:path";
@@ -27,37 +28,7 @@ export async function openHttp(
   workspaces: string[],
   uiDirectory?: string,
 ) {
-  const roots = [
-    ...new Set(
-      await Promise.all(
-        workspaces.map(async (p) => {
-          const real = await fs.realpath(p);
-          if (!(await fs.stat(real)).isDirectory())
-            throw Error("Workspace must be a directory");
-          return real;
-        }),
-      ),
-    ),
-  ];
-  const contains = (parent: string, child: string) => {
-    const relative = path.relative(parent, child);
-    return (
-      relative === "" ||
-      (relative !== ".." &&
-        !relative.startsWith(".." + path.sep) &&
-        !path.isAbsolute(relative))
-    );
-  };
-  if (
-    roots.some(
-      (root) =>
-        contains(root, runtime.store.root) ||
-        contains(runtime.store.root, root),
-    )
-  )
-    throw Error(
-      "Workspaces must not overlap the private server data directory",
-    );
+  const roots = await prepareWorkspaces(runtime.store.root, workspaces);
   const tokenFile = path.join(runtime.store.root, "http-token");
   try {
     await fs.writeFile(tokenFile, randomBytes(32).toString("hex"), {
@@ -72,23 +43,7 @@ export async function openHttp(
     throw Error("HTTP token must be an owner-only regular file");
   const token = (await fs.readFile(tokenFile, "utf8")).trim();
   if (!/^[a-f0-9]{64}$/.test(token)) throw Error("Invalid HTTP token file");
-  async function workspace(value: unknown) {
-    if (typeof value !== "string") throw Error("Workspace path is required");
-    const real = await fs.realpath(value);
-    if (
-      !roots.some((root) => {
-        const relative = path.relative(root, real);
-        return (
-          relative === "" ||
-          (!relative.startsWith(".." + path.sep) &&
-            relative !== ".." &&
-            !path.isAbsolute(relative))
-        );
-      })
-    )
-      throw Error("Path is outside configured workspaces");
-    return real;
-  }
+  const workspace = (value: unknown) => resolveWorkspace(roots, value);
   let pendingCommands = 0;
   const streams = new Set<http.ServerResponse>();
   const send = (res: http.ServerResponse, status: number, value: unknown) => {
@@ -215,12 +170,11 @@ export async function openHttp(
           throw Error("Invalid workflow stages");
         for (const step of args.steps) step.cwd = await workspace(step.cwd);
       }
-      const attachments =
-        ["job.submit", "chat.submit"].includes(body.name)
-          ? args?.input?.attachments
-          : body.name === "chat.send"
-            ? args?.attachments
-            : [];
+      const attachments = ["job.submit", "chat.submit"].includes(body.name)
+        ? args?.input?.attachments
+        : body.name === "chat.send"
+          ? args?.attachments
+          : [];
       if (Array.isArray(attachments))
         for (const attachment of attachments)
           attachment.path = await workspace(attachment.path);
