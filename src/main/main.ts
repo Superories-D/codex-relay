@@ -52,6 +52,7 @@ import { History } from "../core/history";
 import { rolloutRecords } from "../core/chat";
 import { findTranscript } from "../core/transcript";
 import { chatSendSchema } from "./validation";
+import { Templates } from "../core/templates";
 import { Desktop } from "../core/desktop";
 import { Schedules } from "../core/schedules";
 import { Catalog, localCatalogOperation } from "../core/catalog";
@@ -116,6 +117,7 @@ async function boot() {
   startupTrace("load application state");
   await store.load();
   const desktop = new Desktop(dataRoot);
+  const templates = new Templates(dataRoot);
   await desktop.load();
   const nativeText = (source: string) =>
     translate(
@@ -415,6 +417,9 @@ async function boot() {
         menu.popup({ window });
         return;
       }
+      case "templates.list": return templates.list();
+      case "templates.save": return templates.save(args);
+      case "templates.remove": return templates.remove(args);
       case "desktop.read":
         return desktop.data;
       case "desktop.preferences": {

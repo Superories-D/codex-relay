@@ -29,3 +29,7 @@ High/normal/low priorities are editable from the conversation header and persist
 ## 7. Task control center
 
 A dedicated task center replaces the advanced queue navigation: status summaries, project/text filters, visible-task selection, priority context and recovery cards. Bulk pause/resume returns per-task success/failure, deduplicates IDs and refuses unsafe unmanaged adoption or completed-task resumption. Build and 73 scheduler/localization tests passed; three-language UI checks exercise selection, bulk pause and paused-state filtering. Actual layout screenshots were inspected.
+
+## 8. Reusable task templates
+
+Save/edit/delete named instructions with model, reasoning and planning preferences. Inserting a template appends to the draft and never starts work. A separate versioned store serializes mutations, rejects stale revisions and publishes only after atomic writes; corrupt storage is preserved. Build and 9 template/localization tests passed; three-language renderer checks save and insert a template without sending inference requests.

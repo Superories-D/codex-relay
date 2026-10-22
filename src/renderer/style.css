@@ -1445,3 +1445,10 @@ button:disabled {
 .task-cwd, .task-error { overflow-wrap: anywhere; font-size: 13px; }
 .task-cwd { opacity: .65; }
 .task-report { padding: 12px; border: 1px solid var(--line, #454545); margin-top: 12px; }
+
+.task-templates label { display: grid; gap: 6px; margin: 12px 0; }
+.task-templates textarea { min-height: 100px; }
+.template-list { display: grid; gap: 10px; max-height: 320px; overflow: auto; margin-top: 16px; }
+.template-list article { border: 1px solid var(--line, #454545); padding: 12px; border-radius: 10px; }
+.template-list p { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 90px; overflow: auto; }
+.template-trigger { flex: 0 0 auto; align-self: flex-end; }

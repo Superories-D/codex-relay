@@ -3,6 +3,7 @@ import { MessageQueue } from "./MessageQueue";
 import { loadDraftState, saveDraftState, remainingDraft, remainingFiles } from "./drafts";
 import { ChatSearch } from "./ChatSearch";
 import { TaskCenter } from "./TaskCenter";
+import { TaskTemplates } from "./TaskTemplates";
 import { CopyButton } from "./CopyButton";
 import { RecoveryNotice, RecoveryHistory } from "./RecoveryNotice";
 import React, {
@@ -144,6 +145,7 @@ export function AgentApp({
   const [snapshot, setSnapshot] = useState<Snapshot>();
   const [turnHistory, setTurnHistory] = useState(false);
   const [contentSearch, setContentSearch] = useState(false);
+  const [templatesOpen, setTemplatesOpen] = useState(false);
   const [visibleProjects, setVisibleProjects] = useState(30),
     [visibleThreads, setVisibleThreads] = useState<Record<string, number>>({});
   const [selected, setSelected] = useState<string | undefined>(
@@ -1669,6 +1671,7 @@ export function AgentApp({
                       </div>
                     </MotionRegion>
                     <div className="agent-composer">
+                      <button className="template-trigger" title={t("任务模板")} aria-label={t("任务模板")} onClick={() => setTemplatesOpen(true)}><BookOpen size={18} /></button>
                       <div className="composer-attach-control">
                         <button
                           title={t("添加附件")}
@@ -2349,6 +2352,10 @@ export function AgentApp({
             />
           )}
         </ModalPresence>
+        <ModalPresence>{templatesOpen && <TaskTemplates draft={draft} preferences={{ model, effort, planMode, multiAgent }} call={call} close={() => setTemplatesOpen(false)} apply={(template) => {
+          setDrafts((d) => ({ ...d, [key]: [d[key], template.prompt].filter(Boolean).join("\n\n") }));
+          setModel(template.model); setEffort(template.effort); setPlanMode(template.planMode); setMultiAgent(template.multiAgent);
+        }} />}</ModalPresence>
         <ModalPresence>{contentSearch && job && <ChatSearch key={job.id} id={job.id} call={call} close={() => setContentSearch(false)} />}</ModalPresence>
         <ModalPresence>
           {rename && job && (

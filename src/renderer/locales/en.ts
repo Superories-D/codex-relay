@@ -998,4 +998,13 @@ export const english: Record<string, string> = {
   "清除选择": "Clear selection",
   "已完成 {ok} 项，失败 {failed} 项": "{ok} succeeded, {failed} failed",
   "没有符合条件的任务": "No matching tasks",
+  "任务模板": "Task templates",
+  "模板只插入草稿，由你确认后发送。": "Templates are inserted into the draft. Review before sending.",
+  "模板名称": "Template name",
+  "任务指令": "Task instructions",
+  "保存修改": "Save changes",
+  "保存为模板": "Save template",
+  "取消编辑": "Cancel editing",
+  "插入草稿": "Insert into draft",
+  "还没有模板，可以把当前草稿保存为第一个模板。": "No templates yet. Save your draft as the first one.",
 };

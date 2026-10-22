@@ -60,6 +60,7 @@ function fixture({ language, theme }) {
     schedules: [],
     preferences: { language, theme, notifications: true },
   };
+  const templates = { version: 1, revision: 0, items: [] };
   const listeners = new Set();
   window.recoveryCalls = [];
   window.relay = {
@@ -71,6 +72,12 @@ function fixture({ language, theme }) {
     onChat: () => () => {},
     command: async (name, args) => {
       window.recoveryCalls.push({ name, args });
+      if (name === "templates.list") return structuredClone(templates);
+      if (name === "templates.save") {
+        templates.items.push({ ...args.template, id: "44444444-4444-4444-8444-444444444444", updatedAt: now });
+        templates.revision++;
+        return structuredClone(templates);
+      }
       if (name === "desktop.read") return structuredClone(desktop);
       if (name === "history.importAll.status")
         return {
@@ -291,6 +298,15 @@ function fixture({ language, theme }) {
       await page.locator(".task-report").waitFor();
       await page.locator(".task-summary button").nth(3).click();
       assert.equal(await page.locator(".task-list article").count(), 1);
+      await page.locator(".task-card-title button").click();
+      await page.locator(".template-trigger").click();
+      await page.locator(".task-templates input").fill("Recovery checklist");
+      await page.locator(".task-templates textarea").fill("Inspect before resuming");
+      await page.locator(".task-templates button[type=submit]").click();
+      await page.locator(".template-list article .queue-actions button").first().click();
+      await page.locator(".task-templates").waitFor({ state: "detached" });
+      assert.equal(await composer.inputValue(), "Persist across restart\n\nInspect before resuming");
+      assert.equal(await page.evaluate(() => window.recoveryCalls.filter((c) => c.name === "chat.send" || c.name === "job.add").length), 0);
       await page.close();
     }
     assert.deepEqual(report.rendererErrors, []);
