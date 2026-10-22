@@ -1201,6 +1201,21 @@ export class Scheduler extends EventEmitter {
     if (!active.failedStop) this.active.delete(job.id);
     this.changed();
   }
+  async controlMany(ids: string[], action: "pause" | "resume") {
+    if (ids.length > 100) throw Error("一次最多操作 100 个任务");
+    const results = await Promise.all([...new Set(ids)].map(async (id) => {
+      try {
+        const job = this.store.data.jobs.find((j) => j.id === id);
+        if (!job || (job.existing && job.existing.phase !== "managed")) throw Error("该任务需要单独完成接入检查");
+        if (action === "resume" && !["paused", "needs_attention"].includes(job.state)) throw Error("仅能批量恢复暂停或待处理的任务");
+        await this.control(id, action);
+        return { id, ok: true };
+      } catch (error) {
+        return { id, ok: false, error: redact(error instanceof Error ? error.message : error) };
+      }
+    }));
+    return { results };
+  }
   control(id: string, action: "pause" | "resume" | "cancel"): Promise<void> {
     if (action !== "resume" && this.recoveryTasks.has(id)) {
       const job = this.store.data.jobs.find((j) => j.id === id);

@@ -2,6 +2,7 @@ import { t, useI18n, setLanguage, errorText } from "./i18n";
 import { MessageQueue } from "./MessageQueue";
 import { loadDraftState, saveDraftState, remainingDraft, remainingFiles } from "./drafts";
 import { ChatSearch } from "./ChatSearch";
+import { TaskCenter } from "./TaskCenter";
 import { CopyButton } from "./CopyButton";
 import { RecoveryNotice, RecoveryHistory } from "./RecoveryNotice";
 import React, {
@@ -853,7 +854,7 @@ export function AgentApp({
                 : t("任务队列")
             }
             aria-label={t("任务队列")}
-            onClick={() => setManage("advanced:tasks")}
+            onClick={() => { setManage(""); setScreen("tasks"); }}
           >
             <ListTodo size={21} />
             {activeTaskCount > 0 && (
@@ -1158,6 +1159,8 @@ export function AgentApp({
             close={() => setManage("")}
             advanced={(tab) => setManage(`advanced:${tab}`)}
           />
+        ) : screen === "tasks" && snapshot ? (
+          <TaskCenter snapshot={snapshot} call={call} open={select} close={() => setScreen("chat")} />
         ) : screen === "plugins" || screen === "skills" || screen === "mcp" ? (
           <ExtensionsPage
             initial={screen}

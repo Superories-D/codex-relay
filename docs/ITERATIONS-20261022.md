@@ -25,3 +25,7 @@ Search persisted and live messages beyond the current history page, including to
 ## 6. Priority-aware task admission
 
 High/normal/low priorities are editable from the conversation header and persist across restart. Eligible work is ordered by priority then enqueue/creation time; explicit resumes and new inputs acquire a fresh enqueue time. Running work is never preempted and process/account/recovery gates remain authoritative. Failed priority writes roll back. Build and 71 scheduler/localization tests passed; three-language UI checks change priority.
+
+## 7. Task control center
+
+A dedicated task center replaces the advanced queue navigation: status summaries, project/text filters, visible-task selection, priority context and recovery cards. Bulk pause/resume returns per-task success/failure, deduplicates IDs and refuses unsafe unmanaged adoption or completed-task resumption. Build and 73 scheduler/localization tests passed; three-language UI checks exercise selection, bulk pause and paused-state filtering. Actual layout screenshots were inspected.

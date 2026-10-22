@@ -1811,3 +1811,25 @@ it("rolls back an unsaved priority and never bypasses recovery backoff", async (
   await until(() => workers[0]?.started);
   expect(workers[0].ctx.job.id).toBe(second.id);
 });
+
+
+it("bulk controls report partial failures and deduplicate IDs without blocking other tasks", async () => {
+  const [first, second] = await queuedJobs(2);
+  await (scheduler as any).tick();
+  await until(() => workers.length === 2 && workers.every((w) => w.started));
+  const result = await scheduler.controlMany([first.id, "missing", second.id, first.id], "pause");
+  expect(result.results.map((r) => r.ok)).toEqual([true, false, true]);
+  expect([first.state, second.state]).toEqual(["paused", "paused"]);
+  const resumed = await scheduler.controlMany([first.id, second.id], "resume");
+  expect(resumed.results.every((r) => r.ok)).toBe(true);
+  expect([first.state, second.state]).toEqual(["queued", "queued"]);
+});
+it("bulk resume does not take over unmanaged windows or rerun completed work", async () => {
+  const [job] = await queuedJobs(1);
+  job.state = "completed";
+  expect((await scheduler.controlMany([job.id], "resume")).results[0].ok).toBe(false);
+  job.state = "paused";
+  job.existing = { phase: "watching" } as any;
+  expect((await scheduler.controlMany([job.id], "resume")).results[0].ok).toBe(false);
+  expect(workers).toHaveLength(0);
+});

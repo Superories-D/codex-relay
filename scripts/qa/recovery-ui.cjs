@@ -125,6 +125,12 @@ function fixture({ language, theme }) {
         listeners.forEach((fn) => fn(structuredClone(data)));
         return;
       }
+      if (name === "jobs.control") {
+        job.state = args.action === "pause" ? "paused" : "queued";
+        job.autoRecovery = undefined;
+        listeners.forEach((fn) => fn(structuredClone(data)));
+        return { results: args.ids.map((id) => ({ id, ok: true })) };
+      }
       if (name === "job.control") {
         job.state = "paused";
         job.stopIntent = "pause";
@@ -259,6 +265,12 @@ function fixture({ language, theme }) {
       await composer.fill("Persist across restart");
       await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
       await page.reload();
+      if (process.env.RELAY_QA_FONT) {
+        await page.addStyleTag({
+          content: `@font-face { font-family: "Relay QA"; src: url(/__qa_font.woff2) format("woff2"); } .desktop-shell { font-family: "Relay QA", sans-serif !important; }`,
+        });
+        await page.evaluate(() => document.fonts.ready);
+      }
       await composer.waitFor();
       assert.equal(await composer.inputValue(), "Persist across restart");
       assert.equal(await page.locator(".draft-attachment").count(), 1);
@@ -270,6 +282,15 @@ function fixture({ language, theme }) {
       await page.locator(".search-results button").click();
       await page.waitForFunction(() => document.querySelector(".search-detail")?.textContent.includes("Full original needle message"));
       await page.keyboard.press("Escape");
+      await page.locator(".chat-search").waitFor({ state: "detached" });
+      await page.locator(".task-queue-button").click();
+      await page.locator(".task-center").waitFor();
+      await page.screenshot({ path: path.join(output, `task-center-${language}.png`), fullPage: true });
+      await page.locator(".task-center > .queue-actions button").nth(0).click();
+      await page.locator(".task-center > .queue-actions button").nth(1).click();
+      await page.locator(".task-report").waitFor();
+      await page.locator(".task-summary button").nth(3).click();
+      assert.equal(await page.locator(".task-list article").count(), 1);
       await page.close();
     }
     assert.deepEqual(report.rendererErrors, []);

@@ -1216,6 +1216,10 @@ async function boot() {
         return scheduler.snapshot();
       case "job.add":
         return scheduler.add(newJobSchema.parse(args));
+      case "jobs.control": {
+        const a = z.object({ ids: z.array(idSchema).min(1).max(100), action: z.enum(["pause", "resume"]) }).strict().parse(args);
+        return scheduler.controlMany(a.ids, a.action);
+      }
       case "job.control": {
         const a = controlSchema.parse(args);
         const job = store.data.jobs.find((j) => j.id === a.id);
