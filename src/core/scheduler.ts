@@ -288,11 +288,29 @@ export class Scheduler extends EventEmitter {
       .reverse();
     this.changed();
   }
-  async add(
+  add(input: NewJob, existing?: { link: ExistingLink; threadId: string; turnId?: string }, schedule?: Job["schedule"], requestId?: string): Promise<Job> {
+    if (!requestId) return this.addOnce(input, existing, schedule);
+    return this.queueMaintenance(async () => {
+      this.maintaining = true;
+      try { await this.tickInFlight; return await this.addOnce(input, existing, schedule, requestId); }
+      finally { this.maintaining = false; }
+    });
+  }
+  private async addOnce(
     input: NewJob,
     existing?: { link: ExistingLink; threadId: string; turnId?: string },
     schedule?: Job["schedule"],
+    requestId?: string,
   ) {
+    const fingerprint = requestId ? createHash("sha256").update(JSON.stringify(input)).digest("hex") : undefined;
+    if (requestId) {
+      if (this.closing) throw Error("客户端正在关闭");
+      const existingRequest = this.store.data.jobs.find(j => j.clientRequest?.id === requestId);
+      if (existingRequest) {
+        if (existingRequest.clientRequest!.fingerprint !== fingerprint) throw Error("请求标识已用于不同任务");
+        return existingRequest;
+      }
+    }
     if (schedule) {
       const admitted = this.store.data.jobs.find(
         (job) =>
@@ -326,6 +344,7 @@ export class Scheduler extends EventEmitter {
       throw new Error("另一任务已开始，请先暂停它再接入原会话");
     const job: Job = {
       ...input,
+      ...(requestId ? {clientRequest: {id: requestId, fingerprint: fingerprint!}} : {}),
       ...(schedule ? { schedule } : {}),
       ...(input.interactive ? { pendingMessage: input.prompt } : {}),
       id: randomUUID(),
@@ -349,7 +368,7 @@ export class Scheduler extends EventEmitter {
         input.attachments?.map((a) => a.path).join("\n"),
       );
     this.store.data.jobs.push(job);
-    await this.store.save();
+    try { await this.store.save(); } catch(error) { this.store.data.jobs = this.store.data.jobs.filter(j => j !== job); throw error; }
     this.changed();
     void this.tick().catch((error) => this.log(error, "error"));
     return job;

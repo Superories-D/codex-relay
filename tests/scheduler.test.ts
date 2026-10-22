@@ -1941,3 +1941,13 @@ it("persists project limits and does not preempt running work when reduced", asy
   await scheduler.projectLimit(root,2); await (scheduler as any).tick();
   await until(()=>workers[2]?.started);
 });
+
+it("never admits unsaved idempotent submissions and accepts an exact retry after save failure",async()=>{
+  store.data.accounts=[];
+  vi.spyOn(store,"save").mockRejectedValueOnce(Error("disk full"));
+  await expect(scheduler.add({...input,cwd:root},undefined,undefined,"request-id")).rejects.toThrow("disk full");
+  expect(store.data.jobs).toHaveLength(0);
+  const job=await scheduler.add({...input,cwd:root},undefined,undefined,"request-id");
+  const retry=await scheduler.add({...input,cwd:root},undefined,undefined,"request-id");
+  expect(retry.id).toBe(job.id);expect(store.data.jobs).toHaveLength(1);
+});

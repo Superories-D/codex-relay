@@ -83,3 +83,9 @@ The user extended the sequence to 20 iterations during round 15, requesting larg
 Added a bundled, Electron-free Linux service with a separate private data directory, authenticated-encryption account vault, kernel `flock` ownership, shared validated approval handling, CLI account import/listing and response commands, and graceful restart persistence. The existing CLI connects over Unix sockets or optional authenticated loopback TCP. Unsupported desktop/unmanaged data is rejected instead of partially loading it. Normal service shutdown preserves runnable intent while explicit user stops remain stopped.
 
 Validation: build and 88 runtime/IPC/scheduler tests passed. The bundled daemon passed a real-process smoke test with the real CLI, singleton rejection, queued task persistence and restart. Native Unix sockets are denied by this test host, so transport acceptance used the loopback TCP option. No real accounts, model calls or Windows release were involved. See SERVER.md for setup and scope.
+
+## 17 — Authenticated remote control API and realtime stream
+
+Added a loopback HTTP API with a persistent private bearer token, same-origin/Host checks, a bounded command allowlist, request/stream limits and SSE status snapshots. Creation roots are canonicalized, symlink escapes and private-data overlap are rejected, and credential import stays local. Introduced persisted idempotent task submissions so concurrent exact retries return one task while altered reuse is rejected; failed task saves now also remove uncommitted in-memory admission. The server exposes existing workflow, dependency, queue and project-control capabilities through validated commands.
+
+Validation: build, 79 scheduler/HTTP tests and 6 HTTP/runtime tests passed. The bundled daemon + real CLI smoke test also verified unauthenticated HTTP rejection and authenticated workspace metadata. Tests use synthetic account-free tasks; no external deployment or model calls.

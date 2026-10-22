@@ -9,12 +9,25 @@ const fs = require("node:fs/promises"),
   assert = require("node:assert/strict");
 const exec = promisify(execFile);
 async function main() {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "relay-daemon-qa-"));
-  let child;
+  const baseDir = await fs.mkdtemp(path.join(os.tmpdir(), "relay-daemon-qa-"));
+  const root = path.join(baseDir, "data"),
+    workspace = path.join(baseDir, "workspace");
+  await fs.mkdir(workspace);
+  let child, httpPort;
   async function start() {
     child = spawn(
       process.execPath,
-      ["dist/server/main.cjs", "--data-dir", root, "--ipc-port", "0"],
+      [
+        "dist/server/main.cjs",
+        "--data-dir",
+        root,
+        "--ipc-port",
+        "0",
+        "--http-port",
+        "0",
+        "--workspace",
+        workspace,
+      ],
       { stdio: ["ignore", "pipe", "pipe"] },
     );
     let output = "";
@@ -33,7 +46,9 @@ async function main() {
       child.stdout.on("data", (d) => {
         output += d;
         const match = output.match(/IPC TCP port: (\d+)/);
-        if (match) {
+        const httpMatch = output.match(/HTTP port: (\d+)/);
+        if (match && httpMatch) {
+          httpPort = Number(httpMatch[1]);
           clearTimeout(timer);
           resolve(Number(match[1]));
         }
@@ -81,6 +96,15 @@ async function main() {
       String(port),
     ]);
     assert.deepEqual(JSON.parse(status.stdout).tasks, []);
+    const url = `http://127.0.0.1:${httpPort}`;
+    assert.equal((await fetch(url + "/api/snapshot")).status, 401);
+    const httpToken = await fs.readFile(path.join(root, "http-token"), "utf8");
+    const metadata = await (
+      await fetch(url + "/api/meta", {
+        headers: { Authorization: `Bearer ${httpToken}` },
+      })
+    ).json();
+    assert.deepEqual(metadata.workspaces, [workspace]);
     await assert.rejects(
       exec(process.execPath, [
         "dist/server/main.cjs",
@@ -93,7 +117,7 @@ async function main() {
     const job = await command(port, "job.add", {
       title: "Daemon smoke",
       prompt: "Synthetic queued task",
-      cwd: root,
+      cwd: workspace,
       mode: "cli",
       model: "",
       effort: "",
@@ -116,7 +140,7 @@ async function main() {
       child.kill("SIGKILL");
       await once(child, "exit").catch(() => {});
     }
-    await fs.rm(root, { recursive: true, force: true });
+    await fs.rm(baseDir, { recursive: true, force: true });
   }
 }
 main().catch((error) => {

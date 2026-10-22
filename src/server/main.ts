@@ -1,3 +1,4 @@
+import { openHttp } from "./http";
 import os from "node:os";
 import path from "node:path";
 import { parseArgs } from "node:util";
@@ -11,6 +12,8 @@ async function main() {
       cli: { type: "string" },
       check: { type: "boolean" },
       "ipc-port": { type: "string" },
+      "http-port": { type: "string" },
+      workspace: { type: "string", multiple: true },
     },
   });
   const root = path.resolve(
@@ -24,6 +27,13 @@ async function main() {
     (!Number.isInteger(ipcPort) || ipcPort < 0 || ipcPort > 65535)
   )
     throw Error("Invalid IPC port");
+  const httpPort =
+    values["http-port"] === undefined ? undefined : Number(values["http-port"]);
+  if (
+    httpPort !== undefined &&
+    (!Number.isInteger(httpPort) || httpPort < 0 || httpPort > 65535)
+  )
+    throw Error("Invalid HTTP port");
   const runtime = await ServerRuntime.open(root, values.cli);
   if (values.check) {
     await runtime.close();
@@ -43,6 +53,15 @@ async function main() {
     await runtime.close();
     throw error;
   }
+  let web: Awaited<ReturnType<typeof openHttp>> | undefined;
+  try {
+    if (httpPort !== undefined)
+      web = await openHttp(runtime, httpPort, values.workspace || []);
+  } catch (error) {
+    server.close();
+    await runtime.close();
+    throw error;
+  }
   let stopping = false;
   const stop = async () => {
     if (stopping) return;
@@ -50,6 +69,7 @@ async function main() {
     try {
       await runtime.close();
       server.close();
+      await web?.close();
       console.log("Server stopped; runnable tasks will resume on restart");
       process.exit(0);
     } catch (error) {
@@ -61,6 +81,10 @@ async function main() {
   process.on("SIGINT", () => void stop());
   runtime.start((error) => console.error(redact(error)));
   console.log(`Codex Relay server ready. Data: ${root}`);
+  if (web)
+    console.log(
+      `HTTP port: ${(web.server.address() as import("node:net").AddressInfo).port}`,
+    );
   if (ipcPort !== undefined)
     console.log(
       `IPC TCP port: ${(server.address() as import("node:net").AddressInfo).port}`,

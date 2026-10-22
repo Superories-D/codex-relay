@@ -93,6 +93,7 @@ export interface RecoveryEvent {
   detail?: string;
 }
 export interface Job {
+  clientRequest?: { id: string; fingerprint: string };
   workflow?: { id: string; title: string; step: number; total: number; fingerprint: string };
   dependsOn?: string[];
   priority?: "high" | "normal" | "low";

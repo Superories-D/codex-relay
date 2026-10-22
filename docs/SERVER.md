@@ -38,3 +38,23 @@ SIGINT/SIGTERM stops owned workers with the existing process-confirmation checks
 ## Verification scope
 
 `node scripts/qa/headless.cjs` launches the bundled daemon, connects the real CLI through authenticated loopback TCP, checks singleton ownership, submits an account-free task and verifies persistence after restart. It does not call a model. Unit/integration tests cover the vault, tampered ciphertext, key permissions and unsupported desktop state. Existing supervisor integration tests cover real synthetic JSONL worker processes and interruption recovery. Live Codex subscription inference still requires acceptance testing on the intended server.
+
+## Authenticated HTTP and live status
+
+```sh
+npm run serve -- --data-dir "$HOME/.local/share/codex-relay-server" --http-port 7899 --workspace /srv/project
+ssh -L 7899:127.0.0.1:7899 user@server
+```
+
+Repeat `--workspace` to allow additional creation roots. Paths are resolved through symlinks; roots must not overlap the private service data directory. This is a task-admission restriction, not an OS sandbox or a multi-tenant security boundary. Existing task controls are operator-level capabilities.
+
+The HTTP endpoint binds only to loopback. It requires `Authorization: Bearer <http-token>` using the owner-only `http-token` file in the server data directory. Tokens are not accepted in URLs, and cross-origin browser calls and non-loopback Host headers are rejected. The HTTP token persists across restarts. The Unix/TCP IPC token remains a separate credential. Do not expose these operator credentials in public pages or repository files.
+
+- `GET /api/meta`: configured creation roots and supported commands.
+- `GET /api/snapshot`: current scheduler state.
+- `GET /api/events`: authenticated SSE snapshots and heartbeat comments; reconnecting receives the latest complete snapshot.
+- `POST /api/command`: JSON `{ "name": "...", "args": ... }`, response `{ "result": ... }` or an HTTP error with `{ "error": ... }`.
+
+For task creation use `job.submit` with `{ "requestId": "UUID", "input": { ...NewJob } }`. Exact retries return the same retained job; reuse with different input is rejected. This prevents duplicate work after a lost response. Other mutations are never automatically replayed by the service. `workflow.add` has its own persistent request ID. Available operations cover task controls, queued messages, approvals, paged chat, dependencies, dispatch, project limits and reports. Credential import and native file dialogs are not exposed over HTTP.
+
+Requests are capped at 1 MiB with bounded in-flight commands, status streams and buffered output. The HTTP tests exercise real loopback requests, SSE, origin/authentication rejection, symlink escape and concurrent duplicate submissions.

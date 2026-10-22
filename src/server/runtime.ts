@@ -1,3 +1,4 @@
+import { WorkflowReports } from "../core/workflow-report";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
@@ -17,6 +18,7 @@ import {
 import { ServerCipher } from "./vault";
 import { acquireOwner } from "./owner";
 export class ServerRuntime {
+  private reports?: WorkflowReports;
   private closing = false;
   private closePromise?: Promise<void>;
   private inFlight = new Set<Promise<unknown>>();
@@ -112,6 +114,71 @@ export class ServerRuntime {
         const input = newJobSchema.parse(args);
         if (input.mode !== "cli") throw Error("Only CLI tasks are supported");
         return this.scheduler.add(input);
+      }
+      case "job.submit": {
+        const a = z
+          .object({ requestId: idSchema, input: newJobSchema })
+          .strict()
+          .parse(args);
+        if (a.input.mode !== "cli") throw Error("Only CLI tasks are supported");
+        return this.scheduler.add(a.input, undefined, undefined, a.requestId);
+      }
+      case "workflow.add": {
+        const a = z
+          .object({
+            requestId: idSchema,
+            title: z.string().trim().min(1).max(120),
+            steps: z.array(newJobSchema).min(2).max(12),
+          })
+          .strict()
+          .parse(args);
+        return this.scheduler.addWorkflow(a.requestId, a.title, a.steps);
+      }
+      case "workflow.report": {
+        this.reports ||= new WorkflowReports(
+          this.scheduler.chats,
+          () => this.store.data.jobs,
+        );
+        return this.reports.preview(idSchema.parse(args));
+      }
+      case "scheduler.dispatch": {
+        const a = z
+          .object({
+            paused: z.boolean(),
+            cwd: z.string().min(1).max(32768).optional(),
+          })
+          .strict()
+          .parse(args);
+        return this.scheduler.dispatch(a.paused, a.cwd);
+      }
+      case "scheduler.projectLimit": {
+        const a = z
+          .object({
+            cwd: z.string().min(1).max(32768),
+            limit: z.number().int().min(1).max(8).nullable(),
+          })
+          .strict()
+          .parse(args);
+        return this.scheduler.projectLimit(a.cwd, a.limit);
+      }
+      case "job.dependencies": {
+        const a = z
+          .object({ id: idSchema, ids: z.array(idSchema).max(20) })
+          .strict()
+          .parse(args);
+        return this.scheduler.dependencies(a.id, a.ids);
+      }
+      case "chat.read": {
+        const a = z
+          .object({
+            id: idSchema,
+            before: z.number().int().nonnegative().optional(),
+          })
+          .strict()
+          .parse(args);
+        if (!this.store.data.jobs.some((j) => j.id === a.id))
+          throw Error("Task does not exist");
+        return this.scheduler.chats.read(a.id, a.before);
       }
       case "job.control": {
         const a = controlSchema.parse(args);
