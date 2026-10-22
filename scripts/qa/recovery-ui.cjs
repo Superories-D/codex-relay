@@ -13,6 +13,7 @@ function fixture({ language, theme }) {
   const job = {
     id: "11111111-1111-4111-8111-111111111111",
     title: "恢复中断的开发任务",
+    workflow: {id:"44444444-4444-4444-8444-444444444444",title:"Release",step:1,total:2,fingerprint:"fixture"},
     cwd: "D:\\Projects\\codex-go",
     mode: "cli",
     model: "",
@@ -87,6 +88,8 @@ function fixture({ language, theme }) {
     onChat: () => () => {},
     command: async (name, args) => {
       window.recoveryCalls.push({ name, args });
+      if (name === "workflow.report") return {previewId:"55555555-5555-4555-8555-555555555555",report:{title:"Release",complete:false,expectedStages:2,stages:[{}]},markdown:"# Release\n\nComplete: no"};
+      if (name === "workflow.report.save") return {saved:true};
       if (name === "job.report")
         return {
           schemaVersion: 1,
@@ -398,6 +401,13 @@ function fixture({ language, theme }) {
       await page.locator(".project-limit select").selectOption("1");
       await page.waitForFunction(() => window.recoveryCalls.some(c => c.name === "scheduler.projectLimit" && c.args.limit === 1));
       await page.locator(".task-filters select").selectOption("");
+      await page.locator(".workflow-report-trigger").click();
+      await page.locator(".workflow-report pre").waitFor();
+      assert.match(await page.locator(".workflow-report pre").innerText(), /Complete: no/);
+      await page.locator(".workflow-report select").selectOption("json");
+      await page.locator(".workflow-report-save").click();
+      await page.waitForFunction(() => window.recoveryCalls.some(c => c.name === "workflow.report.save" && c.args.format === "json"));
+      await page.locator("dialog .modal-close").click();
       await page.locator(".workflow-trigger").click();
       await page.locator(".workflow-builder input").nth(0).fill("Release workflow");
       await page.locator(".workflow-builder textarea").nth(0).fill("Implement and save results to implementation.md");

@@ -1,3 +1,4 @@
+import { WorkflowReports } from "../core/workflow-report";
 import {
   app,
   BrowserWindow,
@@ -207,6 +208,7 @@ async function boot() {
       }
     },
   );
+  const workflowReports = new WorkflowReports(scheduler.chats, () => store.data.jobs);
   const schedules = new Schedules(desktop, scheduler, () =>
     scheduler.changed(),
   );
@@ -1232,6 +1234,17 @@ async function boot() {
         return scheduler.snapshot();
       case "job.add":
         return scheduler.add(newJobSchema.parse(args));
+      case "workflow.report":
+        return workflowReports.preview(idSchema.parse(args));
+      case "workflow.report.save": {
+        const a = z.object({ previewId: idSchema, format: z.enum(["markdown", "json"]) }).strict().parse(args);
+        const content = workflowReports.document(a.previewId, a.format);
+        const extension = a.format === "json" ? "json" : "md";
+        const result = await dialog.showSaveDialog(window!, {defaultPath:`workflow-handoff.${extension}`,filters:[{name:a.format,extensions:[extension]}]});
+        if (result.canceled || !result.filePath) return {saved:false};
+        await atomicWrite(result.filePath, content);
+        return {saved:true};
+      }
       case "workflow.add": {
         const a = z.object({ requestId: idSchema, title: z.string().trim().min(1).max(120), steps: z.array(newJobSchema).min(2).max(12) }).strict().parse(args);
         return scheduler.addWorkflow(a.requestId, a.title, a.steps);

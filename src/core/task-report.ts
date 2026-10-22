@@ -1,7 +1,7 @@
 import { dispatchHeld, projectLimit } from "../shared/dispatch";
 import { dependencyBlockers } from "../shared/task-dependencies";
 import type { Snapshot } from "../shared/types";
-import { redact } from "./redact";
+import { redact, redactValue } from "./redact";
 export function taskReport(
   snapshot: Snapshot,
   id: string,
@@ -92,9 +92,5 @@ export function taskReport(
         message: redact(l.message).slice(0, 2000),
       })),
   };
-  // Keep only the explicit report fields, then redact diagnostics without
-  // truncating the JSON document into invalid data.
-  return JSON.parse(
-    redact(JSON.stringify(report), Number.MAX_SAFE_INTEGER),
-  ) as typeof report;
+  return redactValue(report);
 }

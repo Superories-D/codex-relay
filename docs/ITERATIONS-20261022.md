@@ -1,4 +1,4 @@
-# Fifteen sequential iterations — 2026-10-22
+# Twenty sequential iterations — 2026-10-22
 
 Each iteration is validated and pushed before the next begins. These are source changes; no new binaries or native installation.
 
@@ -69,3 +69,11 @@ Validation: build and 79 scheduler/localization tests passed, including retry de
 Projects can now set independent concurrency limits (1–8), alongside the existing global limit. The scheduler reserves slots before starting workers, lets other projects use remaining global capacity, and automatically starts queued tasks when a slot is released. Lowering a limit never kills active work; restoring the global default removes the override. Limits persist across restarts and appear in diagnostic metadata.
 
 Validation: build and 83 scheduler/localization/report tests passed. Added coverage for project isolation, automatic slot reuse, lowering/raising limits, restart persistence and save rollback. Three-language production-renderer QA changed a project's concurrency through the task-center control with no renderer errors. This is scheduler coordination, not an OS filesystem lock against external processes.
+
+## 15 — Previewable workflow handoff reports
+
+Added whole-workflow Markdown/JSON reports with stage states, latest recorded assistant responses, output references, dependency IDs and recovery history. Missing/deleted stages remain explicit and prevent a false completed status. Report generation scans beyond the latest chat page without running a model or reading referenced file contents. Oversized responses and output lists are explicitly marked as truncated. Exports use the exact immutable preview, with a bounded 10-minute cache. Fixed escaped-newline credential redaction by redacting structured string values before JSON encoding.
+
+Validation: full check passed (54 files, 501 passed, 2 Windows-only skipped), including pagination, missing/cancelled stages, truncation, credential redaction and immutable/expired previews. Production-renderer QA passed Chinese/English/Japanese, including Markdown/JSON preview and save dispatch; native OS save-dialog interaction remains a Windows acceptance check.
+
+The user extended the sequence to 20 iterations during round 15, requesting larger capability expansions for the remaining rounds.

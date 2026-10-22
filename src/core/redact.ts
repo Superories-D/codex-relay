@@ -18,3 +18,12 @@ export function redact(value: unknown, limit = 16000): string {
     .replace(/\b(sk-|rt-)[A-Za-z0-9_-]{12,}/g, "[REDACTED TOKEN]")
     .slice(0, limit);
 }
+
+// Redact string values before JSON encoding: escaped newlines can hide word
+// boundaries from token patterns when an entire serialized object is scanned.
+export function redactValue<T>(value: T): T {
+  if (typeof value === "string") return redact(value, Number.MAX_SAFE_INTEGER) as T;
+  if (Array.isArray(value)) return value.map(item => redactValue(item)) as T;
+  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key,item]) => [key,redactValue(item)])) as T;
+  return value;
+}

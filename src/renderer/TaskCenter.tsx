@@ -1,3 +1,4 @@
+import { WorkflowReport } from "./WorkflowReport";
 import { WorkflowBuilder } from "./WorkflowBuilder";
 import { dispatchHeld, projectKey, projectLimit } from "../shared/dispatch";
 import { dependencyBlockers } from "../shared/task-dependencies";
@@ -34,6 +35,7 @@ export function TaskCenter({
   close: () => void;
 }) {
   useI18n();
+  const [workflowReport, setWorkflowReport] = useState<string>();
   const [building, setBuilding] = useState(false);
   const [editing, setEditing] = useState<Job>();
   const [filter, setFilter] = useState("active");
@@ -64,16 +66,32 @@ export function TaskCenter({
       (!j.existing || j.existing.phase === "managed"),
   );
   const targets = eligible.filter((j) => selected.includes(j.id));
-  const projectPaused = snapshot.dispatch?.projects.some(cwd => projectKey(cwd, snapshot.platform) === projectKey(project, snapshot.platform));
+  const projectPaused = snapshot.dispatch?.projects.some(
+    (cwd) =>
+      projectKey(cwd, snapshot.platform) ===
+      projectKey(project, snapshot.platform),
+  );
   async function setDispatch(paused: boolean, cwd?: string) {
-    setBusy(true); setError("");
-    try { await call("scheduler.dispatch", {paused, ...(cwd ? {cwd} : {})}); }
-    catch (e) { setError(errorText(e)); } finally { setBusy(false); }
+    setBusy(true);
+    setError("");
+    try {
+      await call("scheduler.dispatch", { paused, ...(cwd ? { cwd } : {}) });
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setBusy(false);
+    }
   }
   async function setLimit(limit: number | null) {
-    setBusy(true); setError("");
-    try { await call("scheduler.projectLimit", {cwd:project,limit}); }
-    catch(e) { setError(errorText(e)); } finally {setBusy(false);}
+    setBusy(true);
+    setError("");
+    try {
+      await call("scheduler.projectLimit", { cwd: project, limit });
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setBusy(false);
+    }
   }
   const run = async (action: "pause" | "resume") => {
     setBusy(true);
@@ -103,12 +121,28 @@ export function TaskCenter({
           <h1>{t("任务中心")}</h1>
           <p>{t("管理运行状态、恢复进度和待执行任务")}</p>
         </div>
-        <button className="workflow-trigger" onClick={() => setBuilding(true)}>{t("新建工作流")}</button>
+        <button className="workflow-trigger" onClick={() => setBuilding(true)}>
+          {t("新建工作流")}
+        </button>
         <button onClick={close}>{t("返回聊天")}</button>
       </header>
       <section className="dispatch-controls">
-        <div><strong>{t(snapshot.dispatch?.paused ? "调度已暂停" : "自动调度已开启")}</strong><p>{t("暂停调度只阻止新任务启动，当前任务会继续完成。设置在重启后保留。")}</p></div>
-        <button disabled={busy} onClick={() => void setDispatch(!snapshot.dispatch?.paused)}>{t(snapshot.dispatch?.paused ? "开启全局调度" : "暂停全局调度")}</button>
+        <div>
+          <strong>
+            {t(snapshot.dispatch?.paused ? "调度已暂停" : "自动调度已开启")}
+          </strong>
+          <p>
+            {t(
+              "暂停调度只阻止新任务启动，当前任务会继续完成。设置在重启后保留。",
+            )}
+          </p>
+        </div>
+        <button
+          disabled={busy}
+          onClick={() => void setDispatch(!snapshot.dispatch?.paused)}
+        >
+          {t(snapshot.dispatch?.paused ? "开启全局调度" : "暂停全局调度")}
+        </button>
       </section>
       <div className="task-summary">
         {[
@@ -146,15 +180,52 @@ export function TaskCenter({
           onChange={(e) => setProject(e.target.value)}
         >
           <option value="">{t("全部项目")}</option>
-          {[...new Set([...jobs.map((j) => j.projectCwd || j.cwd), ...(snapshot.dispatch?.projects || []), ...(snapshot.projectLimits || []).map(p => p.cwd)])].map((cwd) => (
+          {[
+            ...new Set([
+              ...jobs.map((j) => j.projectCwd || j.cwd),
+              ...(snapshot.dispatch?.projects || []),
+              ...(snapshot.projectLimits || []).map((p) => p.cwd),
+            ]),
+          ].map((cwd) => (
             <option key={cwd} value={cwd}>
               {cwd}
             </option>
           ))}
         </select>
       </div>
-      {project && <button className="project-dispatch" disabled={busy} onClick={() => void setDispatch(!projectPaused, project)}>{t(projectPaused ? "开启此项目调度" : "暂停此项目调度")}</button>}
-      {project && <label className="project-limit">{t("项目并发上限")}<select disabled={busy} value={projectLimit(snapshot, {cwd:project}, snapshot.platform) || ""} onChange={e => void setLimit(e.target.value ? Number(e.target.value) : null)}><option value="">{t("跟随全局上限")}</option>{[1,2,3,4,5,6,7,8].map(n => <option key={n} value={n}>{n}</option>)}</select><small>{t("降低上限不会中断正在运行的任务；名额释放后自动继续排队任务。")}</small></label>}
+      {project && (
+        <button
+          className="project-dispatch"
+          disabled={busy}
+          onClick={() => void setDispatch(!projectPaused, project)}
+        >
+          {t(projectPaused ? "开启此项目调度" : "暂停此项目调度")}
+        </button>
+      )}
+      {project && (
+        <label className="project-limit">
+          {t("项目并发上限")}
+          <select
+            disabled={busy}
+            value={
+              projectLimit(snapshot, { cwd: project }, snapshot.platform) || ""
+            }
+            onChange={(e) =>
+              void setLimit(e.target.value ? Number(e.target.value) : null)
+            }
+          >
+            <option value="">{t("跟随全局上限")}</option>
+            {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+          <small>
+            {t("降低上限不会中断正在运行的任务；名额释放后自动继续排队任务。")}
+          </small>
+        </label>
+      )}
       <div className="queue-actions">
         <button
           disabled={busy || !eligible.length}
@@ -208,8 +279,29 @@ export function TaskCenter({
             ))}
         </div>
       )}
-      {building && <WorkflowBuilder jobs={snapshot.jobs} cwd={project} call={call} close={() => setBuilding(false)} />}
-      {editing && <TaskDependencies job={snapshot.jobs.find(j => j.id === editing.id) || editing} jobs={snapshot.jobs} call={call} close={() => setEditing(undefined)} />}
+      {workflowReport && (
+        <WorkflowReport
+          id={workflowReport}
+          call={call}
+          close={() => setWorkflowReport(undefined)}
+        />
+      )}
+      {building && (
+        <WorkflowBuilder
+          jobs={snapshot.jobs}
+          cwd={project}
+          call={call}
+          close={() => setBuilding(false)}
+        />
+      )}
+      {editing && (
+        <TaskDependencies
+          job={snapshot.jobs.find((j) => j.id === editing.id) || editing}
+          jobs={snapshot.jobs}
+          call={call}
+          close={() => setEditing(undefined)}
+        />
+      )}
       <div className="task-list">
         {filtered.map((job) => (
           <article key={job.id}>
@@ -232,7 +324,17 @@ export function TaskCenter({
                 {job.autoRecovery ? t("正在自动恢复") : t(labels[job.state])}
               </small>
             </div>
-            {job.workflow && <p className="workflow-label">{job.workflow.title} · {job.workflow.step}/{job.workflow.total}</p>}
+            {job.workflow && (
+              <div className="workflow-label">
+                {job.workflow.title} · {job.workflow.step}/{job.workflow.total}{" "}
+                <button
+                  className="workflow-report-trigger"
+                  onClick={() => setWorkflowReport(job.workflow!.id)}
+                >
+                  {t("工作流交付报告")}
+                </button>
+              </div>
+            )}
             <p className="task-cwd">{job.projectCwd || job.cwd}</p>
             <small>
               {t("待发送队列")} · {job.queuedMessages?.length || 0} ·{" "}
@@ -244,9 +346,34 @@ export function TaskCenter({
                     : "普通优先级",
               )}
             </small>
-            {dispatchHeld(snapshot, job, snapshot.platform) && ["queued", "waiting"].includes(job.state) && <p>{t("调度已暂停")}</p>}
-            {!!job.dependsOn?.length && <p className="task-dependencies">{t("前置任务")} · {job.dependsOn.map(id => snapshot.jobs.find(j => j.id === id)?.title || t("已删除的任务")).join(" → ")} · {t("等待 {count} 项完成", { count: dependencyBlockers(job, snapshot.jobs).length })}</p>}
-            {["queued", "waiting", "paused"].includes(job.state) && <button className="dependencies-trigger" onClick={() => setEditing(job)}>{t("设置前置任务")}</button>}
+            {dispatchHeld(snapshot, job, snapshot.platform) &&
+              ["queued", "waiting"].includes(job.state) && (
+                <p>{t("调度已暂停")}</p>
+              )}
+            {!!job.dependsOn?.length && (
+              <p className="task-dependencies">
+                {t("前置任务")} ·{" "}
+                {job.dependsOn
+                  .map(
+                    (id) =>
+                      snapshot.jobs.find((j) => j.id === id)?.title ||
+                      t("已删除的任务"),
+                  )
+                  .join(" → ")}{" "}
+                ·{" "}
+                {t("等待 {count} 项完成", {
+                  count: dependencyBlockers(job, snapshot.jobs).length,
+                })}
+              </p>
+            )}
+            {["queued", "waiting", "paused"].includes(job.state) && (
+              <button
+                className="dependencies-trigger"
+                onClick={() => setEditing(job)}
+              >
+                {t("设置前置任务")}
+              </button>
+            )}
             {job.autoRecovery && <RecoveryNotice job={job} />}
             {job.lastError && !job.autoRecovery && (
               <p className="task-error">{job.lastError}</p>

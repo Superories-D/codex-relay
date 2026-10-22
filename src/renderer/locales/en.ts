@@ -1,6 +1,15 @@
 import { legacyEnglish } from "./legacy-en";
 import { nativeEnglish } from "./native-en";
 export const english: Record<string, string> = {
+  "工作流交付报告": "Workflow handoff report",
+  "汇总各阶段状态、最近回复、产物路径与恢复记录。路径仅为引用，不会打包文件；回复不代表独立验收结果。": "Includes stage states, latest responses, output paths and recovery history. Paths are references, not bundled files; responses are not independent verification.",
+  "全部阶段已完成": "All stages completed",
+  "工作流尚未全部完成": "Workflow is not fully completed",
+  "已记录 {count} / {total} 个阶段": "{count} / {total} stages recorded",
+  "导出当前预览": "Export this preview",
+  "报告预览已过期，请重新生成": "Report preview expired; generate it again",
+  "工作流不存在": "Workflow does not exist",
+  "导出格式": "Export format",
   "项目并发上限": "Project concurrency limit",
   "跟随全局上限": "Use global limit",
   "降低上限不会中断正在运行的任务；名额释放后自动继续排队任务。": "Lowering the limit lets active tasks finish. Queued tasks start automatically as slots become available.",
