@@ -389,6 +389,13 @@ function fixture({ language, theme }) {
         path: path.join(output, `task-center-${language}.png`),
         fullPage: true,
       });
+      await page.locator(".workflow-trigger").click();
+      await page.locator(".workflow-builder input").nth(0).fill("Release workflow");
+      await page.locator(".workflow-builder textarea").nth(0).fill("Implement and save results to implementation.md");
+      await page.locator(".workflow-builder textarea").nth(1).fill("Verify implementation.md and write checks.md");
+      await page.locator(".workflow-builder button[type=submit]").click();
+      await page.waitForFunction(() => window.recoveryCalls.some(c => c.name === "workflow.add" && c.args.steps.length === 2 && c.args.steps.every(s => s.approvalPolicy === "on-request")));
+      await page.locator(".workflow-builder").waitFor({state:"detached"});
       await page.locator(".task-center > .queue-actions button").nth(0).click();
       await page.locator(".task-center > .queue-actions button").nth(1).click();
       await page.locator(".task-report").waitFor();

@@ -1,3 +1,4 @@
+import { WorkflowBuilder } from "./WorkflowBuilder";
 import { dispatchHeld, projectKey } from "../shared/dispatch";
 import { dependencyBlockers } from "../shared/task-dependencies";
 import { TaskDependencies } from "./TaskDependencies";
@@ -33,6 +34,7 @@ export function TaskCenter({
   close: () => void;
 }) {
   useI18n();
+  const [building, setBuilding] = useState(false);
   const [editing, setEditing] = useState<Job>();
   const [filter, setFilter] = useState("active");
   const [project, setProject] = useState("");
@@ -96,6 +98,7 @@ export function TaskCenter({
           <h1>{t("任务中心")}</h1>
           <p>{t("管理运行状态、恢复进度和待执行任务")}</p>
         </div>
+        <button className="workflow-trigger" onClick={() => setBuilding(true)}>{t("新建工作流")}</button>
         <button onClick={close}>{t("返回聊天")}</button>
       </header>
       <section className="dispatch-controls">
@@ -199,6 +202,7 @@ export function TaskCenter({
             ))}
         </div>
       )}
+      {building && <WorkflowBuilder jobs={snapshot.jobs} cwd={project} call={call} close={() => setBuilding(false)} />}
       {editing && <TaskDependencies job={snapshot.jobs.find(j => j.id === editing.id) || editing} jobs={snapshot.jobs} call={call} close={() => setEditing(undefined)} />}
       <div className="task-list">
         {filtered.map((job) => (
@@ -222,6 +226,7 @@ export function TaskCenter({
                 {job.autoRecovery ? t("正在自动恢复") : t(labels[job.state])}
               </small>
             </div>
+            {job.workflow && <p className="workflow-label">{job.workflow.title} · {job.workflow.step}/{job.workflow.total}</p>}
             <p className="task-cwd">{job.projectCwd || job.cwd}</p>
             <small>
               {t("待发送队列")} · {job.queuedMessages?.length || 0} ·{" "}

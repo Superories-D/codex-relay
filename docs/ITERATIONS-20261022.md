@@ -57,3 +57,9 @@ Validation: build and 77 scheduler/localization/report tests passed, plus 8 IPC 
 Added dispatch gates that survive restarts. Users can hold all new task starts or only one project while current workers finish normally. Task-center controls expose both scopes and diagnostic reports explain dispatch blockers. Gates apply to recovered and queued tasks as well as new work; failed persistence restores the previous policy. Existing per-task pause and approval behavior is unchanged.
 
 Validation: build and 79 scheduler/localization/report tests passed, covering active-worker completion during a hold, restart persistence, project isolation and failed saves. Three-language production-renderer QA toggled global dispatch off/on without renderer errors.
+
+## 13 — Atomic multi-stage workflow creation
+
+The task center now includes a 2–12-stage workflow builder with stage editing/reordering, project/model selection and explicit permission defaults. Stages use separate conversations, share workspace files for handoff, and run through automatically generated prerequisite chains. A single persisted batch prevents partial admission; request fingerprints deduplicate creation retries and reject changed reuse of an admitted request. Prepared journals are removed if admission fails. Stage position and workflow name appear on task cards.
+
+Validation: build and 79 scheduler/localization tests passed, including retry deduplication, restart persistence, invalid-directory rejection, save rollback and no-worker-before-admission. Three-language renderer QA submitted two-stage workflows through the actual form with zero renderer errors. No live model calls were made.

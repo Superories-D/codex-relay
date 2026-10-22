@@ -1,6 +1,15 @@
 import { legacyEnglish } from "./legacy-en";
 import { nativeEnglish } from "./native-en";
 export const english: Record<string, string> = {
+  "新建工作流": "New workflow",
+  "工作流名称": "Workflow name",
+  "各阶段使用独立会话并按顺序执行。通过工作目录中的文件交接成果，请在指令中写清交付路径。": "Stages run sequentially in separate conversations. Hand off results through workspace files and specify their paths in your instructions.",
+  "权限：工作区写入，按需审批。创建后仍受调度暂停和前置任务约束。": "Permissions: workspace write, approval on request. Dispatch holds and prerequisites still apply.",
+  "阶段 {index}": "Stage {index}",
+  "添加阶段": "Add stage",
+  "创建并排队": "Create and queue",
+  "工作流需要 2 至 12 个 CLI 阶段，附件请在创建后添加": "A workflow needs 2–12 CLI stages; add attachments after creation",
+  "该创建请求已被处理，请检查现有工作流": "This request was already processed; inspect the existing workflow",
   "调度已暂停": "Dispatch paused",
   "自动调度已开启": "Automatic dispatch enabled",
   "暂停全局调度": "Pause global dispatch",

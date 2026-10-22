@@ -1463,3 +1463,10 @@ button:disabled {
 .dispatch-controls { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:16px; border:1px solid var(--line); border-radius:12px; margin:16px 0; }
 .dispatch-controls p { color:var(--muted); font-size:12px; }
 .dispatch-controls button { flex-shrink:0; }
+.workflow-builder label { display:block; margin:10px 0; }
+.workflow-builder input, .workflow-builder textarea { display:block; width:100%; box-sizing:border-box; }
+.workflow-builder textarea { min-height:90px; resize:vertical; }
+.workflow-builder p { color:var(--muted); font-size:12px; }
+.workflow-steps { max-height:35vh; overflow:auto; }
+.workflow-steps article { padding:10px; border:1px solid var(--line); border-radius:10px; margin:10px 0; }
+.workflow-label { color:var(--muted); font-size:12px; }

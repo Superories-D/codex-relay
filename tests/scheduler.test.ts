@@ -1887,3 +1887,32 @@ it("holds only the selected project and rolls back failed dispatch saves", async
   await (scheduler as any).tick(); await until(() => workers[0]?.started);
   expect(workers).toHaveLength(1); expect(workers[0].ctx.job.id).toBe(b.id);
 });
+
+it("admits an entire workflow once and preserves its chain after restart", async () => {
+  await scheduler.dispatch(true);
+  const steps = [{...input,cwd:root,prompt:"implement"},{...input,cwd:root,prompt:"verify"}];
+  const jobs = await scheduler.addWorkflow("workflow-id","Release",steps);
+  const retried = await scheduler.addWorkflow("workflow-id","Release",steps);
+  expect(retried.map(j=>j.id)).toEqual(jobs.map(j=>j.id));
+  expect(store.data.jobs).toHaveLength(2);
+  expect(jobs[1].dependsOn).toEqual([jobs[0].id]);
+  const loaded = new Store(root); await loaded.load();
+  expect(loaded.data.jobs[1].workflow?.step).toBe(2);
+  expect(loaded.data.jobs[1].dependsOn).toEqual([jobs[0].id]);
+  await expect(scheduler.addWorkflow("workflow-id","Changed",steps)).rejects.toThrow("已被处理");
+  await (scheduler as any).tick(); expect(workers).toHaveLength(0);
+  await scheduler.dispatch(false); await (scheduler as any).tick();
+  await until(()=>workers[0]?.started); expect(workers).toHaveLength(1);
+});
+it("never admits a partial workflow after validation or persistence failures", async () => {
+  const steps = [{...input,cwd:root},{...input,cwd:root+"/missing"}];
+  await expect(scheduler.addWorkflow("bad","Bad",steps)).rejects.toThrow();
+  expect(store.data.jobs).toHaveLength(0);
+  steps[1].cwd=root;
+  vi.spyOn(store,"save").mockRejectedValueOnce(Error("disk full"));
+  await expect(scheduler.addWorkflow("retry","Retry",steps)).rejects.toThrow("disk full");
+  expect(store.data.jobs).toHaveLength(0);
+  expect(await fs.readdir(path.join(root,"chats"))).toHaveLength(0);
+  await (scheduler as any).tick(); expect(workers).toHaveLength(0);
+  expect(await scheduler.addWorkflow("retry","Retry",steps)).toHaveLength(2);
+});

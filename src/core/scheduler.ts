@@ -2,7 +2,7 @@ import { dispatchHeld, projectKey } from "../shared/dispatch";
 import { dependencyBlockers, validateDependencies } from "../shared/task-dependencies";
 import { EventEmitter } from "node:events";
 import { orderTasks } from "../shared/task-order";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import type {
@@ -1374,6 +1374,40 @@ export class Scheduler extends EventEmitter {
       );
       await this.store.save();
       this.changed();
+    });
+  }
+  addWorkflow(requestId: string, title: string, inputs: NewJob[]) {
+    return this.queueMaintenance(async () => {
+      this.maintaining = true;
+      const created: Job[] = [];
+      try {
+        await this.tickInFlight;
+        if (this.closing || inputs.length < 2 || inputs.length > 12 || inputs.some(i => i.mode !== "cli" || i.attachments?.length)) throw Error("工作流需要 2 至 12 个 CLI 阶段，附件请在创建后添加");
+        const fingerprint = createHash("sha256").update(JSON.stringify({title,inputs})).digest("hex");
+        const existing = this.store.data.jobs.filter(j => j.workflow?.id === requestId);
+        if (existing.length) {
+          if (existing.some(j => j.workflow?.fingerprint !== fingerprint) || existing.length !== inputs.length) throw Error("该创建请求已被处理，请检查现有工作流");
+          return existing.sort((a,b) => a.workflow!.step - b.workflow!.step);
+        }
+        for (const input of inputs) {
+          if (!(await fs.stat(input.cwd)).isDirectory()) throw Error("工作目录不存在");
+          const now = Date.now();
+          created.push({ ...input, interactive: true, pendingMessage: input.prompt, id: randomUUID(), state: "queued", rotations: 0, createdAt: now, updatedAt: now, enqueuedAt: now,
+            workflow: {id: requestId, title, step: created.length + 1, total: inputs.length, fingerprint},
+            dependsOn: created.length ? [created.at(-1)!.id] : [] });
+        }
+        // Prepare journals before publishing any executable task. Failed batches
+        // leave no admitted tasks and never begin a worker.
+        for (const job of created) await this.chats.user(job.id, job.prompt);
+        this.store.data.jobs.push(...created);
+        try { await this.store.save(); }
+        catch (error) { this.store.data.jobs = this.store.data.jobs.filter(j => !created.includes(j)); throw error; }
+        this.changed();
+        return created;
+      } catch (error) {
+        for (const job of created) await fs.rm(this.chats.file(job.id), {force: true}).catch(() => {});
+        throw error;
+      } finally { this.maintaining = false; }
     });
   }
   dispatch(paused: boolean, cwd?: string) {
