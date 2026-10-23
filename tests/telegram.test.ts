@@ -1015,3 +1015,68 @@ it.skipIf(process.platform !== "linux")(
     }
   },
 );
+
+it.skipIf(process.platform !== "linux")(
+  "persists incoming documents and attaches them once to the next task across a lost reply",
+  async () => {
+    const f = await setup(),
+      t = transport();
+    let downloads = 0;
+    const api: TelegramApi = async (method, body, signal) =>
+      method === "getFile"
+        ? { file_path: "documents/file_1.txt", file_size: 5 }
+        : t.api(method, body, signal);
+    const download = async () => {
+      downloads++;
+      return Buffer.from("hello");
+    };
+    try {
+      let bridge = await TelegramBridge.open(
+        f.runtime,
+        config,
+        [f.workspace],
+        api,
+        atomicWrite,
+        Date.now,
+        download,
+      );
+      await bridge.initialize();
+      t.setUpdates([
+        message(11, "", {
+          text: undefined,
+          document: {
+            file_id: "file-one",
+            file_size: 5,
+            file_name: "notes.txt",
+          },
+        }),
+      ]);
+      t.failNextSend();
+      await expect(bridge.pollOnce()).rejects.toThrow("Simulated");
+      bridge = await TelegramBridge.open(
+        f.runtime,
+        config,
+        [f.workspace],
+        api,
+        atomicWrite,
+        Date.now,
+        download,
+      );
+      await bridge.pollOnce();
+      expect(downloads).toBe(1);
+      t.setUpdates([message(12, "/run 1 Use the document")]);
+      await bridge.pollOnce();
+      const job = f.runtime.store.data.jobs[0];
+      expect(job.attachments).toHaveLength(1);
+      expect(await fs.readFile(job.attachments![0].path, "utf8")).toBe("hello");
+      t.setUpdates([message(13, "/inbox")]);
+      await bridge.pollOnce();
+      expect(t.sent.at(-1).text).toContain("暂无附件");
+      t.setUpdates([message(14, "follow up")]);
+      await bridge.pollOnce();
+      expect(job.queuedMessages![0].attachments).toEqual([]);
+    } finally {
+      await f.close();
+    }
+  },
+);

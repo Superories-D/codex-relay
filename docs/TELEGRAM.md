@@ -131,7 +131,7 @@ Before any operation, the bridge persists the resolved command and a snapshot of
 
 The complete reply, keyboard and any generated document are persisted before sending. Lost acknowledgements can repeat a Telegram reply/document, but do not repeat creation or message admission. Other explicit state-setting commands may be retried; queue revisions and one-use approval/control tokens reject stale or uncertain repeats. Notifications are also at-least-once around a lost send acknowledgement. Restart expires ephemeral action/approval/page tokens while retaining selections, admission snapshots, the outbox and message-to-task routes.
 
-Text is plain text, known credential patterns and the exact configured bot token are redacted before pagination/upload, sends are paced and Telegram retry delays are honored. The integration has no arbitrary runtime-RPC or shell-command endpoint. Arbitrary project-file download, incoming binary attachments, voice transcription, account-token import and server lifecycle operations are not implemented; unsupported incoming media gets an explanatory response instead of being silently dropped. Task instructions can still ask Codex to work within its configured project, approval and sandbox policy.
+Text is plain text, known credential patterns and the exact configured bot token are redacted before pagination/upload, sends are paced and Telegram retry delays are honored. The integration has no arbitrary runtime-RPC or shell-command endpoint. Arbitrary project-file download, voice transcription, account-token import and server lifecycle operations are not implemented; unsupported incoming media gets an explanatory response instead of being silently dropped. Task instructions can still ask Codex to work within its configured project, approval and sandbox policy.
 
 Implementation references: [getUpdates](https://core.telegram.org/bots/api#getupdates), [InlineKeyboardButton](https://core.telegram.org/bots/api#inlinekeyboardbutton), [answerCallbackQuery](https://core.telegram.org/bots/api#answercallbackquery), [sendDocument](https://core.telegram.org/bots/api#senddocument).
 
@@ -142,3 +142,7 @@ Implementation references: [getUpdates](https://core.telegram.org/bots/api#getup
 These tests do not send real Telegram messages or call a model. Live bot delivery and live model execution still require operator acceptance with their own bot configuration. The bridge runs in the Linux supervisor; Telegram clients on Windows and mobile use the same bot, while the native Windows desktop app does not host this bridge.
 
 The dated implementation and acceptance record is available in [Telegram console verification](TELEGRAM-CONSOLE-20261023.md).
+
+## Incoming files (iteration 1)
+
+Send a document or photo to stage it durably (8 MiB per file, up to 10 pending files). `/inbox` lists staged files; `/inbox clear` clears the selection without deleting files already referenced by tasks. The next `/new`, `/run` or task follow-up includes that attachment snapshot. Captions do not execute instructions automatically. Files are downloaded only from Telegram's official file endpoint with streaming size limits, saved under an opaque upload ID with checksum receipts, and reused across lost replies/restarts. Workflows require an empty inbox; attach files to individual stages instead.

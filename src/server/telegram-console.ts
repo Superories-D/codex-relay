@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
+import { attachmentsSchema } from "../main/validation";
 import type { Job, NewJob } from "../shared/types";
 import type { TemplateState } from "../core/templates";
 import type { conversationExport } from "../core/conversation-export";
@@ -9,6 +10,7 @@ import { resolveWorkspace } from "./workspaces";
 export const contextSchema = z
   .object({
     project: z.string().optional(),
+    attachments: attachmentsSchema.optional(),
     task: z.string().uuid().optional(),
     defaults: z
       .object({
@@ -101,6 +103,9 @@ export class TelegramConsole {
       approvalPolicy: "on-request",
       sandbox: "workspaceWrite",
       interactive: true,
+      ...(context.attachments?.length
+        ? { attachments: context.attachments }
+        : {}),
     };
   }
   taskKeyboard(job: Job) {
@@ -355,6 +360,10 @@ export class TelegramConsole {
           text: `Queued ${job.id}\n${this.card(job).text}`,
         };
       }
+      if (context.attachments?.length)
+        throw Error(
+          "工作流创建不接收暂存附件，请先 /inbox clear，或发送到某个阶段",
+        );
       const newline = args.indexOf("\n"),
         title = args.slice(0, newline).trim();
       const prompts = args

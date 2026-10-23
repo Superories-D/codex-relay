@@ -1,3 +1,10 @@
+import { attachmentsSchema } from "../main/validation";
+import {
+  ServerUploads,
+  telegramDownload,
+  UPLOAD_LIMIT,
+  type TelegramDownload,
+} from "./uploads";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { createHash, randomBytes } from "node:crypto";
@@ -55,6 +62,7 @@ export async function telegramConfig(root: string, inputFile?: string) {
 }
 export type TelegramApi = (
   method:
+    | "getFile"
     | "getWebhookInfo"
     | "getUpdates"
     | "sendMessage"
@@ -142,6 +150,7 @@ const stateSchema = z
     offset: z.number().int().nonnegative(),
     known: z.record(z.string(), z.string()),
     context: contextSchema.optional(),
+    inbox: attachmentsSchema.optional(),
     answerCode: z.string().optional(),
     routes: z.record(z.string(), z.string().uuid()).optional(),
     incoming: z
@@ -149,6 +158,13 @@ const stateSchema = z
         updateId: z.number().int().nonnegative(),
         text: z.string().max(110000),
         context: contextSchema,
+        media: z
+          .object({
+            fileId: z.string().min(1).max(1000),
+            name: z.string().max(200),
+            size: z.number().nonnegative().max(UPLOAD_LIMIT).optional(),
+          })
+          .optional(),
       })
       .strict()
       .optional(),
@@ -199,6 +215,7 @@ export class TelegramBridge {
     private api: TelegramApi,
     private write: typeof atomicWrite,
     private now: () => number,
+    private download: TelegramDownload,
   ) {
     this.identity = `${config.token.split(":")[0]}:${config.userId}`;
     this.console = new TelegramConsole(
@@ -206,7 +223,8 @@ export class TelegramBridge {
       roots,
       (text, limit) => this.safe(text, limit),
       async (context) => {
-        await this.commit({ ...this.state!, context });
+        const { attachments, ...selection } = context;
+        await this.commit({ ...this.state!, context: selection });
       },
       now,
     );
@@ -218,6 +236,7 @@ export class TelegramBridge {
     api = telegramApi(config.token),
     write = atomicWrite,
     now = Date.now,
+    download = telegramDownload(config.token),
   ) {
     const bridge = new TelegramBridge(
       runtime,
@@ -226,6 +245,7 @@ export class TelegramBridge {
       api,
       write,
       now,
+      download,
     );
     try {
       const state = stateSchema.parse(
@@ -360,6 +380,19 @@ export class TelegramBridge {
     if (!match) return "Use /help for Relay commands.";
     const command = match[1].toLowerCase(),
       args = (match[2] || "").trim();
+    if (command === "inbox") {
+      if (args === "clear") {
+        await this.commit({ ...this.state!, inbox: [] });
+        return "附件暂存已清空。";
+      }
+      return {
+        text:
+          (this.state!.inbox || [])
+            .map((a, i) => `${i + 1}. ${a.name}`)
+            .join("\n") || "暂无附件。发送图片或文档后，再发送任务指令。",
+        keyboard: [[button("清空暂存附件", "/inbox clear")]],
+      };
+    }
     const reply = await this.console.execute(
       command,
       args,
@@ -390,7 +423,12 @@ export class TelegramBridge {
       const job = this.findJob(parts[1]);
       await this.runtime.command("chat.submit", {
         requestId: requestId(this.identity, updateId),
-        input: { id: job.id, text: parts[2], attachments: [], action: "queue" },
+        input: {
+          id: job.id,
+          text: parts[2],
+          attachments: context.attachments || [],
+          action: "queue",
+        },
       });
       return {
         text: `Follow-up accepted for ${job.id}`,
@@ -567,6 +605,59 @@ export class TelegramBridge {
     }
     return "Unknown command. Use /help.";
   }
+  private async stageMedia(
+    incoming: NonNullable<State["incoming"]>,
+  ): Promise<TelegramReply> {
+    const uploads = new ServerUploads(this.runtime.store.root),
+      id = requestId(this.identity, incoming.updateId),
+      media = incoming.media!;
+    let result;
+    try {
+      result = await uploads.read(id);
+    } catch (e: any) {
+      if (e.code !== "ENOENT") throw e;
+    }
+    if (!result) {
+      if ((this.state!.inbox?.length || 0) >= 10)
+        throw Error("最多暂存 10 个附件，请先发送任务或 /inbox clear");
+      const file = await this.api(
+        "getFile",
+        { file_id: media.fileId },
+        this.controller.signal,
+      ).catch((error) => {
+        throw new TelegramPersistenceError(
+          "Telegram file metadata unavailable; retrying",
+          { cause: error },
+        );
+      });
+      if (
+        typeof file?.file_path !== "string" ||
+        Number(file.file_size) > UPLOAD_LIMIT
+      )
+        throw Error("附件无效或超过 8 MiB");
+      const data = await this.download(
+        file.file_path,
+        this.controller.signal,
+      ).catch((error) => {
+        if (/8 MiB|Invalid Telegram file path/.test(String(error))) throw error;
+        throw new TelegramPersistenceError(
+          "Telegram file download interrupted; retrying",
+          { cause: error },
+        );
+      });
+      result = await uploads.put(id, media.name, data);
+    }
+    const inbox = this.state!.inbox || [];
+    if (!inbox.some((a) => a.path === result.attachment.path))
+      await this.commit({
+        ...this.state!,
+        inbox: [...inbox, result.attachment],
+      });
+    return {
+      text: `附件已暂存: ${result.attachment.name}（${result.size} bytes）\n发送下一条任务指令一起提交；/inbox 查看或清空。文件说明不会自动执行。`,
+      keyboard: [[button("查看附件", "/inbox")]],
+    };
+  }
   private currentGrant(code: string) {
     const grant = this.grants.get(code);
     if (!grant || grant.expires <= this.now())
@@ -604,11 +695,24 @@ export class TelegramBridge {
     if (!incoming) return;
     let reply: TelegramReply;
     try {
-      const result = await this.execute(
-        incoming.updateId,
-        incoming.text,
-        incoming.context,
-      );
+      const result = incoming.media
+        ? await this.stageMedia(incoming)
+        : await this.execute(
+            incoming.updateId,
+            incoming.text,
+            incoming.context,
+          );
+      if (
+        !incoming.media &&
+        /^\/(new|run|send)\b/.test(incoming.text) &&
+        incoming.context.attachments?.length
+      ) {
+        const used = new Set(incoming.context.attachments.map((a) => a.path));
+        await this.commit({
+          ...this.state!,
+          inbox: (this.state!.inbox || []).filter((a) => !used.has(a.path)),
+        });
+      }
       reply = typeof result === "string" ? { text: result } : result;
     } catch (e) {
       if (e instanceof TelegramPersistenceError) throw e;
@@ -723,15 +827,44 @@ export class TelegramBridge {
           this.controller.signal,
         ).catch(() => {});
       }
-      const context = structuredClone(this.state!.context || {});
+      const context = structuredClone({
+        ...this.state!.context,
+        attachments: this.state!.inbox || [],
+      });
       let routed: string;
+      let media: NonNullable<State["incoming"]>["media"];
+      const source =
+        !callback &&
+        (message.document ||
+          (Array.isArray(message.photo) ? message.photo.at(-1) : undefined));
       try {
-        if (typeof text !== "string")
+        if (source) {
+          if (
+            typeof source.file_id !== "string" ||
+            source.file_id.length > 1000 ||
+            (source.file_size !== undefined &&
+              (!Number.isFinite(source.file_size) ||
+                source.file_size < 0 ||
+                source.file_size > UPLOAD_LIMIT))
+          )
+            throw Error("附件信息无效或超过 8 MiB");
+          media = {
+            fileId: source.file_id,
+            name: String(message.document?.file_name || "photo.jpg").slice(
+              -200,
+            ),
+            size: source.file_size,
+          };
+        }
+        if (!media && typeof text !== "string")
           throw Error(
             "目前接收文字指令；请将文件内容粘贴为文字。语音和二进制附件不会自动执行。",
           );
-        if (text.length > 100000) throw Error("Message is too large");
-        routed = this.route(text.trim(), callback ? {} : message, context);
+        if (typeof text === "string" && text.length > 100000)
+          throw Error("Message is too large");
+        routed = media
+          ? "/upload"
+          : this.route(text.trim(), callback ? {} : message, context);
       } catch (e) {
         await this.commit({
           ...this.state!,
@@ -745,7 +878,7 @@ export class TelegramBridge {
       }
       await this.commit({
         ...this.state!,
-        incoming: { updateId: update.update_id, text: routed, context },
+        incoming: { updateId: update.update_id, text: routed, context, media },
       });
       await this.processIncoming();
     }
