@@ -46,6 +46,10 @@ export interface DesktopData {
   preferences: {
     theme: "dark" | "light" | "system";
     notifications: boolean;
+    startMinimized?: boolean;
+    closeToTray?: boolean;
+    preventSleep?: boolean;
+    privateNotifications?: boolean;
     language?: import("../shared/locale").Language;
     textSize?: number;
     codeSize?: number;

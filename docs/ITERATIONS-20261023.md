@@ -37,3 +37,7 @@ Desktop window position, normal size and maximized state now persist through an 
 ## 29 — Actionable Windows approval notifications
 
 Desktop notifications now include new approval requests and correctly notify when automatic recovery ends in manual attention without changing the underlying task state. Request identity/content deduplicates repeated snapshots. Clicking a notification opens its conversation, not merely the last selected tab. Validation: build and notification transition tests; real Windows toast delivery remains native acceptance work.
+
+## 30 — Explicit desktop background and privacy controls
+
+Added localized preferences for tray-only startup, close-to-tray versus safe exit, active-task sleep prevention, and hiding task names in native notifications. Preferences roll back when persistence fails. Startup only hides after the tray exists; choosing exit follows existing process-confirmed shutdown. Validation: build, desktop storage and localization tests. OS tray/power/toast integration needs Windows acceptance.

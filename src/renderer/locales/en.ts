@@ -1088,4 +1088,12 @@ export const english: Record<string, string> = {
   "历史会话暂不可恢复": "History is not currently resumable",
   "原窗口尚未完成交接": "Original window handoff is incomplete",
 "暂停任务后再修改运行设置":"Pause tasks before changing runtime settings",
+"启动时留在托盘":"Start in tray",
+"启动后保持后台运行，双击托盘图标打开窗口。":"Run in the background on startup; double-click the tray icon to open.",
+"关闭窗口后继续运行":"Keep running after closing the window",
+"关闭窗口时隐藏到托盘；关闭此选项将安全停止并退出。":"Hide in the tray on close; disable to stop safely and exit.",
+"任务运行时防止休眠":"Prevent sleep during active tasks",
+"只在活动任务期间阻止自动休眠，允许显示器正常关闭。":"Prevent automatic sleep only during active tasks; the display may turn off.",
+"隐藏通知中的任务名称":"Hide task names in notifications",
+"通知仅显示 Codex Relay，点击后查看任务详情。":"Show only Codex Relay in notifications; click to view the task.",
 };

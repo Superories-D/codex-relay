@@ -172,6 +172,9 @@ export function SettingsPage({
             <>
               <h1>{t("常规")}</h1>
               <ImportAllControl call={call} changed={refresh} />
+              <SettingRow title={t("启动时留在托盘")} description={t("启动后保持后台运行，双击托盘图标打开窗口。")}><Toggle label={t("启动时留在托盘")} value={prefs.startMinimized ?? false} onChange={value=>void preference({startMinimized:value})} /></SettingRow>
+              <SettingRow title={t("关闭窗口后继续运行")} description={t("关闭窗口时隐藏到托盘；关闭此选项将安全停止并退出。")}><Toggle label={t("关闭窗口后继续运行")} value={prefs.closeToTray ?? true} onChange={value=>void preference({closeToTray:value})} /></SettingRow>
+              <SettingRow title={t("任务运行时防止休眠")} description={t("只在活动任务期间阻止自动休眠，允许显示器正常关闭。")}><Toggle label={t("任务运行时防止休眠")} value={prefs.preventSleep ?? true} onChange={value=>void preference({preventSleep:value})} /></SettingRow>
               <SettingRow
                 title={t("并发任务")}
                 description={t(
@@ -418,6 +421,7 @@ export function SettingsPage({
           {tab === "notifications" && (
             <>
               <h1>{t("通知")}</h1>
+              <SettingRow title={t("隐藏通知中的任务名称")} description={t("通知仅显示 Codex Relay，点击后查看任务详情。")}><Toggle label={t("隐藏通知中的任务名称")} value={prefs.privateNotifications ?? false} onChange={value=>void preference({privateNotifications:value})} /></SettingRow>
               <SettingRow
                 title={t("任务完成与需要处理")}
                 description={t(

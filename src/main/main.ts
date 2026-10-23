@@ -264,12 +264,12 @@ async function boot() {
       for (const event of notices) {
         const job = store.data.jobs.find(j=>j.id===event.id);
         if (!job) continue;
-        const notice = new Notification({title:nativeText(event.kind === "completed" ? "Codex 已完成本轮任务" : "Codex 需要你的处理"),body:job.title});
+        const notice = new Notification({title:nativeText(event.kind === "completed" ? "Codex 已完成本轮任务" : "Codex 需要你的处理"),body:desktop.data.preferences.privateNotifications ? "Codex Relay" : job.title});
         notice.on("click",()=>{window?.show();window?.focus();window?.webContents.send("relay:open-job",job.id);});
         notice.show();
       }
     }
-    const running = store.data.jobs.some((j) =>
+    const running = desktop.data.preferences.preventSleep !== false && store.data.jobs.some((j) =>
       ["preparing", "running", "pausing", "rotating", "watching"].includes(
         j.state,
       ),
@@ -414,6 +414,7 @@ async function boot() {
       case "desktop.read":
         return desktop.data;
       case "desktop.preferences": {
+        const previous = structuredClone(desktop.data.preferences);
         Object.assign(
           desktop.data.preferences,
           z
@@ -423,6 +424,10 @@ async function boot() {
                 .enum(["auto", "zh-CN", "zh-TW", "en", "ja"])
                 .optional(),
               notifications: z.boolean().optional(),
+              startMinimized: z.boolean().optional(),
+              closeToTray: z.boolean().optional(),
+              preventSleep: z.boolean().optional(),
+              privateNotifications: z.boolean().optional(),
               textSize: z.number().int().min(12).max(20).optional(),
               codeSize: z.number().int().min(10).max(20).optional(),
               accent: z
@@ -446,8 +451,9 @@ async function boot() {
             .strict()
             .parse(args),
         );
-        await desktop.save();
+        try { await desktop.save(); } catch (error) { desktop.data.preferences = previous; throw error; }
         applyDesktopPreferences();
+        scheduler.changed();
         return desktop.data;
       }
       case "project.add":
@@ -1483,7 +1489,6 @@ async function boot() {
   });
   await loadRenderer(window, rendererPath);
   startupTrace("renderer ready");
-  window.show();
   app.on("second-instance", () => {
     window?.show();
     window?.focus();
@@ -1492,7 +1497,10 @@ async function boot() {
   window.on("close", (event) => {
     if (!quitReady) {
       event.preventDefault();
-      if (!quitting) window?.hide();
+      if (!quitting) {
+        if (desktop.data.preferences.closeToTray === false) app.quit();
+        else window?.hide();
+      }
     }
   });
   const pixels = Buffer.alloc(32 * 32 * 4);
@@ -1514,6 +1522,7 @@ async function boot() {
   tray.setToolTip("Codex Relay");
   applyDesktopPreferences();
   tray.on("double-click", () => window?.show());
+  if (!desktop.data.preferences.startMinimized) window.show();
   app.on("before-quit", (event) => {
     if (!quitReady) {
       event.preventDefault();
