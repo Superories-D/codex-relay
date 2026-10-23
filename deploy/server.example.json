@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "dataDir": "/var/lib/codex-relay",
+  "cli": "codex",
+  "httpPort": 7899,
+  "workspaces": ["/srv/projects"],
+  "telegram": false
+}

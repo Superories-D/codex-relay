@@ -92,3 +92,7 @@ The service also supports an explicitly enabled private-chat controller with enc
 ### Diagnose an installation
 
 With the service stopped, run `node dist/server/main.cjs --data-dir /private/data --doctor` to check the configured CLI without model calls. Exit 1 means a failed check. For a running service, use `node scripts/remote.cjs doctor --token-file /private/data/http-token` or the web settings dialog. `health` reports operational counts without task text or account identities.
+
+### Versioned launch configuration
+
+Copy `deploy/server.example.json` and run `node dist/server/main.cjs --config /etc/codex-relay/server.json`. Command-line options override the corresponding file value; an explicit `--workspace` list replaces the file list. Relative paths resolve against the configuration file. Unknown keys and invalid ports are rejected before opening runtime storage. Keep bot tokens in the encrypted Telegram configuration, never this launch file. `--check` and `--doctor` also accept `--config`.

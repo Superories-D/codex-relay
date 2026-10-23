@@ -1,3 +1,4 @@
+import { readServerConfig } from "./config";
 import { telegramConfig, TelegramBridge } from "./telegram";
 import { openHttp } from "./http";
 import os from "node:os";
@@ -10,6 +11,7 @@ async function main() {
   const { values } = parseArgs({
     options: {
       "data-dir": { type: "string" },
+      config: { type: "string" },
       cli: { type: "string" },
       check: { type: "boolean" },
       doctor: { type: "boolean" },
@@ -20,6 +22,13 @@ async function main() {
       "telegram-config": { type: "string" },
     },
   });
+  const config = await readServerConfig(values.config);
+  values["data-dir"] ??= config?.dataDir;
+  values.cli ??= config?.cli;
+  values.workspace ??= config?.workspaces;
+  values["http-port"] ??= config?.httpPort?.toString();
+  values["ipc-port"] ??= config?.ipcPort?.toString();
+  values.telegram ??= config?.telegram;
   const root = path.resolve(
     values["data-dir"] ||
       path.join(os.homedir(), ".local/share/codex-relay-server"),
@@ -28,14 +37,14 @@ async function main() {
     values["ipc-port"] === undefined ? undefined : Number(values["ipc-port"]);
   if (
     ipcPort !== undefined &&
-    (!Number.isInteger(ipcPort) || ipcPort < 0 || ipcPort > 65535)
+    (values["ipc-port"]?.trim() === "" || !Number.isInteger(ipcPort) || ipcPort < 0 || ipcPort > 65535)
   )
     throw Error("Invalid IPC port");
   const httpPort =
     values["http-port"] === undefined ? undefined : Number(values["http-port"]);
   if (
     httpPort !== undefined &&
-    (!Number.isInteger(httpPort) || httpPort < 0 || httpPort > 65535)
+    (values["http-port"]?.trim() === "" || !Number.isInteger(httpPort) || httpPort < 0 || httpPort > 65535)
   )
     throw Error("Invalid HTTP port");
   const runtime = await ServerRuntime.open(root, values.cli);

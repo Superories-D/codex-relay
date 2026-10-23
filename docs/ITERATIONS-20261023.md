@@ -57,3 +57,7 @@ Remote users can rename, pin, archive and restore conversations; pinned tasks so
 ## 34 — Workflow drafts survive reload and unknown responses
 
 The shared Windows/web workflow builder now saves validated session drafts, stage order and the original submission ID. It persists identity before sending, reuses it after reopening, and reconciles admitted workflows from snapshots. Successful admission clears the draft; storage failure blocks submission. Validation: build, draft corruption/identity and localization tests; final browser QA exercises reload and lost acknowledgements.
+
+## 35 — Reproducible Linux launch configuration
+
+Added strict versioned JSON startup configuration with config-relative paths, bounded files and explicit CLI override rules. Workspace lists, data location, ports, CLI and Telegram opt-in can be deployed without a long service command. Unknown fields and empty/invalid CLI ports fail early. Validation: build and config precedence foundations/path/validation tests.
