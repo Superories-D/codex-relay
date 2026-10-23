@@ -13,3 +13,7 @@ Both Windows desktop settings and Linux HTTP settings now use scheduler-serializ
 ## 23 — Remote pending-message workbench
 
 Linux web users can now edit, remove and reorder queued instructions using the same revision-checked queue as Windows. Per-task priority controls use the same persistent scheduler ordering. Switching conversations remounts queue edit state so drafts cannot migrate to another task. Validation: build, scheduler and localization suites.
+
+## 24 — Remote full-history investigation
+
+The remote conversation menu now opens the shared full-history search dialog: role filters, pagination, bounded excerpts and original-message inspection. Backend validation requires a known task and bounds query/offset/detail sizes; results remain credential-redacted over HTTP. Validation: build, chat-history and localization tests.

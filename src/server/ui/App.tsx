@@ -1,3 +1,4 @@
+import { ChatSearch } from "../../renderer/ChatSearch";
 import { MessageQueue } from "../../renderer/MessageQueue";
 import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
@@ -88,6 +89,7 @@ function App() {
   const [chat, setChat] = useState<ChatItem[]>([]),
     [before, setBefore] = useState<number>(),
     [chatError, setChatError] = useState("");
+  const [searching, setSearching] = useState<string>();
   const [building, setBuilding] = useState(false),
     [report, setReport] = useState<string>();
   const previews = useRef(new Map<string, any>());
@@ -594,6 +596,7 @@ function App() {
                           {t("取消任务")}
                         </button>
                       )}
+                      <button onClick={() => setSearching(job.id)}>{t("搜索会话内容")}</button>
                       {job.workflow && (
                         <button onClick={() => setReport(job.workflow!.id)}>
                           {t("工作流交付报告")}
@@ -687,6 +690,7 @@ function App() {
               )}
             </section>
           </main>
+          {searching && <ChatSearch key={searching} id={searching} call={call} close={() => setSearching(undefined)} />}
           {building && (
             <WorkflowBuilder
               jobs={snapshot?.jobs || []}
