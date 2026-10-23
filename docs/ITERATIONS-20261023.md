@@ -61,3 +61,7 @@ The shared Windows/web workflow builder now saves validated session drafts, stag
 ## 35 — Reproducible Linux launch configuration
 
 Added strict versioned JSON startup configuration with config-relative paths, bounded files and explicit CLI override rules. Workspace lists, data location, ports, CLI and Telegram opt-in can be deployed without a long service command. Unknown fields and empty/invalid CLI ports fail early. Validation: build and config precedence foundations/path/validation tests.
+
+## 36 — Standalone Linux distribution
+
+Added a reproducible allowlisted server packaging command: bundled daemon/web assets, both control CLIs, service/configuration samples, docs, license and per-file SHA-256 manifest. The distribution runs on Node 24 without Electron or an on-host dependency install. Runtime data is excluded. Validation: build, package creation, manifest verification and a real packaged `--check` process with isolated private storage.
