@@ -6,8 +6,12 @@ import type { Job } from "../../shared/types";
 export function useRemoteAction(
   id: string,
   call: (name: string, args?: any) => Promise<any>,
+  scope = "live",
 ) {
-  const key = `relay.remote.action.${id}`;
+  const key =
+    scope === "live"
+      ? `relay.remote.action.${id}`
+      : `relay.remote.action.${scope}.${id}`;
   const [pending, setPending] = useState<any>(() => {
     try {
       return JSON.parse(sessionStorage.getItem(key) || "null");
@@ -50,7 +54,11 @@ export function useRemoteAction(
     try {
       const value = {
         name,
-        args: { ...args, id, requestId: crypto.randomUUID() },
+        args: {
+          ...args,
+          ...(name === "goal.update" ? {} : { id }),
+          requestId: crypto.randomUUID(),
+        },
       };
       sessionStorage.setItem(key, JSON.stringify(value));
       setReceipt(undefined);

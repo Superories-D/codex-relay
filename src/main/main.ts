@@ -1,3 +1,4 @@
+import {updateGoal} from "../core/goal-command";
 import { conversationExport } from "../core/conversation-export";
 import { NotificationState } from "../core/notification-state";
 import { WindowPlacement } from "./window-placement";
@@ -684,82 +685,8 @@ async function boot() {
         const a = z.object({ id: idSchema }).strict().parse(args);
         return scheduler.goal(a.id, "thread/goal/get");
       }
-      case "chat.goal.update": {
-        const a = z
-          .discriminatedUnion("action", [
-            z.object({ id: idSchema, action: z.literal("pause") }).strict(),
-            z.object({ id: idSchema, action: z.literal("clear") }).strict(),
-            z.object({ id: idSchema, action: z.literal("start") }).strict(),
-            z
-              .object({
-                id: idSchema,
-                action: z.literal("edit"),
-                objective: goalObjectiveSchema,
-              })
-              .strict(),
-            z
-              .object({
-                id: idSchema,
-                action: z.literal("create"),
-                objective: goalObjectiveSchema,
-                tokenBudget: z
-                  .number()
-                  .int()
-                  .positive()
-                  .max(Number.MAX_SAFE_INTEGER)
-                  .nullable(),
-                start: z.boolean(),
-              })
-              .strict(),
-            z
-              .object({
-                id: idSchema,
-                action: z.literal("budget"),
-                tokenBudget: z
-                  .number()
-                  .int()
-                  .positive()
-                  .max(Number.MAX_SAFE_INTEGER)
-                  .nullable(),
-              })
-              .strict(),
-          ])
-          .parse(args);
-        if (a.action === "create")
-          return scheduler.goal(
-            a.id,
-            "thread/goal/set",
-            {
-              objective: a.objective,
-              tokenBudget: a.tokenBudget,
-              status: a.start ? "active" : "paused",
-            },
-            a.start ? "createAndStart" : "create",
-          );
-        if (a.action === "start")
-          return scheduler.goal(
-            a.id,
-            "thread/goal/set",
-            { status: "active" },
-            "start",
-          );
-        if (a.action === "edit")
-          return scheduler.goal(
-            a.id,
-            "thread/goal/set",
-            { objective: a.objective },
-            "edit",
-          );
-        return scheduler.goal(
-          a.id,
-          a.action === "clear" ? "thread/goal/clear" : "thread/goal/set",
-          a.action === "pause"
-            ? { status: "paused" }
-            : a.action === "budget"
-              ? { tokenBudget: a.tokenBudget }
-              : {},
-        );
-      }
+      case "chat.goal.update":
+        return updateGoal(scheduler,args);
       case "chat.agent.read": {
         const a = z
           .object({

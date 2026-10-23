@@ -1,6 +1,11 @@
 import {  legacyEnglish } from "./legacy-en";
 import { nativeEnglish } from "./native-en";
 export const english: Record<string, string> = {
+"启动目标": "Start goal",
+"Token 预算": "Token budget",
+"确认清除目标？": "Clear this goal?",
+"创建目标并暂停": "Create paused goal",
+"任务建立会话后可管理持续目标。": "Goals become available after the task creates a thread.",
 "候选模型来自已缓存的账号能力，实际可用性以执行结果为准。": "Suggestions use cached account capabilities; availability is checked during execution.",
 "切换模型并恢复": "Switch model and resume",
 "立即补充": "Send immediately",

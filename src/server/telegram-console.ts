@@ -262,11 +262,25 @@ export class TelegramConsole {
         text:
           "Codex Relay · 手机控制台\n\n" +
           "1. /projects → 点选项目\n2. /new 任务描述 → 创建并选中任务\n3. 直接发文字追问；回复任务卡片可指定该任务\n\n" +
-          "/status [状态|all] [页码] · /task ID\n/result [ID] · /history [ID] · /export [ID]\n/search 关键词 · /report [ID]\n/steer 立即补充 · /switchmodel 模型 [推理强度] · /models\n/queue [ID] · /priority high|normal|low\n/edit 消息ID 版本 新文字\n/remove 消息ID 版本 · /up 消息ID 版本 · /down 消息ID 版本\n" +
+          "/status [状态|all] [页码] · /task ID\n/result [ID] · /history [ID] · /export [ID]\n/search 关键词 · /report [ID]\n/goal read|create|edit|start|pause|budget|clear\n/steer 立即补充 · /switchmodel 模型 [推理强度] · /models\n/queue [ID] · /priority high|normal|low\n/edit 消息ID 版本 新文字\n/remove 消息ID 版本 · /up 消息ID 版本 · /down 消息ID 版本\n" +
           "/pause [ID] · /resume [ID] · /cancel [ID]\n/rename 名称 · /pin on|off · /archive on|off\n/depends ID ID（或 none）\n\n" +
           "/workflow 标题 换行 阶段一 换行 --- 换行 阶段二\n/workflows · /handoff 工作流ID\n/templates · /template ID（或 off）\n/defaults · /model 名称（或 default）\n/effort low|medium|high|xhigh|default · /plan on|off\n\n" +
           "/approvals [页码] · /answer CODE JSON\n/dispatch pause|resume [project|all]\n/limit 1..8|auto · /health · /accounts\n/forget 清除当前任务 · /dismiss 退出答题\n\n所有操作仅接受配置的本人私聊。",
       };
+    if(command === "goal") {
+      const job=this.job(context.task),match=args.match(/^(\S+)(?:\s+([\s\S]*))?$/),action=match?.[1]||"read",value=match?.[2]||"";
+      if(action==="read")return this.paginate(JSON.stringify(await this.runtime.command("goal.read",{id:job.id}),null,2),job.id);
+      let input:any={id:job.id,action};
+      if(action==="create"){
+        const spec=value.match(/^(\d+|none)\s+([\s\S]+)$/);
+        if(!spec)throw Error("/goal create TOKEN_BUDGET|none 目标（创建后暂停，需 /goal start）");
+        input={...input,tokenBudget:spec[1]==="none"?null:Number(spec[1]),objective:spec[2],start:false};
+      }else if(action==="edit")input.objective=value;
+      else if(action==="budget")input.tokenBudget=value==="none"?null:Number(value);
+      else if(value)throw Error("Unexpected goal arguments");
+      const receipt:any=await this.runtime.command("goal.update",{requestId,input});
+      return {taskId:job.id,text:`目标操作: ${receipt.state}\n${receipt.state==="succeeded"?"已确认。/goal 查看最新状态。":"结果未知，请检查目标状态；不会自动重放。"}`,keyboard:this.taskKeyboard(job)};
+    }
     if(command === "models") return this.paginate(JSON.stringify(await this.runtime.command("models.list"),null,2));
     if(command === "steer" || command === "switchmodel") {
       const job=this.job(context.task);

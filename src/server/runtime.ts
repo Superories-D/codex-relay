@@ -1,3 +1,4 @@
+import {goalUpdateSchema,updateGoal} from "../core/goal-command";
 import { RemoteActions } from "./actions";
 import { ServerUploads } from "./uploads";
 import { conversationExport } from "../core/conversation-export";
@@ -122,6 +123,15 @@ export class ServerRuntime {
   }
   private async execute(name: string, args?: unknown): Promise<unknown> {
     switch (name) {
+      case "goal.read": {
+        const a=z.object({id:idSchema}).strict().parse(args);
+        return this.scheduler.goal(a.id,"thread/goal/get");
+      }
+      case "goal.update": {
+        const a=z.object({requestId:idSchema,input:goalUpdateSchema}).strict().parse(args);
+        return (this.remoteActions ||= new RemoteActions(this.store.root)).run(a.requestId,name,a.input.id,a.input,()=>updateGoal(this.scheduler,a.input));
+      }
+
       case "action.read":
         return (this.remoteActions ||= new RemoteActions(this.store.root)).read(idSchema.parse(args));
       case "models.list":
