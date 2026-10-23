@@ -53,3 +53,7 @@ The remote console now hosts the shared task center: project/state filters, reco
 ## 33 — Durable task organization across platforms
 
 Remote users can rename, pin, archive and restore conversations; pinned tasks sort first and archived tasks have an explicit view. Desktop metadata edits now use the same serialized, rollback-safe scheduler operation. Active or automatically recovering tasks cannot be hidden by archiving. Validation: build, scheduler rollback/active-archive and localization tests.
+
+## 34 — Workflow drafts survive reload and unknown responses
+
+The shared Windows/web workflow builder now saves validated session drafts, stage order and the original submission ID. It persists identity before sending, reuses it after reopening, and reconciles admitted workflows from snapshots. Successful admission clears the draft; storage failure blocks submission. Validation: build, draft corruption/identity and localization tests; final browser QA exercises reload and lost acknowledgements.

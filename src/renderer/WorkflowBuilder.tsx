@@ -1,4 +1,5 @@
-import React, { useState } from "react";
+import { parseWorkflowDraft } from "./workflow-draft";
+import React, { useState, useEffect, useRef } from "react";
 import type { Job } from "../shared/types";
 import { Dialog } from "./Dialog";
 import { t, errorText, useI18n } from "./i18n";
@@ -14,22 +15,35 @@ export function WorkflowBuilder({
   close: () => void;
 }) {
   useI18n();
-  const [requestId] = useState(() => crypto.randomUUID());
-  const [title, setTitle] = useState("");
+  const storageKey = `relay.workflow.${cwd}`;
+  const [restored] = useState(()=>{try{return parseWorkflowDraft(sessionStorage.getItem(storageKey));}catch{return undefined;}});
+  const completed=useRef(false);
+  const [submitted,setSubmitted]=useState(restored?.submitted||false);
+  const [requestId] = useState(() => restored?.requestId || crypto.randomUUID());
+  const [title, setTitle] = useState(restored?.title || "");
   const [directory, setDirectory] = useState(
-    cwd || jobs[0]?.projectCwd || jobs[0]?.cwd || "",
+    restored?.directory || cwd || jobs[0]?.projectCwd || jobs[0]?.cwd || "",
   );
-  const [model, setModel] = useState(jobs[0]?.model || "");
-  const [steps, setSteps] = useState([
+  const [model, setModel] = useState(restored?.model || jobs[0]?.model || "");
+  const [steps, setSteps] = useState(restored?.steps || [
     { id: crypto.randomUUID(), text: "" },
     { id: crypto.randomUUID(), text: "" },
   ]);
   const [busy, setBusy] = useState(false),
     [error, setError] = useState("");
+  const persist = (sent=submitted) => {
+    if(!completed.current) sessionStorage.setItem(storageKey,JSON.stringify({requestId,title,directory,model,steps,submitted:sent}));
+  };
+  const finish=()=>{completed.current=true;try{sessionStorage.removeItem(storageKey);}catch{}close();};
+  useEffect(()=>{try{persist();}catch(e){setError(errorText(e));}},[title,directory,model,steps,submitted]);
+  useEffect(()=>{if(submitted && jobs.some(j=>j.workflow?.id===requestId))finish();},[jobs,submitted]);
+  useEffect(()=>{const flush=()=>{try{persist();}catch{}};window.addEventListener("pagehide",flush);return()=>window.removeEventListener("pagehide",flush);},[title,directory,model,steps,submitted]);
   async function save() {
     setBusy(true);
     setError("");
     try {
+      persist(true);
+      setSubmitted(true);
       await call("workflow.add", {
         requestId,
         title,
@@ -46,7 +60,7 @@ export function WorkflowBuilder({
           interactive: true,
         })),
       });
-      close();
+      finish();
     } catch (e) {
       setError(errorText(e));
     } finally {
@@ -54,7 +68,7 @@ export function WorkflowBuilder({
     }
   }
   return (
-    <Dialog title={t("新建工作流")} onClose={close} busy={busy}>
+    <Dialog title={t("新建工作流")} onClose={()=>{try{persist();close();}catch(e){setError(errorText(e));}}} busy={busy}>
       <form
         className="workflow-builder"
         onSubmit={(e) => {
@@ -148,6 +162,7 @@ export function WorkflowBuilder({
             </article>
           ))}
         </div>
+        {submitted && <p>{t("提交结果尚未确认，重试会沿用同一请求编号。")}</p>}
         {error && <p role="alert">{error}</p>}
         <div className="queue-actions">
           <button
@@ -160,7 +175,7 @@ export function WorkflowBuilder({
             {t("添加阶段")}
           </button>
           <button type="submit" disabled={busy}>
-            {t("创建并排队")} ({steps.length}/12)
+            {t(submitted ? "重试同一提交" : "创建并排队")} ({steps.length}/12)
           </button>
         </div>
       </form>
