@@ -1,3 +1,4 @@
+import { UPLOAD_LIMIT } from "./uploads";
 import { prepareWorkspaces, resolveWorkspace } from "./workspaces";
 import http from "node:http";
 import { promises as fs } from "node:fs";
@@ -155,6 +156,18 @@ export async function openHttp(
         res.setHeader("Retry-After","5");
         return send(res,503,{error:"Server is shutting down; retry after restart"});
       }
+      const upload = req.url?.match(/^\/api\/uploads\/([a-f0-9-]{36})(?:\?name=([^&]*))?$/i);
+      if(upload && ["POST","GET"].includes(req.method || "")) {
+        const id=z.string().uuid().parse(upload[1]);
+        if(req.method === "GET")return send(res,200,{result:await runtime.uploads.read(id)});
+        if(req.headers["content-type"]!=="application/octet-stream")return send(res,415,{error:"Binary upload required"});
+        if(pendingCommands>=4)return send(res,503,{error:"Too many uploads in progress"});
+        pendingCommands++;admitted=true;
+        const name=z.string().min(1).max(200).parse(decodeURIComponent(upload[2]||""));
+        let size=0;const chunks:Buffer[]=[];
+        for await(const chunk of req){size+=chunk.length;if(size>UPLOAD_LIMIT){send(res,413,{error:"Upload exceeds 8 MiB"});return;}chunks.push(chunk);}
+        return send(res,200,{result:await runtime.uploads.put(id,name,Buffer.concat(chunks))});
+      }
       if (req.method !== "POST" || req.url !== "/api/command")
         return send(res, 404, { error: "Not found" });
       if (!req.headers["content-type"]?.startsWith("application/json"))
@@ -196,7 +209,9 @@ export async function openHttp(
           : [];
       if (Array.isArray(attachments))
         for (const attachment of attachments)
-          attachment.path = await workspace(attachment.path);
+          if(typeof attachment.path==="string" && path.relative(path.join(runtime.store.root,"remote-uploads"),attachment.path).split(path.sep).length===2)
+            await runtime.uploads.validate(attachment);
+          else attachment.path = await workspace(attachment.path);
       return send(res, 200, {
         result: await runtime.command(body.name, body.args),
       });

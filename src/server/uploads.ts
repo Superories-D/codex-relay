@@ -14,6 +14,7 @@ const receiptSchema = z
   })
   .strict();
 export class ServerUploads {
+  private operations = new Map<string, Promise<unknown>>();
   constructor(private root: string) {}
   private folder(id: string) {
     return path.join(this.root, "remote-uploads", z.string().uuid().parse(id));
@@ -46,7 +47,19 @@ export class ServerUploads {
       } as ChatAttachment,
     };
   }
-  async put(id: string, name: string, bytes: Buffer) {
+  put(id: string, name: string, bytes: Buffer) {
+    const task = (this.operations.get(id) || Promise.resolve())
+      .catch(() => {})
+      .then(() => this.putOnce(id, name, bytes));
+    this.operations.set(id, task);
+    void task
+      .finally(() => {
+        if (this.operations.get(id) === task) this.operations.delete(id);
+      })
+      .catch(() => {});
+    return task;
+  }
+  private async putOnce(id: string, name: string, bytes: Buffer) {
     if (bytes.length > UPLOAD_LIMIT) throw Error("单个附件最大 8 MiB");
     const clean =
       "upload-" +

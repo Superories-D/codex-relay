@@ -69,6 +69,8 @@ const { chromium } = require(
         page = await context.newPage();
       page.on("pageerror", (e) => errors.push(e.message));
       if (language === "en") {
+        let droppedUpload=false;
+        await page.route("**/api/uploads/**",async route=>{if(!droppedUpload && route.request().method()==="POST"){droppedUpload=true;await route.fetch();await route.abort();}else await route.continue();});
         let droppedStream = false,
           droppedSubmit = false,
           droppedMessage = false, droppedWorkflow = false;
@@ -128,6 +130,10 @@ const { chromium } = require(
       await page.locator(".connection-bar.online").waitFor();
       await page.locator(".new-task textarea").fill(`Remote QA ${language}`);
       if (language === "en") {
+        await page.locator('.new-task input[type=file]').setInputFiles({name:"evidence.txt",mimeType:"text/plain",buffer:Buffer.from("Evidence document")});
+        await page.locator('.new-task .remote-attachments span').filter({hasText:"upload-evidence.txt"}).waitFor();
+        await page.reload();await page.locator(".connection-bar.online").waitFor();
+        await page.locator('.new-task .remote-attachments span').filter({hasText:"upload-evidence.txt"}).waitFor();
         await page.evaluate(() => {
           window.__qaSetItem = Storage.prototype.setItem;
           Storage.prototype.setItem = function (key, value) {
@@ -196,7 +202,7 @@ const { chromium } = require(
         await page
           .locator(".remote-followup textarea")
           .fill("Exactly one remote follow-up");
-        await page.locator(".remote-followup button").click();
+        await page.locator(".remote-followup > button").click();
         await page.waitForFunction(
           () =>
             document.querySelector(".remote-followup textarea")?.value === "",

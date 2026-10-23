@@ -1,3 +1,5 @@
+import { RemoteAttachments,readAttachments,saveAttachments } from "./Attachments";
+import type {ChatAttachment} from "../../shared/types";
 import { TaskCenter } from "../../renderer/TaskCenter";
 import { RuntimeSettings } from "./RuntimeSettings";
 import { TaskTemplates } from "../../renderer/TaskTemplates";
@@ -64,10 +66,16 @@ function App() {
       sessionStorage.getItem("relay.remote.draft") || "",
     );
   const [templateOptions, setTemplateOptions] = useState({effort:"",planMode:false,multiAgent:false});
+  const [newAttachments,setNewAttachments]=useState<ChatAttachment[]>(()=>readAttachments("new"));
+  const [followAttachments,setFollowAttachments]=useState<ChatAttachment[]>([]);
+  const [newUploading,setNewUploading]=useState(false),[followUploading,setFollowUploading]=useState(false);
+  useEffect(()=>setFollowAttachments(readAttachments(selected)),[selected]);
+  function clearAttachments(id:string,used:ChatAttachment[]=[]){const paths=new Set(used.map(a=>a.path));const next=readAttachments(id).filter(a=>!paths.has(a.path));saveAttachments(id,next);if(id==="new")setNewAttachments(next);else if(selection.current===id)setFollowAttachments(next);}
   const [pendingMessage, setPendingMessage] = useState<{
     id: string;
     requestId: string;
     text: string;
+    attachments?: ChatAttachment[];
   } | null>(() => {
     try {
       return JSON.parse(
@@ -164,6 +172,7 @@ function App() {
         (j) => j.clientRequest?.id === pending.requestId,
       );
       if (accepted) {
+        clearAttachments("new",pending.input.attachments);
         setSelected(accepted.id);
         setPending(null);
         setPrompt((current) =>
@@ -202,7 +211,8 @@ function App() {
       setError(errorText(e));
     }
   }
-  function acknowledgeMessage(message: { id: string; text: string }) {
+  function acknowledgeMessage(message: { id: string; text: string; attachments?: ChatAttachment[] }) {
+    clearAttachments(message.id,message.attachments);
     if (followupDrafts.current[message.id] === message.text) {
       delete followupDrafts.current[message.id];
       saveFollowups();
@@ -224,6 +234,7 @@ function App() {
     const message = pendingMessage || {
       id: job.id,
       text: followup,
+      attachments:followAttachments,
       requestId: crypto.randomUUID(),
     };
     setPendingMessage(message);
@@ -234,7 +245,7 @@ function App() {
         input: {
           id: message.id,
           text: message.text,
-          attachments: [],
+          attachments: message.attachments || [],
           action: "queue",
         },
       });
@@ -308,12 +319,14 @@ function App() {
         approvalPolicy: "on-request" as const,
         sandbox: "workspaceWrite" as const,
         interactive: true,
+        attachments:newAttachments,
       },
     };
     setPending(payload);
     try {
       sessionStorage.setItem("relay.remote.pending", JSON.stringify(payload));
       const accepted = await action("job.submit", payload);
+      clearAttachments("new",payload.input.attachments);
       setSelected(accepted.id);
       setPending(null);
       setPrompt((current) => (current === payload.input.prompt ? "" : current));
@@ -510,7 +523,8 @@ function App() {
                       onChange={(e) => setPrompt(e.target.value)}
                     />
                   </label>
-                  <button type="submit" disabled={busy || !directory}>
+                  <RemoteAttachments id="new" token={token} value={newAttachments} onChange={setNewAttachments} onBusy={setNewUploading} disabled={busy||!!pending}/>
+                  <button type="submit" disabled={busy || newUploading || !directory}>
                     {t(pending ? "重试同一提交" : "创建并排队")}
                   </button>
                   {pending && (
@@ -695,9 +709,10 @@ function App() {
                         disabled={busy || !!pendingMessage}
                       />
                     </label>
+                    <RemoteAttachments key={selected} id={selected} token={token} value={followAttachments} onChange={setFollowAttachments} onBusy={setFollowUploading} disabled={busy||!!pendingMessage}/>
                     <button
                       disabled={
-                        busy ||
+                        busy || followUploading ||
                         (!!pendingMessage && pendingMessage.id !== selected)
                       }
                     >

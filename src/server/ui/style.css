@@ -399,3 +399,4 @@ label input[type="checkbox"] {width:auto;margin:0}
 @media(max-width:700px) {.remote-followup {position:static}.remote-header {padding:16px;align-items:flex-start}.remote-header > div:first-child {min-width:92px}}
 .task-summary button {display:flex;justify-content:center;align-items:center;gap:.5rem}
 .task-summary button[aria-pressed="true"] {border-color:#71cabd;background:#19322f}
+.remote-attachments{border:1px dashed var(--line,#596574);border-radius:10px;padding:10px;margin:8px 0;min-width:0}.remote-attachments input{max-width:100%}.remote-attachments>div{display:flex;align-items:center;gap:8px;justify-content:space-between}.remote-attachments span{overflow-wrap:anywhere;min-width:0}.remote-attachments button{flex-shrink:0}

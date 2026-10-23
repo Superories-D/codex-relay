@@ -1,3 +1,4 @@
+import { ServerUploads } from "./uploads";
 import { conversationExport } from "../core/conversation-export";
 import { checkEnvironment } from "../core/diagnostics";
 import { Templates } from "../core/templates";
@@ -23,6 +24,8 @@ import {
 import { ServerCipher } from "./vault";
 import { acquireOwner } from "./owner";
 export class ServerRuntime {
+  get uploads() { return this.uploadStore ||= new ServerUploads(this.store.root); }
+  private uploadStore?: ServerUploads;
   private reports?: WorkflowReports;
   private templates?: Templates;
   private closing = false;

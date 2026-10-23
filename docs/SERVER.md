@@ -104,3 +104,7 @@ Copy `deploy/server.example.json` and run `node dist/server/main.cjs --config /e
 ### Connect from Windows or Linux
 
 With Node 24 and OpenSSH installed on the client, verify the server host key using your normal SSH setup first. Then run `node scripts/remote-tunnel.cjs --host user@server` and open the printed localhost URL after SSH authentication. The helper enforces loopback binding, host-key verification, keepalives and failure on a busy forwarding port. `--check` validates without connecting. The Windows installation also ships `remote.cjs` and `remote-tunnel.cjs` in its resources folder. Closing the tunnel does not stop server tasks. Enter the HTTP token in the browser login; never put it in the URL.
+
+### Remote browser attachments
+
+The task and follow-up forms accept file selection, drag/drop and clipboard files (8 MiB each, ten draft attachments). Draft references survive page reloads; a pending submission keeps its attachment snapshot. Authenticated `POST /api/uploads/UUID?name=ENCODED_NAME` accepts `application/octet-stream`; `GET /api/uploads/UUID` recovers the durable receipt. Uploaded references are validated against their checksum receipt before task admission. Uploaded files reside in the owner-only service data directory and must not be exposed through a public static-file server.
