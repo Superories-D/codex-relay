@@ -21,6 +21,7 @@ const allowed = new Set([
   "chat.priority",
   "chat.queue",
   "chat.read",
+  "chat.export",
   "chat.search",
   "chat.searchItem",
   "approval.list",

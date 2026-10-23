@@ -240,6 +240,13 @@ function App() {
         setPendingMessage(null);
     }
   }
+  async function exportChat(id:string) {
+    try {
+      const result=await action("chat.export",id);
+      const url=URL.createObjectURL(new Blob([result.markdown],{type:"text/markdown;charset=utf-8"}));
+      const link=document.createElement("a");link.href=url;link.download=`conversation-${id.slice(0,8)}.md`;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+    } catch {}
+  }
   async function call(name: string, args?: any) {
     if (name === "workflow.report.save") {
       const preview = previews.current.get(args.previewId);
@@ -603,6 +610,7 @@ function App() {
                           {t("取消任务")}
                         </button>
                       )}
+                      <button disabled={busy} onClick={() => void exportChat(job.id)}>{t("导出 Markdown")}</button>
                       <button onClick={() => setSearching(job.id)}>{t("搜索会话内容")}</button>
                       {job.workflow && (
                         <button onClick={() => setReport(job.workflow!.id)}>

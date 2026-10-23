@@ -1,3 +1,4 @@
+import { conversationExport } from "../core/conversation-export";
 import { checkEnvironment } from "../core/diagnostics";
 import { Templates } from "../core/templates";
 import { serviceHealth } from "../core/service-health";
@@ -185,6 +186,11 @@ export class ServerRuntime {
           .strict()
           .parse(args);
         return this.scheduler.dependencies(a.id, a.ids);
+      }
+      case "chat.export": {
+        const id=idSchema.parse(args),job=this.store.data.jobs.find(j=>j.id===id);
+        if(!job)throw Error("Task does not exist");
+        return conversationExport(this.scheduler.chats,job);
       }
       case "chat.search": {
         const a = z.object({ id:idSchema, query:z.string().trim().min(1).max(200), offset:z.number().int().min(0).max(10000000).default(0), role:z.enum(["user","assistant","tool","system"]).optional() }).strict().parse(args);

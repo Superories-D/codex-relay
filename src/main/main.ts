@@ -1,3 +1,4 @@
+import { conversationExport } from "../core/conversation-export";
 import { NotificationState } from "../core/notification-state";
 import { WindowPlacement } from "./window-placement";
 import { serviceHealth } from "../core/service-health";
@@ -824,23 +825,8 @@ async function boot() {
           filters: [{ name: "Markdown", extensions: ["md"] }],
         });
         if (result.canceled || !result.filePath) return;
-        const items = [];
-        let before: number | undefined;
-        do {
-          const page = await scheduler.chats.read(id, before);
-          items.unshift(...page.items);
-          before = page.before;
-        } while (before !== undefined);
-        await fs.writeFile(
-          result.filePath,
-          `# ${job.title}\n\n` +
-            items
-              .map(
-                (i) =>
-                  `## ${i.role === "user" ? "你" : i.role === "assistant" ? "Codex" : i.kind}\n\n${i.text}\n\n${i.detail ? "```\n" + i.detail + "\n```\n" : ""}`,
-              )
-              .join("\n"),
-        );
+        const exported = await conversationExport(scheduler.chats,job);
+        await atomicWrite(result.filePath,exported.markdown);
         return result.filePath;
       }
       case "chat.source.open": {

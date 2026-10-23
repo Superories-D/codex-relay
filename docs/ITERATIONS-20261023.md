@@ -41,3 +41,7 @@ Desktop notifications now include new approval requests and correctly notify whe
 ## 30 — Explicit desktop background and privacy controls
 
 Added localized preferences for tray-only startup, close-to-tray versus safe exit, active-task sleep prevention, and hiding task names in native notifications. Preferences roll back when persistence fails. Startup only hides after the tray exists; choosing exit follows existing process-confirmed shutdown. Validation: build, desktop storage and localization tests. OS tray/power/toast integration needs Windows acceptance.
+
+## 31 — Bounded cross-platform conversation exports
+
+Windows and Linux now share a chronological export pipeline with credential redaction, safe code fences, duplicate-message handling and explicit size truncation. Windows writes atomically; web users download Markdown directly. Export scans history beyond the current page and never reads referenced files. Validation: build, export pagination/redaction/bounds and localization tests.
