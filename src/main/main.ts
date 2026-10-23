@@ -1042,6 +1042,7 @@ async function boot() {
           })
           .strict()
           .parse(args);
+        if (a.cwd === undefined && a.sandbox === undefined && a.approvalPolicy === undefined) { const {id,...patch}=a; return scheduler.metadata(id,patch); }
         const job = store.data.jobs.find((j) => j.id === a.id);
         if (!job) throw new Error("会话不存在");
         if (

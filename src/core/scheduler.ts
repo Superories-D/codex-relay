@@ -1527,6 +1527,17 @@ export class Scheduler extends EventEmitter {
       } finally { this.maintaining = false; }
     });
   }
+  metadata(id:string, patch:Partial<Pick<Job,"title"|"pinned"|"archived">>) {
+    return this.queueControl(id,async()=>{
+      const job=this.store.data.jobs.find(j=>j.id===id);
+      if(!job || this.closing)throw Error("Task is unavailable");
+      if(patch.archived && (this.familyActive(id)||job.recoveryRequired||job.autoRecovery||!["paused","completed","cancelled","needs_attention"].includes(job.state)))throw Error("Pause the task before archiving");
+      const previous={title:job.title,pinned:job.pinned,archived:job.archived};
+      Object.assign(job,patch);
+      try{await this.store.save();}catch(error){Object.assign(job,previous);throw error;}
+      this.changed();
+    });
+  }
   priority(id: string, priority: NonNullable<Job["priority"]>) {
     return this.queueControl(id, async () => {
       const job = this.store.data.jobs.find((j) => j.id === id);

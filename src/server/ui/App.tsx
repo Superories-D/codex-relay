@@ -93,6 +93,8 @@ function App() {
   const [chat, setChat] = useState<ChatItem[]>([]),
     [before, setBefore] = useState<number>(),
     [chatError, setChatError] = useState("");
+  const [archived, setArchived] = useState(false);
+  const [renaming, setRenaming] = useState<string>();
   const [center, setCenter] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [templates, setTemplates] = useState(false);
@@ -102,6 +104,7 @@ function App() {
   const previews = useRef(new Map<string, any>());
   const selection = useRef(selected);
   selection.current = selected;
+  useEffect(()=>setRenaming(undefined),[selected]);
   const job = snapshot?.jobs.find((j) => j.id === selected);
   useEffect(() => {
     try {
@@ -546,17 +549,18 @@ function App() {
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                 />
+                <label><input type="checkbox" checked={archived} onChange={e=>setArchived(e.target.checked)} />{t("已归档会话")}</label>
                 <div className="remote-task-list">
                   {snapshot?.jobs
                     .filter(
                       (j) =>
-                        !j.archived &&
+                        !!j.archived === archived &&
                         `${j.title} ${j.cwd}`
                           .toLowerCase()
                           .includes(query.toLowerCase()),
                     )
                     .slice()
-                    .reverse()
+                    .sort((a,b)=>Number(!!b.pinned)-Number(!!a.pinned)||b.createdAt-a.createdAt)
                     .map((j) => (
                       <button
                         key={j.id}
@@ -578,6 +582,12 @@ function App() {
                   <div className="conversation-header">
                     <h1>{job.title}</h1>
                     <p>{job.cwd}</p>
+                    {renaming !== undefined && <form onSubmit={e=>{e.preventDefault();void action("job.metadata",{id:job.id,title:renaming}).then(()=>setRenaming(undefined)).catch(()=>{});}}><input required maxLength={120} value={renaming} onChange={e=>setRenaming(e.target.value)} aria-label={t("重命名会话")}/><button disabled={busy}>{t("保存")}</button></form>}
+                    <div className="row">
+                      <button onClick={()=>setRenaming(job.title)}>{t("重命名会话")}</button>
+                      <button disabled={busy} onClick={()=>run("job.metadata",{id:job.id,pinned:!job.pinned})}>{t(job.pinned?"取消置顶":"置顶会话")}</button>
+                      <button disabled={busy} onClick={()=>run("job.metadata",{id:job.id,archived:!job.archived})}>{t(job.archived?"取消归档":"归档会话")}</button>
+                    </div>
                     <div className="row">
                       <span className="state-pill">{t(labels[job.state])}</span>
                       {["paused", "needs_attention"].includes(job.state) ? (

@@ -49,3 +49,7 @@ Windows and Linux now share a chronological export pipeline with credential reda
 ## 32 — Unified remote task control center
 
 The remote console now hosts the shared task center: project/state filters, recovery summaries, scoped bulk pause/resume with per-task results, prerequisite editing, project dispatch holds and concurrency budgets. Workflow building/reports remain accessible from the same surface. Validation: build, scheduler and localization tests; browser acceptance is included in the final integrated pass.
+
+## 33 — Durable task organization across platforms
+
+Remote users can rename, pin, archive and restore conversations; pinned tasks sort first and archived tasks have an explicit view. Desktop metadata edits now use the same serialized, rollback-safe scheduler operation. Active or automatically recovering tasks cannot be hidden by archiving. Validation: build, scheduler rollback/active-archive and localization tests.

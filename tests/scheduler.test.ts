@@ -1985,3 +1985,11 @@ it("rolls back runtime settings on persistence failure and rejects changes with 
   await until(() => workers[0]?.started);
   await expect(scheduler.configure(previous)).rejects.toThrow("Pause tasks");
 });
+
+it("persists task organization atomically and cannot archive active work",async()=>{
+ const job=await scheduler.add({...input,cwd:root});await until(()=>workers[0]?.started);
+ await expect(scheduler.metadata(job.id,{archived:true})).rejects.toThrow("Pause");
+ await scheduler.metadata(job.id,{title:"Renamed",pinned:true});expect(job.title).toBe("Renamed");
+ const save=vi.spyOn(store,"save").mockRejectedValueOnce(Error("disk full"));
+ await expect(scheduler.metadata(job.id,{title:"Lost"})).rejects.toThrow("disk full");expect(job.title).toBe("Renamed");save.mockRestore();
+});

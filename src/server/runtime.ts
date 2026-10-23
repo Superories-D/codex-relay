@@ -224,6 +224,10 @@ export class ServerRuntime {
         const a = controlSchema.parse(args);
         return this.scheduler.control(a.id, a.action);
       }
+      case "job.metadata": {
+        const {id,...patch}=z.object({id:idSchema,title:z.string().trim().min(1).max(120).optional(),pinned:z.boolean().optional(),archived:z.boolean().optional()}).strict().parse(args);
+        return this.scheduler.metadata(id,patch);
+      }
       case "chat.priority": {
         const a = z.object({id:idSchema,priority:z.enum(["high","normal","low"])}).strict().parse(args);
         return this.scheduler.priority(a.id,a.priority);
