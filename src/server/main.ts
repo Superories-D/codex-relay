@@ -124,6 +124,7 @@ async function main() {
   const stop = async () => {
     if (stopping) return;
     stopping = true;
+    runtime.beginDrain();
     try {
       await bot?.stop();
       await runtime.close();

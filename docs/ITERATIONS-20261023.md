@@ -69,3 +69,7 @@ Added a reproducible allowlisted server packaging command: bundled daemon/web as
 ## 37 — Windows/Linux remote connection launcher
 
 Added a shell-free OpenSSH launcher with validated host/port arguments, loopback-only forwarding, host-key verification, keepalives and clean signal forwarding. Both server distributions and Windows installer resources include the remote CLI and tunnel helper. Validation: argument-injection/port tests and `--check`; no real SSH destination was contacted.
+
+## 38 — Observable graceful service draining
+
+Shutdown now blocks new admissions before stopping Telegram or workers. Authenticated readiness reports `stopping` with HTTP 503; commands receive a retryable 503 rather than a misleading validation error. Already-admitted commands finish before process-confirmed shutdown, retaining the original restart semantics. Validation: build and real HTTP/runtime drain tests. Clients keep stable submission IDs across these responses.

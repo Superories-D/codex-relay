@@ -127,7 +127,7 @@ export async function openHttp(
           commands: [...allowed],
         });
       if (req.method === "GET" && req.url === "/api/health")
-        return send(res, 200, await runtime.command("health"));
+        return send(res, runtime.draining ? 503 : 200, await runtime.command("health"));
       if (req.method === "GET" && req.url === "/api/snapshot")
         return send(res, 200, snapshot());
       if (req.method === "GET" && req.url === "/api/events") {
@@ -150,6 +150,10 @@ export async function openHttp(
           streams.delete(res);
         });
         return;
+      }
+      if (runtime.draining) {
+        res.setHeader("Retry-After","5");
+        return send(res,503,{error:"Server is shutting down; retry after restart"});
       }
       if (req.method !== "POST" || req.url !== "/api/command")
         return send(res, 404, { error: "Not found" });
@@ -198,7 +202,7 @@ export async function openHttp(
       });
     } catch (error) {
       if (!res.headersSent)
-        send(res, 400, {
+        send(res, (error as any)?.status === 503 ? 503 : 400, {
           error: redact(error instanceof Error ? error.message : error),
         });
       else res.destroy();

@@ -105,8 +105,11 @@ export class ServerRuntime {
     });
     this.scheduler.start();
   }
+  get draining() { return this.closing; }
+  beginDrain() { this.closing = true; }
   command(name: string, args?: unknown): Promise<unknown> {
-    if (this.closing) return Promise.reject(Error("Server is shutting down"));
+    if (name === "health") return Promise.resolve(serviceHealth(this.scheduler.snapshot(),this.closing));
+    if (this.closing) return Promise.reject(Object.assign(Error("Server is shutting down; retry after restart"),{status:503}));
     const task = this.execute(name, args);
     this.inFlight.add(task);
     void task.finally(() => this.inFlight.delete(task)).catch(() => {});

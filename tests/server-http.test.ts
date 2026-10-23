@@ -142,3 +142,15 @@ describe.skipIf(process.platform !== "linux")(
     });
   },
 );
+
+it.skipIf(process.platform !== "linux")("reports draining readiness and rejects new work with retryable status",async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),"relay-drain-"));const runtime=await ServerRuntime.open(root);const web=await openHttp(runtime,0,[]);
+ try{
+ const base=`http://127.0.0.1:${(web.server.address() as any).port}`,token=await fs.readFile(path.join(root,"http-token"),"utf8"),headers={Authorization:`Bearer ${token}`,"Content-Type":"application/json"};
+ expect((await fetch(base+"/api/health",{headers})).status).toBe(200);
+ runtime.beginDrain();
+ const health=await fetch(base+"/api/health",{headers});expect(health.status).toBe(503);expect((await health.json()).status).toBe("stopping");
+ const response=await fetch(base+"/api/command",{method:"POST",headers,body:JSON.stringify({name:"snapshot"})});expect(response.status).toBe(503);expect(response.headers.get("retry-after")).toBe("5");
+ await expect(runtime.command("job.add",{})).rejects.toMatchObject({status:503});expect(runtime.store.data.jobs).toHaveLength(0);
+ }finally{await web.close();await runtime.close();await fs.rm(root,{recursive:true,force:true});}
+});
