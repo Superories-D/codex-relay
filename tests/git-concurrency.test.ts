@@ -93,8 +93,14 @@ it("allows only one concurrent commit from the same reviewed revision", async ()
     desktop.gitAction(repo, "commit", undefined, "first", viewed.revision),
     desktop.gitAction(repo, "commit", undefined, "second", viewed.revision),
   ]);
-  expect(results.map((r) => r.status)).toEqual(["fulfilled", "rejected"]);
-  expect((results[1] as PromiseRejectedResult).reason.message).toContain("Git 状态已变化");
+  // Canonical-path resolution may finish in either order before queue admission.
+  expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+  const rejected = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+  expect(rejected).toHaveLength(1);
+  expect(rejected[0].reason.message).toContain("Git 状态已变化");
+  const winner = results.findIndex((r) => r.status === "fulfilled");
+  expect((await desktop.git(repo, ["log", "-1", "--format=%s"])).trim()).toBe(["first", "second"][winner]);
+  expect(await desktop.git(repo, ["show", "HEAD:file.txt"])).toBe("one commit\n");
   expect((await desktop.git(repo, ["rev-list", "--count", "HEAD"])).trim()).toBe("2");
 }, 20000);
 

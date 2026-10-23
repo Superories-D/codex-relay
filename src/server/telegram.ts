@@ -8,6 +8,19 @@ import { redact } from "../core/redact";
 import { prepareWorkspaces, resolveWorkspace } from "./workspaces";
 import type { ServerRuntime } from "./runtime";
 import type { Approval, Job } from "../shared/types";
+import {
+  questionList,
+  validateQuestionAnswers,
+} from "../shared/user-questions";
+import {
+  TelegramConsole,
+  contextSchema,
+  replySchema,
+  button,
+  homeKeyboard,
+  type TelegramContext,
+  type TelegramReply,
+} from "./telegram-console";
 const configSchema = z
   .object({
     token: z.string().regex(/^\d{5,20}:[A-Za-z0-9_-]{20,100}$/),
@@ -41,7 +54,12 @@ export async function telegramConfig(root: string, inputFile?: string) {
   }
 }
 export type TelegramApi = (
-  method: "getWebhookInfo" | "getUpdates" | "sendMessage",
+  method:
+    | "getWebhookInfo"
+    | "getUpdates"
+    | "sendMessage"
+    | "sendDocument"
+    | "answerCallbackQuery",
   body: Record<string, unknown>,
   signal: AbortSignal,
 ) => Promise<any>;
@@ -50,8 +68,10 @@ export function telegramApi(token: string): TelegramApi {
     notBefore = 0;
   return async (method, body, signal) => {
     const delay =
-      Math.max(notBefore, method === "sendMessage" ? nextSendAt : 0) -
-      Date.now();
+      Math.max(
+        notBefore,
+        ["sendMessage", "sendDocument"].includes(method) ? nextSendAt : 0,
+      ) - Date.now();
     if (delay > 0)
       await new Promise<void>((resolve, reject) => {
         const aborted = () => {
@@ -66,13 +86,35 @@ export function telegramApi(token: string): TelegramApi {
         if (signal.aborted) aborted();
       });
     if (signal.aborted) throw Error("Telegram request stopped");
-    if (method === "sendMessage") nextSendAt = Date.now() + 1100;
+    if (["sendMessage", "sendDocument"].includes(method))
+      nextSendAt = Date.now() + 1100;
+    let payload: string | FormData = JSON.stringify(body);
+    if (method === "sendDocument") {
+      const document = body.document as { name: string; text: string };
+      const form = new FormData();
+      for (const [key, value] of Object.entries(body)) {
+        if (key !== "document" && value !== undefined)
+          form.set(
+            key,
+            typeof value === "object" ? JSON.stringify(value) : String(value),
+          );
+      }
+      form.set(
+        "document",
+        new Blob([document.text], { type: "text/plain;charset=utf-8" }),
+        document.name,
+      );
+      payload = form;
+    }
     let response;
     try {
       response = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+        headers:
+          typeof payload === "string"
+            ? { "Content-Type": "application/json" }
+            : undefined,
+        body: payload,
         redirect: "error",
         signal: AbortSignal.any([signal, AbortSignal.timeout(35000)]),
       });
@@ -99,15 +141,25 @@ const stateSchema = z
     identity: z.string(),
     offset: z.number().int().nonnegative(),
     known: z.record(z.string(), z.string()),
-    pending: z
+    context: contextSchema.optional(),
+    answerCode: z.string().optional(),
+    routes: z.record(z.string(), z.string().uuid()).optional(),
+    incoming: z
       .object({
         updateId: z.number().int().nonnegative(),
-        text: z.string().max(4000),
+        text: z.string().max(110000),
+        context: contextSchema,
       })
+      .strict()
+      .optional(),
+    pending: replySchema
+      .extend({ updateId: z.number().int().nonnegative() })
+      .strict()
       .optional(),
   })
   .strict();
 type State = z.infer<typeof stateSchema>;
+class TelegramPersistenceError extends Error {}
 const requestId = (identity: string, id: number) => {
   const chars = createHash("sha256")
     .update(`telegram:${identity}:${id}`)
@@ -134,6 +186,12 @@ export class TelegramBridge {
     }
   >();
   private identity: string;
+  private console: TelegramConsole;
+  private wizard?: {
+    code: string;
+    index: number;
+    answers: Record<string, { answers: string[] }>;
+  };
   private constructor(
     private runtime: ServerRuntime,
     private config: TelegramConfig,
@@ -143,6 +201,15 @@ export class TelegramBridge {
     private now: () => number,
   ) {
     this.identity = `${config.token.split(":")[0]}:${config.userId}`;
+    this.console = new TelegramConsole(
+      runtime,
+      roots,
+      (text, limit) => this.safe(text, limit),
+      async (context) => {
+        await this.commit({ ...this.state!, context });
+      },
+      now,
+    );
   }
   static async open(
     runtime: ServerRuntime,
@@ -173,14 +240,21 @@ export class TelegramBridge {
   private file() {
     return path.join(this.runtime.store.root, "telegram-state.json");
   }
-  private safe(text: unknown) {
+  private safe(text: unknown, limit = 3500) {
     return redact(
       String(text).split(this.config.token).join("[REDACTED]"),
-      3500,
+      limit,
     ).replace(/[\uD800-\uDBFF]$/, "");
   }
   private async commit(next: State) {
-    await this.write(this.file(), JSON.stringify(next));
+    try {
+      await this.write(this.file(), JSON.stringify(next));
+    } catch (error) {
+      throw new TelegramPersistenceError(
+        error instanceof Error ? error.message : String(error),
+        { cause: error },
+      );
+    }
     this.state = next;
   }
   private jobs() {
@@ -209,7 +283,12 @@ export class TelegramBridge {
     // First enablement discards old commands. Never execute a previous deployment's backlog.
     const updates = await this.api(
       "getUpdates",
-      { offset: -1, limit: 1, timeout: 0, allowed_updates: ["message"] },
+      {
+        offset: -1,
+        limit: 1,
+        timeout: 0,
+        allowed_updates: ["message", "callback_query"],
+      },
       this.controller.signal,
     );
     const latest = Array.isArray(updates)
@@ -227,13 +306,23 @@ export class TelegramBridge {
       known: Object.fromEntries(this.jobs().map((j) => [j.id, this.tag(j)])),
     });
   }
-  private async send(text: string) {
-    await this.api(
-      "sendMessage",
+  private async send(reply: string | TelegramReply) {
+    const value = typeof reply === "string" ? { text: reply } : reply;
+    return this.api(
+      value.document ? "sendDocument" : "sendMessage",
       {
         chat_id: this.config.userId,
-        text: this.safe(text),
-        link_preview_options: { is_disabled: true },
+        ...(value.document
+          ? { document: value.document, caption: this.safe(value.text, 1000) }
+          : {
+              text: this.safe(value.text),
+              link_preview_options: { is_disabled: true },
+            }),
+        reply_markup: {
+          inline_keyboard: (value.keyboard || homeKeyboard()).map((row) =>
+            row.map((b) => ({ ...b, text: this.safe(b.text, 60) })),
+          ),
+        },
       },
       this.controller.signal,
     );
@@ -262,52 +351,38 @@ export class TelegramBridge {
       )
       .digest("hex");
   }
-  private async execute(updateId: number, text: string): Promise<string> {
-    const match = text.match(/^\/(\w+)(?:\s+([\s\S]*))?$/);
+  private async execute(
+    updateId: number,
+    text: string,
+    context: TelegramContext,
+  ): Promise<string | TelegramReply> {
+    const match = text.match(/^\/(\w+)(?:@[A-Za-z0-9_]+)?(?:\s+([\s\S]*))?$/);
     if (!match) return "Use /help for Relay commands.";
     const command = match[1].toLowerCase(),
-      args = match[2] || "";
-    if (command === "help" || command === "start")
-      return "/projects · /status\n/run PROJECT_NUMBER instruction\n/send TASK_ID instruction\n/pause TASK_ID · /resume TASK_ID · /cancel TASK_ID\n/approvals · /approve CODE · /decline CODE\n/answer CODE JSON\nOnly this configured private chat can control Relay.";
-    if (command === "projects")
-      return (
-        this.roots.map((root, i) => `${i + 1}. ${root}`).join("\n") ||
-        "No workspaces configured."
-      );
-    if (command === "status")
-      return (
-        this.jobs()
-          .slice(0, 12)
-          .map((j) => `${j.id.slice(0, 8)} · ${this.tag(j)} · ${j.title}`)
-          .join("\n") || "No tasks."
-      );
+      args = (match[2] || "").trim();
+    const reply = await this.console.execute(
+      command,
+      args,
+      context,
+      requestId(this.identity, updateId),
+    );
+    if (reply !== undefined) return reply;
     if (command === "run") {
       const parts = args.match(/^(\d+)\s+([\s\S]+)$/);
       if (!parts || !this.roots[Number(parts[1]) - 1])
         throw Error(
           "Use /run PROJECT_NUMBER instruction; list roots with /projects",
         );
-      const prompt = parts[2].trim(),
-        cwd = await resolveWorkspace(
-          this.roots,
-          this.roots[Number(parts[1]) - 1],
-        );
-      const job: any = await this.runtime.command("job.submit", {
-        requestId: requestId(this.identity, updateId),
-        input: {
-          title: prompt.split("\n")[0].slice(0, 120),
-          prompt,
-          cwd,
-          mode: "cli",
-          model: "",
-          effort: "",
-          bucket: "codex",
-          approvalPolicy: "on-request",
-          sandbox: "workspaceWrite",
-          interactive: true,
-        },
-      });
-      return `Queued ${job.id}\n${job.title}`;
+      const project = await resolveWorkspace(
+        this.roots,
+        this.roots[Number(parts[1]) - 1],
+      );
+      return (await this.console.execute(
+        "new",
+        parts[2].trim(),
+        { ...context, project },
+        requestId(this.identity, updateId),
+      ))!;
     }
     if (command === "send") {
       const parts = args.match(/^(\S+)\s+([\s\S]+)$/);
@@ -317,10 +392,14 @@ export class TelegramBridge {
         requestId: requestId(this.identity, updateId),
         input: { id: job.id, text: parts[2], attachments: [], action: "queue" },
       });
-      return `Follow-up accepted for ${job.id}`;
+      return {
+        text: `Follow-up accepted for ${job.id}`,
+        taskId: job.id,
+        keyboard: this.console.taskKeyboard(job),
+      };
     }
     if (["pause", "resume", "cancel"].includes(command)) {
-      const job = this.findJob(args.trim());
+      const job = this.findJob(args.trim() || context.task || "");
       if (
         command === "resume" &&
         !["paused", "needs_attention"].includes(job.state)
@@ -337,17 +416,31 @@ export class TelegramBridge {
       });
       return `${command}: ${job.id}`;
     }
+    if (command === "dismiss") {
+      this.wizard = undefined;
+      await this.commit({ ...this.state!, answerCode: undefined });
+      return "已退出答题。普通文字将发送到当前任务。";
+    }
     if (command === "approvals") {
       this.grants.clear();
-      const lines = [];
-      for (const a of this.runtime.scheduler.approvals.slice(0, 10)) {
-        const detail = JSON.stringify(a.params, null, 2);
-        if (detail.length > 1200) {
-          lines.push(
-            `${a.jobId.slice(0, 8)} · ${a.kind}: request is too large for chat; review it in the web console.`,
-          );
-          continue;
-        }
+      this.wizard = undefined;
+      await this.commit({ ...this.state!, answerCode: undefined });
+      const approvals = this.runtime.scheduler.approvals,
+        page = args ? Number(args) : 1;
+      if (
+        !Number.isInteger(page) ||
+        page < 1 ||
+        page > Math.max(1, approvals.length)
+      )
+        throw Error("Invalid approval page");
+      const a = approvals[page - 1];
+      if (!a) return "No pending approvals.";
+      const detail = JSON.stringify(a.params, null, 2),
+        keyboard = [];
+      let text = `${a.jobId.slice(0, 8)} · ${a.kind} · ${page}/${approvals.length}\n`;
+      if (detail.length > 2600) {
+        text += "请求太长，不能在截断信息上审批。请在网页控制台查看完整请求。";
+      } else {
         const code = randomBytes(6).toString("hex");
         this.grants.set(code, {
           jobId: a.jobId,
@@ -356,32 +449,98 @@ export class TelegramBridge {
           signature: this.signature(a),
           expires: this.now() + 5 * 60 * 1000,
         });
-        lines.push(
-          `${a.jobId.slice(0, 8)} · ${a.kind}\n${this.safe(detail)}\nCode: ${code} (5 minutes)\n${a.kind === "input" || a.kind === "elicitation" ? "Use /answer CODE JSON" : "Use /approve CODE or /decline CODE"}`,
-        );
+        text += `${this.safe(detail)}\nCode: ${code} (5 minutes)\n`;
+        if (
+          a.kind === "input" &&
+          questionList(a.params).length &&
+          questionList(a.params).every((q) => (q.options?.length || 0) <= 25)
+        ) {
+          text += "点击逐题回答，支持选项按钮和文字。也可 /answer CODE JSON";
+          keyboard.push([button("逐题回答", `/ask ${code}`)]);
+        } else if (a.kind === "input" || a.kind === "elicitation")
+          text += "Use /answer CODE JSON";
+        else {
+          text += "Use /approve CODE or /decline CODE";
+          keyboard.push([
+            button("同意此次请求", `/approve ${code}`),
+            button("拒绝", `/decline ${code}`),
+          ]);
+        }
       }
-      // Limit to complete request descriptions; never offer an approval for a truncated prompt.
-      let reply = "";
-      for (const line of lines) {
-        if (reply.length + line.length > 3300) break;
-        reply += line + "\n\n";
+      const nav = [];
+      if (page > 1) nav.push(button("上一条", `/approvals ${page - 1}`));
+      if (page < approvals.length)
+        nav.push(button("下一条", `/approvals ${page + 1}`));
+      if (nav.length) keyboard.push(nav);
+      keyboard.push([
+        button("任务详情", `/task ${a.jobId}`),
+        button("刷新审批", `/approvals ${page}`),
+      ]);
+      return { text, keyboard, taskId: a.jobId };
+    }
+    if (["ask", "pick", "answertext"].includes(command)) {
+      const parts = args.match(/^(\S+)(?:\s+(\d+)\s+([\s\S]+))?$/),
+        code = parts?.[1] || "";
+      const { approval } = this.currentGrant(code);
+      const questions = questionList(approval.params);
+      if (
+        approval.kind !== "input" ||
+        !questions.length ||
+        questions.some((q) => (q.options?.length || 0) > 25)
+      )
+        throw Error("This request requires /answer CODE JSON");
+      if (command === "ask") {
+        this.wizard = { code, index: 0, answers: Object.create(null) };
+        await this.commit({ ...this.state!, answerCode: code });
+      } else {
+        const wizard = this.wizard;
+        if (
+          !wizard ||
+          wizard.code !== code ||
+          Number(parts?.[2]) !== wizard.index
+        )
+          throw Error("问题已变化，请重新 /approvals → 逐题回答");
+        const question = questions[wizard.index];
+        const answer =
+          command === "pick"
+            ? question.options?.[Number(parts?.[3])]?.label
+            : parts?.[3]?.trim();
+        if (!answer || answer.length > 10000) throw Error("Invalid answer");
+        if (
+          question.options?.length &&
+          !question.isOther &&
+          !question.options.some((o) => o.label === answer)
+        )
+          throw Error("请点击提供的选项");
+        wizard.answers[question.id] = { answers: [answer] };
+        wizard.index++;
+        if (wizard.index === questions.length) {
+          const value = { answers: wizard.answers };
+          validateQuestionAnswers(approval.params, value);
+          return this.execute(
+            updateId,
+            `/answer ${code} ${JSON.stringify(value)}`,
+            context,
+          );
+        }
       }
-      return reply || "No pending approvals.";
+      const wizard = this.wizard!,
+        q = questions[wizard.index];
+      return {
+        text: `问题 ${wizard.index + 1}/${questions.length} · ${q.header}\n${q.question}\n\n${(q.options || []).map((o, i) => `${i + 1}. ${o.label} — ${o.description}`).join("\n")}\n\n直接回复文字，或点击选项。/dismiss 退出答题。`,
+        taskId: approval.jobId,
+        keyboard: [
+          ...(q.options || []).map((o, i) => [
+            button(o.label, `/pick ${code} ${wizard.index} ${i}`),
+          ]),
+          [button("退出答题", "/dismiss")],
+        ],
+      };
     }
     if (["approve", "decline", "answer"].includes(command)) {
       const parts = args.match(/^(\S+)(?:\s+([\s\S]+))?$/),
-        code = parts?.[1] || "",
-        grant = this.grants.get(code);
-      if (!grant || grant.expires <= this.now())
-        throw Error("Approval code expired; request /approvals again");
-      const approval = this.runtime.scheduler.approvals.find(
-        (a) =>
-          a.jobId === grant.jobId &&
-          a.id === grant.id &&
-          a.historyId === grant.historyId,
-      );
-      if (!approval || this.signature(approval) !== grant.signature)
-        throw Error("Approval changed; request /approvals again");
+        code = parts?.[1] || "";
+      const { grant, approval } = this.currentGrant(code);
       let value: unknown;
       if (command === "answer") {
         if (!["input", "elicitation"].includes(approval.kind || ""))
@@ -394,35 +553,135 @@ export class TelegramBridge {
           );
         value = { decision: command === "approve" ? "accept" : "decline" };
       }
+      // Consume before dispatch; an uncertain response must not accept a second request.
+      this.grants.delete(code);
       await this.runtime.command("approval.respond", {
         id: grant.id,
         jobId: grant.jobId,
         historyId: grant.historyId,
         value,
       });
-      this.grants.delete(code);
+      this.wizard = undefined;
+      await this.commit({ ...this.state!, answerCode: undefined });
       return `Response sent for ${grant.jobId}`;
     }
     return "Unknown command. Use /help.";
   }
+  private currentGrant(code: string) {
+    const grant = this.grants.get(code);
+    if (!grant || grant.expires <= this.now())
+      throw Error("Approval code expired; request /approvals again");
+    const approval = this.runtime.scheduler.approvals.find(
+      (a) =>
+        a.jobId === grant.jobId &&
+        a.id === grant.id &&
+        a.historyId === grant.historyId,
+    );
+    if (!approval || this.signature(approval) !== grant.signature)
+      throw Error("Approval changed; request /approvals again");
+    return { grant, approval };
+  }
+  private async deliverPending() {
+    const pending = this.state!.pending;
+    if (!pending) return;
+    const sent = await this.send(pending),
+      routes = { ...this.state!.routes };
+    if (pending.taskId && Number.isSafeInteger(sent?.message_id))
+      routes[String(sent.message_id)] = pending.taskId;
+    const entries = Object.entries(routes)
+      .sort((a, b) => Number(b[0]) - Number(a[0]))
+      .slice(0, 200);
+    await this.commit({
+      ...this.state!,
+      routes: Object.fromEntries(entries),
+      offset: pending.updateId + 1,
+      pending: undefined,
+      incoming: undefined,
+    });
+  }
+  private async processIncoming() {
+    const incoming = this.state!.incoming;
+    if (!incoming) return;
+    let reply: TelegramReply;
+    try {
+      const result = await this.execute(
+        incoming.updateId,
+        incoming.text,
+        incoming.context,
+      );
+      reply = typeof result === "string" ? { text: result } : result;
+    } catch (e) {
+      if (e instanceof TelegramPersistenceError) throw e;
+      reply = {
+        text: `Error: ${this.safe(e instanceof Error ? e.message : e)}`,
+      };
+    }
+    reply.text = this.safe(reply.text);
+    if (reply.keyboard)
+      reply.keyboard = reply.keyboard.map((row) =>
+        row.map((b) => ({ ...b, text: this.safe(b.text, 60) })),
+      );
+    if (reply.document) {
+      const limit = 8 * 1024 * 1024;
+      const truncated = reply.document.text.length > limit;
+      reply.document.text =
+        this.safe(reply.document.text, truncated ? limit - 100 : limit) +
+        (truncated
+          ? "\n[Document exceeded 8 Mi characters; remainder omitted.]"
+          : "");
+    }
+    // Validate and save the complete reply (including any document) before network I/O.
+    replySchema.parse(reply);
+    await this.commit({
+      ...this.state!,
+      pending: { ...reply, updateId: incoming.updateId },
+      incoming: undefined,
+    });
+    await this.deliverPending();
+  }
+  private route(text: string, message: any, context: TelegramContext) {
+    const run = text.match(/^\/run(?:@[A-Za-z0-9_]+)?\s+(\d+)\s+([\s\S]+)$/i);
+    if (run) {
+      const project = this.roots[Number(run[1]) - 1];
+      if (!project)
+        throw Error(
+          "Use /run PROJECT_NUMBER instruction; list roots with /projects",
+        );
+      // Workspace numbers are presentation only and may change with launch configuration.
+      context.project = project;
+      return `/new ${run[2]}`;
+    }
+    if (text.startsWith("/")) return text;
+    if (this.state!.answerCode) {
+      // Persisted answer mode fails closed after restart; it must not become a task instruction.
+      return `/answertext ${this.state!.answerCode} ${this.wizard?.index || 0} ${text}`;
+    }
+    let task = context.task;
+    if (message.reply_to_message) {
+      task = this.state!.routes?.[String(message.reply_to_message.message_id)];
+      if (!task)
+        throw Error(
+          "这条回复未关联任务，请 /task ID 后重新发送；没有投递到其他任务。",
+        );
+    }
+    if (!task)
+      throw Error(
+        "先 /project 选项目、/new 创建任务，或 /task ID 选择已有任务。",
+      );
+    return `/send ${task} ${text}`;
+  }
   async pollOnce() {
     await this.initialize();
-    if (this.state!.pending) {
-      const pending = this.state!.pending;
-      await this.send(pending.text);
-      await this.commit({
-        ...this.state!,
-        offset: pending.updateId + 1,
-        pending: undefined,
-      });
-    }
+    await this.deliverPending();
+    // A durable resolved route survives lost acknowledgements, project changes and restart.
+    await this.processIncoming();
     const updates = await this.api(
       "getUpdates",
       {
         offset: this.state!.offset,
         limit: 20,
         timeout: 25,
-        allowed_updates: ["message"],
+        allowed_updates: ["message", "callback_query"],
       },
       this.controller.signal,
     );
@@ -436,58 +695,111 @@ export class TelegramBridge {
         update.update_id < this.state!.offset
       )
         continue;
-      const message = update.message;
+      const callback = update.callback_query,
+        message = callback?.message || update.message,
+        sender = callback?.from || message?.from;
+      const text = callback ? callback.data : message?.text;
       if (
         message?.chat?.type !== "private" ||
         String(message.chat.id) !== this.config.userId ||
-        String(message.from?.id) !== this.config.userId ||
-        message.from?.is_bot ||
+        String(sender?.id) !== this.config.userId ||
+        sender?.is_bot ||
         message.forward_origin ||
         message.via_bot ||
-        typeof message.text !== "string"
+        (callback &&
+          (typeof callback.id !== "string" ||
+            typeof text !== "string" ||
+            Buffer.byteLength(text) > 64 ||
+            !text.startsWith("/")))
       ) {
         await this.commit({ ...this.state!, offset: update.update_id + 1 });
         continue;
       }
-      let reply;
+      if (callback) {
+        // An expired acknowledgement must not block processing of the actual operation.
+        await this.api(
+          "answerCallbackQuery",
+          { callback_query_id: callback.id },
+          this.controller.signal,
+        ).catch(() => {});
+      }
+      const context = structuredClone(this.state!.context || {});
+      let routed: string;
       try {
-        reply = await this.execute(update.update_id, message.text);
+        if (typeof text !== "string")
+          throw Error(
+            "目前接收文字指令；请将文件内容粘贴为文字。语音和二进制附件不会自动执行。",
+          );
+        if (text.length > 100000) throw Error("Message is too large");
+        routed = this.route(text.trim(), callback ? {} : message, context);
       } catch (e) {
-        reply = `Error: ${this.safe(e instanceof Error ? e.message : e)}`;
+        await this.commit({
+          ...this.state!,
+          pending: {
+            updateId: update.update_id,
+            text: this.safe(`Error: ${e instanceof Error ? e.message : e}`),
+          },
+        });
+        await this.deliverPending();
+        continue;
       }
       await this.commit({
         ...this.state!,
-        pending: { updateId: update.update_id, text: this.safe(reply) },
+        incoming: { updateId: update.update_id, text: routed, context },
       });
-      await this.send(reply);
-      await this.commit({
-        ...this.state!,
-        offset: update.update_id + 1,
-        pending: undefined,
-      });
+      await this.processIncoming();
     }
     if (this.config.notify) await this.notify();
   }
   private async notify() {
     const jobs = this.jobs(),
-      known = { ...this.state!.known },
-      changed = [];
+      known = { ...this.state!.known };
+    let delivered = 0;
     for (const job of jobs) {
       const tag = this.tag(job);
+      if (known[job.id] === tag) continue;
       if (
-        known[job.id] !== tag &&
-        (tag === "completed" ||
-          tag === "cancelled" ||
-          tag === "needs_attention" ||
-          tag.startsWith("approval:"))
-      )
-        changed.push(
-          `${job.id.slice(0, 8)} · ${tag.startsWith("approval:") ? "needs your answer (/approvals)" : tag} · ${job.title}`,
-        );
-      known[job.id] = tag;
+        ["completed", "cancelled", "needs_attention", "recovering"].includes(
+          tag,
+        ) ||
+        tag.startsWith("approval:")
+      ) {
+        // Leave undispatched transitions unknown for the next poll instead of dropping them.
+        if (delivered >= 5) continue;
+        let text = `Relay update\n${job.id.slice(0, 8)} · ${tag.startsWith("approval:") ? "needs your answer (/approvals)" : tag} · ${job.title.slice(0, 120)}`;
+        if (tag === "completed") {
+          const page = await this.runtime.scheduler.chats.read(job.id);
+          const latest = [...page.items]
+            .reverse()
+            .find((i) => i.role === "assistant" && i.text.trim());
+          if (latest)
+            text += `\n\n${this.safe(latest.text, 1200)}${latest.text.length > 1200 ? "…（点击最新结果查看全文）" : ""}`;
+        } else if (tag === "needs_attention" && job.lastError)
+          text += `\n${this.safe(job.lastError, 1000)}`;
+        else if (tag === "recovering")
+          text += "\n正在自动检查并恢复；无需点击继续。手动暂停/取消仍然有效。";
+        const sent = await this.send({
+          text,
+          taskId: job.id,
+          keyboard: this.console.taskKeyboard(job),
+        });
+        const routes = { ...this.state!.routes };
+        if (Number.isSafeInteger(sent?.message_id))
+          routes[String(sent.message_id)] = job.id;
+        known[job.id] = tag;
+        // Commit each notification individually so a later send failure does not repeat the batch.
+        await this.commit({
+          ...this.state!,
+          known: { ...known },
+          routes: Object.fromEntries(
+            Object.entries(routes)
+              .sort((a, b) => Number(b[0]) - Number(a[0]))
+              .slice(0, 200),
+          ),
+        });
+        delivered++;
+      } else known[job.id] = tag;
     }
-    if (changed.length)
-      await this.send("Relay update\n" + changed.slice(0, 10).join("\n"));
     const ids = new Set(jobs.map((j) => j.id));
     await this.commit({
       ...this.state!,
