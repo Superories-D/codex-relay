@@ -1,3 +1,4 @@
+import { TaskCenter } from "../../renderer/TaskCenter";
 import { RuntimeSettings } from "./RuntimeSettings";
 import { TaskTemplates } from "../../renderer/TaskTemplates";
 import { ChatSearch } from "../../renderer/ChatSearch";
@@ -92,6 +93,7 @@ function App() {
   const [chat, setChat] = useState<ChatItem[]>([]),
     [before, setBefore] = useState<number>(),
     [chatError, setChatError] = useState("");
+  const [center, setCenter] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [templates, setTemplates] = useState(false);
   const [searching, setSearching] = useState<string>();
@@ -413,6 +415,7 @@ function App() {
             <option value="en">English</option>
             <option value="ja">{"日本語"}</option>
           </select>
+          {token && snapshot && <button onClick={() => setCenter(value => !value)}>{t("任务中心")}</button>}
           {token && snapshot && <button onClick={() => setSettingsOpen(true)}>{t("设置")}</button>}
           {token && <button onClick={disconnect}>{t("断开连接")}</button>}
         </div>
@@ -459,7 +462,8 @@ function App() {
               {error}
             </p>
           )}
-          <main className="remote-layout">
+          {center && snapshot && <TaskCenter snapshot={snapshot} call={call} close={() => setCenter(false)} open={job => {setSelected(job.id);setCenter(false);}} />}
+          {!center && <main className="remote-layout">
             <aside className="remote-sidebar">
               <section className="new-task">
                 <h2>{t("新建任务")}</h2>
@@ -704,7 +708,7 @@ function App() {
                 </div>
               )}
             </section>
-          </main>
+          </main>}
           {settingsOpen && snapshot && <RuntimeSettings settings={snapshot.settings} call={call} close={() => setSettingsOpen(false)} />}
           {templates && <TaskTemplates draft={prompt} preferences={{model,...templateOptions}} call={call} close={() => setTemplates(false)} apply={template => {
             setPrompt(value => value ? value + "\n\n" + template.prompt : template.prompt);

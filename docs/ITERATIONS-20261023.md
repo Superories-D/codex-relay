@@ -45,3 +45,7 @@ Added localized preferences for tray-only startup, close-to-tray versus safe exi
 ## 31 — Bounded cross-platform conversation exports
 
 Windows and Linux now share a chronological export pipeline with credential redaction, safe code fences, duplicate-message handling and explicit size truncation. Windows writes atomically; web users download Markdown directly. Export scans history beyond the current page and never reads referenced files. Validation: build, export pagination/redaction/bounds and localization tests.
+
+## 32 — Unified remote task control center
+
+The remote console now hosts the shared task center: project/state filters, recovery summaries, scoped bulk pause/resume with per-task results, prerequisite editing, project dispatch holds and concurrency budgets. Workflow building/reports remain accessible from the same surface. Validation: build, scheduler and localization tests; browser acceptance is included in the final integrated pass.

@@ -216,6 +216,10 @@ export class ServerRuntime {
           throw Error("Task does not exist");
         return this.scheduler.chats.read(a.id, a.before);
       }
+      case "jobs.control": {
+        const a=z.object({ids:z.array(idSchema).min(1).max(100),action:z.enum(["pause","resume"])}).strict().parse(args);
+        return this.scheduler.controlMany(a.ids,a.action);
+      }
       case "job.control": {
         const a = controlSchema.parse(args);
         return this.scheduler.control(a.id, a.action);
