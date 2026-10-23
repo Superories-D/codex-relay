@@ -29,3 +29,7 @@ A localized settings dialog exposes CLI path, concurrency, polling, retry timing
 ## 27 — Headless installation doctor
 
 Linux is now recognized as a supported CLI platform in shared environment checks. Added offline `--doctor`, authenticated live diagnostics in the web settings panel, and remote CLI `doctor`/`health` commands. Checks resolve the configured executable and inspect its version without login or inference. Validation: build, diagnostics, remote-CLI and localization tests.
+
+## 28 — Windows multi-monitor session restoration
+
+Desktop window position, normal size and maximized state now persist through an atomic serialized store. Startup clamps geometry to a connected monitor, including negative-coordinate displays and smaller laptop screens after undocking. Corrupt geometry falls back safely. Validation: build and geometry tests; native multi-monitor window interaction remains Windows acceptance work.

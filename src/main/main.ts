@@ -1,3 +1,4 @@
+import { WindowPlacement } from "./window-placement";
 import { serviceHealth } from "../core/service-health";
 import { respondApproval } from "../core/approval-command";
 import { WorkflowReports } from "../core/workflow-report";
@@ -1447,9 +1448,10 @@ async function boot() {
   startupTrace("create window");
   const rendererPath = path.join(__dirname, "..", "renderer", "index.html");
   const available = screen.getPrimaryDisplay().workAreaSize;
+  const placement = new WindowPlacement(dataRoot);
+  const restored = await placement.read(screen.getAllDisplays().map(d => d.workArea));
   window = new BrowserWindow({
-    width: Math.min(1280, available.width),
-    height: Math.min(860, available.height),
+    x: restored.x, y: restored.y, width: restored.width, height: restored.height,
     minWidth: Math.min(900, available.width),
     minHeight: Math.min(620, available.height),
     title: "Codex Relay",
@@ -1466,6 +1468,16 @@ async function boot() {
       webSecurity: true,
     },
   });
+  if (restored.maximized) window.maximize();
+  let placementTimer: ReturnType<typeof setTimeout> | undefined;
+  const savePlacement = () => {
+    if (!window || window.isDestroyed() || window.isMinimized()) return;
+    void placement.save(window.getNormalBounds(),window.isMaximized()).catch(error => scheduler.log(error,"warning"));
+  };
+  const queuePlacement = () => {clearTimeout(placementTimer);placementTimer=setTimeout(savePlacement,300);};
+  window.on("move",queuePlacement); window.on("resize",queuePlacement);
+  window.on("maximize",queuePlacement); window.on("unmaximize",queuePlacement);
+  window.on("close",savePlacement);
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   applyDesktopPreferences();
   window.webContents.on("will-navigate", (event) => event.preventDefault());
