@@ -21,3 +21,7 @@ The remote conversation menu now opens the shared full-history search dialog: ro
 ## 25 — Server-side reusable instructions
 
 The remote composer now supports the shared versioned task-template manager. Templates persist on the Linux host, can be reused across browser sessions, and reject stale concurrent edits. Applying a template updates the draft and model without submitting a task. Validation: build, template persistence/concurrency and localization tests.
+
+## 26 — Remote runtime configuration panel
+
+A localized settings dialog exposes CLI path, concurrency, polling, retry timing and interruption-continuation instructions, plus a live health report. Unsaved edits remain local; save uses the transactional scheduler gate and retains input on errors. Validation: build and localization audit. Native desktop settings continue to use the same backend gate.

@@ -1,3 +1,4 @@
+import { RuntimeSettings } from "./RuntimeSettings";
 import { TaskTemplates } from "../../renderer/TaskTemplates";
 import { ChatSearch } from "../../renderer/ChatSearch";
 import { MessageQueue } from "../../renderer/MessageQueue";
@@ -91,6 +92,7 @@ function App() {
   const [chat, setChat] = useState<ChatItem[]>([]),
     [before, setBefore] = useState<number>(),
     [chatError, setChatError] = useState("");
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [templates, setTemplates] = useState(false);
   const [searching, setSearching] = useState<string>();
   const [building, setBuilding] = useState(false),
@@ -404,6 +406,7 @@ function App() {
             <option value="en">English</option>
             <option value="ja">{"日本語"}</option>
           </select>
+          {token && snapshot && <button onClick={() => setSettingsOpen(true)}>{t("设置")}</button>}
           {token && <button onClick={disconnect}>{t("断开连接")}</button>}
         </div>
       </header>
@@ -694,6 +697,7 @@ function App() {
               )}
             </section>
           </main>
+          {settingsOpen && snapshot && <RuntimeSettings settings={snapshot.settings} call={call} close={() => setSettingsOpen(false)} />}
           {templates && <TaskTemplates draft={prompt} preferences={{model,...templateOptions}} call={call} close={() => setTemplates(false)} apply={template => {
             setPrompt(value => value ? value + "\n\n" + template.prompt : template.prompt);
             setModel(template.model); setTemplateOptions({effort:template.effort,planMode:template.planMode,multiAgent:template.multiAgent}); setTemplates(false);

@@ -1087,4 +1087,5 @@ export const english: Record<string, string> = {
   "等待账户条件满足": "Waiting for account availability",
   "历史会话暂不可恢复": "History is not currently resumable",
   "原窗口尚未完成交接": "Original window handoff is incomplete",
+"暂停任务后再修改运行设置":"Pause tasks before changing runtime settings",
 };

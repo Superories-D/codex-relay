@@ -376,3 +376,6 @@ pre {
 .search-results {display:grid;gap:.6rem;max-height:45vh;overflow:auto}
 .search-results button {text-align:left;white-space:pre-wrap;overflow-wrap:anywhere}
 .search-preview pre {white-space:pre-wrap;overflow-wrap:anywhere;max-height:40vh;overflow:auto}
+.runtime-settings {display:grid;gap:1rem}
+.runtime-settings label {display:grid;gap:.4rem}
+.runtime-settings pre {white-space:pre-wrap;overflow-wrap:anywhere}
