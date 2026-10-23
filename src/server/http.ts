@@ -8,6 +8,7 @@ import { redact, redactValue } from "../core/redact";
 import type { ServerRuntime } from "./runtime";
 const allowed = new Set([
   "snapshot",
+  "health",
   "job.submit",
   "job.control",
   "chat.send",
@@ -113,6 +114,8 @@ export async function openHttp(
           workspaces: roots,
           commands: [...allowed],
         });
+      if (req.method === "GET" && req.url === "/api/health")
+        return send(res, 200, await runtime.command("health"));
       if (req.method === "GET" && req.url === "/api/snapshot")
         return send(res, 200, snapshot());
       if (req.method === "GET" && req.url === "/api/events") {

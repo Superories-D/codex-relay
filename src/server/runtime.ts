@@ -1,3 +1,4 @@
+import { serviceHealth } from "../core/service-health";
 import { WorkflowReports } from "../core/workflow-report";
 import { promises as fs } from "node:fs";
 import path from "node:path";
@@ -108,6 +109,8 @@ export class ServerRuntime {
   }
   private async execute(name: string, args?: unknown): Promise<unknown> {
     switch (name) {
+      case "health":
+        return serviceHealth(this.scheduler.snapshot(), this.closing);
       case "snapshot":
         return this.scheduler.snapshot();
       case "job.add": {

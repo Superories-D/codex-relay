@@ -1,3 +1,4 @@
+import { serviceHealth } from "../core/service-health";
 import { respondApproval } from "../core/approval-command";
 import { WorkflowReports } from "../core/workflow-report";
 import {
@@ -1191,7 +1192,7 @@ async function boot() {
       case "environment.check":
         return checkEnvironment(store.data.settings.cliPath);
       case "health":
-        return { at: Date.now() };
+        return serviceHealth(scheduler.snapshot());
       case "job.desktop.show":
         return scheduler.showDesktop(idSchema.parse(args));
       case "job.desktop.inspect":
