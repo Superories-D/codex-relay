@@ -664,11 +664,11 @@ function App() {
                   <RecoveryHistory job={job} />
                   <LiveControls key={`live-${job.id}`} job={job} call={call}/>
                   <RemoteGoal key={`goal-${job.id}`} job={job} call={call}/>
-                  <RemoteArtifacts key={job.id} id={job.id} call={call}/>
+                  <RemoteArtifacts key={`artifacts-${job.id}`} id={job.id} call={call}/>
                   <label>{t("任务优先级")}<select aria-label={t("任务优先级")} value={job.priority || "normal"} disabled={busy} onChange={e => run("chat.priority",{id:job.id,priority:e.target.value})}>
                     <option value="high">{t("高")}</option><option value="normal">{t("普通优先级")}</option><option value="low">{t("低")}</option>
                   </select></label>
-                  <MessageQueue key={job.id} job={job} pending={busy} onChange={args => run("chat.queue",args)} />
+                  <MessageQueue key={`queue-${job.id}`} job={job} pending={busy} onChange={args => run("chat.queue",args)} />
                   {snapshot?.approvals
                     .filter((a) => a.jobId === job.id)
                     .map((a) => (

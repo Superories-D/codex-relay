@@ -132,6 +132,7 @@ export async function openHttp(
       if (req.method === "GET" && req.url === "/api/meta")
         return send(res, 200, {
           version: 1,
+          serverId: runtime.installationId,
           workspaces: roots,
           commands: [...allowed],
         });

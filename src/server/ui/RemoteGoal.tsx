@@ -83,6 +83,7 @@ export function RemoteGoal({
               maxLength={4000}
             />
           </label>
+          {goal&&<p>{t("修改目标正文会重置原生目标的已用 Token 和计时；聊天记录与文件会保留。")}</p>}
           <label>
             {t("Token 预算")}
             <input
@@ -94,6 +95,7 @@ export function RemoteGoal({
             />
           </label>
           <p>{t("请输入正整数预算，留空表示不限制")}</p>
+          <p>{t("预算在轮次结束时核算，当前轮次可能超过设定值。")}</p>
           {goal ? (
             <>
               <button

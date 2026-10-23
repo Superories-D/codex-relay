@@ -1,3 +1,4 @@
+import {randomUUID} from "node:crypto";
 import {ServerWorkflows} from "./workflows";
 import { Desktop } from "../core/desktop";
 import { Schedules } from "../core/schedules";
@@ -46,6 +47,7 @@ export class ServerRuntime {
     private owner: Awaited<ReturnType<typeof acquireOwner>>,
     readonly desktop: Desktop,
     private workspaceRoots: string[],
+    readonly installationId: string,
   ) {
     this.schedules=new Schedules(desktop,scheduler,()=>scheduler.changed(),Date.now,()=>Intl.DateTimeFormat().resolvedOptions().timeZone,async task=>{await resolveWorkspace(this.workspaceRoots,task.cwd);});
   }
@@ -77,6 +79,8 @@ export class ServerRuntime {
           JSON.stringify({ version: 1, kind: "codex-relay-server" }),
         );
       }
+      const installation=z.object({version:z.literal(1),kind:z.literal("codex-relay-server"),id:idSchema.optional()}).parse(JSON.parse(await fs.readFile(marker,"utf8")));
+      if(!installation.id){installation.id=randomUUID();await atomicWrite(marker,JSON.stringify(installation));}
       const store = new Store(root);
       await store.load();
       if (
@@ -108,7 +112,7 @@ export class ServerRuntime {
       );
       await store.save();
       const desktop=new Desktop(root);await desktop.load();
-      const runtime = new ServerRuntime(store, accounts, scheduler, owner,desktop,await prepareWorkspaces(root,workspaces));
+      const runtime = new ServerRuntime(store, accounts, scheduler, owner,desktop,await prepareWorkspaces(root,workspaces),installation.id);
       return runtime;
     } catch (error) {
       await owner.release();

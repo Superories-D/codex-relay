@@ -73,7 +73,7 @@ const { chromium } = require(
         await page.route("**/api/uploads/**",async route=>{if(!droppedUpload && route.request().method()==="POST"){droppedUpload=true;await route.fetch();await route.abort();}else await route.continue();});
         let droppedStream = false,
           droppedSubmit = false,
-          droppedMessage = false, droppedWorkflow = false, droppedSchedule=false;
+          droppedMessage = false, droppedWorkflow = false, droppedSchedule=false, droppedRetry=false;
         await page.route("**/api/events", async (route) => {
           if (!droppedStream) {
             droppedStream = true;
@@ -81,6 +81,8 @@ const { chromium } = require(
           } else await route.continue();
         });
         await page.route("**/api/command", async (route) => {
+          if(!droppedRetry && route.request().postDataJSON()?.name === "workflow.retry") {droppedRetry=true;await route.fetch();await route.abort();return;}
+
           if(!droppedSchedule && route.request().postDataJSON()?.name === "schedule.create") {droppedSchedule=true;await route.fetch();await route.abort();return;}
 
           if (!droppedWorkflow && route.request().postDataJSON()?.name === "workflow.add") {
@@ -273,6 +275,19 @@ const { chromium } = require(
         await page.reload();
         await page.locator(".connection-bar.online").waitFor();
         assert.equal(await page.locator(".remote-task-list button").count(), 3);
+        await page.locator(".remote-task-list button").filter({hasText:"Remote pipeline · 1"}).click();
+        await page.locator(".remote-workflow-operations > summary").click();
+        const operations=page.locator(".remote-workflow-operations");
+        await operations.getByRole("button",{name:"Pause unfinished stages",exact:true}).click();
+        await operations.getByText("Operation acknowledged",{exact:true}).waitFor();
+        await operations.getByRole("button",{name:"Preview retry",exact:true}).click();
+        await operations.getByRole("button",{name:"Create paused retry branch",exact:true}).click();
+        await operations.getByRole("button",{name:"Open retry branch",exact:true}).click();
+        await page.waitForFunction(()=>document.querySelectorAll(".remote-task-list button").length===5);
+        const fork=await page.evaluate(async()=>{const r=await fetch("/api/snapshot",{headers:{Authorization:`Bearer ${sessionStorage.getItem("relay.remote.token")}`}});return (await r.json()).jobs.filter(j=>j.workflow?.source);});
+        assert.equal(fork.length,2);assert.ok(fork.every(j=>j.state==="paused"),"retry branch must await an explicit start");
+        await page.reload();await page.locator(".connection-bar.online").waitFor();
+        assert.equal(await page.locator(".remote-task-list button").count(),5);
         await page.locator(".remote-header").getByRole("button",{name:"Task center",exact:true}).click();
         await page.locator(".task-center").waitFor();
         await page.locator(".task-filters select").selectOption(workspace);
@@ -307,7 +322,7 @@ const { chromium } = require(
     const [code] = await exited;
     assert.equal(code, 0);
     console.log(
-      "PASS: real HTTP login, task submission, chat, pause, workflow draft reload/lost ACK, task center budgets, settings health, search/export and 390/900/1280px layouts; zero model calls",
+      "PASS: real HTTP login, attachment upload/preview/download, task/followup/workflow/schedule lost ACK recovery, paused workflow retry branches, task center budgets, settings, search/export and 390/900/1280px layouts; zero model calls",
     );
   } finally {
     if (browser) await browser.close();

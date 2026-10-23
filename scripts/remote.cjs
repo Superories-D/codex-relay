@@ -3,11 +3,17 @@
 const fs = require("node:fs"),
   path = require("node:path"),
   crypto = require("node:crypto");
+const { RemoteStore, endpoint, privateRead } = require("./remote-store.cjs");
 const { parseArgs } = require("node:util");
 const { values, positionals } = parseArgs({
   allowPositionals: true,
   options: {
-    url: { type: "string", default: "http://127.0.0.1:7899" },
+    url: { type: "string" },
+    profile: { type: "string" },
+    host: { type: "string" },
+    "local-port": { type: "string" },
+    "remote-port": { type: "string" },
+    "ssh-port": { type: "string" },
     "token-file": { type: "string" },
     id: { type: "string" },
     "request-id": { type: "string" },
@@ -26,6 +32,10 @@ const operation = positionals[0] || "help";
 if (operation === "help") {
   console.log(`Codex Relay remote CLI (Node.js 24)
  --url http://127.0.0.1:7899 --token-file /private/http-token
+ init (create a private client home)
+ profile save NAME --url ORIGIN --token-file FILE [--cwd SERVER_PATH] [--host user@server]
+ profile list|show|remove [NAME] · --profile NAME selects a saved connection
+ requests | recover --request-id UUID
  health | doctor | status | watch [--id UUID] | report --id UUID | approvals
  run --cwd /server/project --prompt-file task.txt [--request-id UUID] [--detach]
  send --id UUID --prompt-file followup.txt [--request-id UUID]
@@ -33,7 +43,7 @@ if (operation === "help") {
  workflow --file workflow.json [--request-id UUID]
  respond --file response.json
  command --file command.json
-Run/send/workflow retry only under the same request ID. Other mutations are never replayed.
+Durable mutations save their exact payload and server identity before sending. Use requests/recover after an interrupted client. Other mutations are never replayed.
 Watch reconnects automatically; Ctrl+C disconnects the viewer without stopping server tasks.
 Use SSH port forwarding for HTTP. Non-loopback endpoints require HTTPS.`);
   process.exit(0);
@@ -63,7 +73,22 @@ class HttpError extends Error {
     this.status = status;
   }
 }
-let base, token;
+let base, token, localStore;
+const store = () => (localStore ||= new RemoteStore());
+const durableNames = new Set([
+  "job.submit",
+  "chat.submit",
+  "workflow.add",
+  "task.steer",
+  "task.model",
+  "goal.update",
+  "workflow.retry",
+  "workflow.control",
+  "schedule.create",
+  "schedule.save",
+  "schedule.run",
+  "schedule.remove",
+]);
 async function api(route, body) {
   const response = await fetch(base + route, {
     method: body ? "POST" : "GET",
@@ -73,6 +98,7 @@ async function api(route, body) {
     },
     body: body ? JSON.stringify(body) : undefined,
     signal: AbortSignal.any([controller.signal, AbortSignal.timeout(60000)]),
+    redirect: "error",
   });
   const data = await response.json();
   if (!response.ok)
@@ -83,10 +109,29 @@ async function api(route, body) {
   return body ? data.result : data;
 }
 async function command(name, args, retry = false) {
+  let record;
+  if (durableNames.has(name)) {
+    args = { ...args, requestId: args.requestId || crypto.randomUUID() };
+    const meta = await api("/api/meta");
+    record = store().begin(base, meta.serverId, name, args);
+    retry = true;
+    if (record.state === "confirmed") return record.result;
+    if (record.state === "rejected") throw Error(record.error);
+  }
   for (let attempt = 0; ; attempt++) {
     try {
-      return await api("/api/command", { name, args });
+      const result = await api("/api/command", { name, args });
+      if (record) store().finish(record, result);
+      return result;
     } catch (error) {
+      if (
+        record &&
+        error instanceof HttpError &&
+        error.status >= 400 &&
+        error.status < 500 &&
+        error.status !== 429
+      )
+        store().finish(record, undefined, error.message);
       if (controller.signal.aborted) throw error;
       if (
         !retry ||
@@ -126,6 +171,7 @@ async function watch(id) {
       const response = await fetch(base + "/api/events", {
         headers: { Authorization: `Bearer ${token}` },
         signal: controller.signal,
+        redirect: "error",
       });
       if (!response.ok)
         throw new HttpError(
@@ -187,27 +233,80 @@ async function watch(id) {
   }
 }
 async function main() {
-  const url = new URL(values.url);
-  if (
-    url.username ||
-    url.password ||
-    url.search ||
-    url.hash ||
-    !["http:", "https:"].includes(url.protocol)
-  )
-    throw Error("Use an HTTP(S) origin without credentials, query or fragment");
-  if (
-    url.protocol === "http:" &&
-    !["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)
-  )
-    throw Error(
-      "Remote HTTP is not allowed; use HTTPS or an SSH loopback tunnel",
+  if (operation === "init") {
+    console.log(
+      JSON.stringify({
+        directory: store().root,
+        credentials: path.join(store().root, "credentials"),
+      }),
     );
-  if (url.pathname !== "/") throw Error("Use the server origin without a path");
-  base = url.origin;
-  if (!values["token-file"]) throw Error("--token-file is required");
-  token = fs.readFileSync(path.resolve(values["token-file"]), "utf8").trim();
+    return;
+  }
+  if (operation === "profile") {
+    const action = positionals[1],
+      name = positionals[2];
+    let result;
+    if (action === "list") result = store().profiles();
+    else if (action === "show") result = { name, ...store().profile(name) };
+    else if (action === "remove") result = store().removeProfile(name);
+    else if (action === "save") {
+      if (!values["token-file"])
+        throw Error("--token-file is required to save a profile");
+      let tunnel;
+      if (values.host) {
+        const { tunnelArguments } = require("./remote-tunnel.cjs");
+        tunnelArguments(values);
+        tunnel = {
+          host: values.host,
+          ...Object.fromEntries(
+            ["local-port", "remote-port", "ssh-port"]
+              .filter((k) => values[k])
+              .map((k) => [k, values[k]]),
+          ),
+        };
+      }
+      result = store().saveProfile(name, {
+        url: values.url || "http://127.0.0.1:7899",
+        tokenFile: values["token-file"],
+        cwd: values.cwd,
+        tunnel,
+      });
+    } else throw Error("Use profile save|list|show|remove");
+    console.log(JSON.stringify(result));
+    return;
+  }
+  if (operation === "requests") {
+    console.log(JSON.stringify(store().requests()));
+    return;
+  }
+  if (values.profile) {
+    const profile = store().profile(values.profile);
+    values.url ??= profile.url;
+    values["token-file"] ??= profile.tokenFile;
+    values.cwd ??= profile.cwd;
+  }
+  base = endpoint(values.url || "http://127.0.0.1:7899");
+  if (!values["token-file"])
+    throw Error("--token-file or --profile is required");
+  token = privateRead(path.resolve(values["token-file"]), 1024).trim();
   if (!/^[a-f0-9]{64}$/.test(token)) throw Error("Invalid HTTP token file");
+  if (operation === "recover") {
+    const record = store().read(values["request-id"]);
+    if (
+      !durableNames.has(record.name) ||
+      record.args?.requestId !== record.requestId
+    )
+      throw Error("Stored command is not safely recoverable");
+    if (record.url !== base)
+      throw Error("Recovery endpoint differs from the recorded endpoint");
+    const meta = await api("/api/meta");
+    if (meta.serverId !== record.serverId)
+      throw Error(
+        "Recovery server installation differs from the recorded server",
+      );
+    console.log(JSON.stringify(await command(record.name, record.args, true)));
+    return;
+  }
   const text = () =>
     values["prompt-file"]
       ? fs.readFileSync(path.resolve(values["prompt-file"]), "utf8")

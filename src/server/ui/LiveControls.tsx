@@ -1,5 +1,5 @@
 import { CommandError } from "./client";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { t, errorText } from "../../renderer/i18n";
 import type { Job } from "../../shared/types";
 // Keep the exact payload until an acknowledgment arrives, including on reload.
@@ -19,6 +19,7 @@ export function useRemoteAction(
       return null;
     }
   });
+  const callRef=useRef(call);callRef.current=call;
   const [receipt, setReceipt] = useState<any>(),
     [error, setError] = useState("");
   useEffect(() => {
@@ -27,7 +28,7 @@ export function useRemoteAction(
       timer: ReturnType<typeof setTimeout>;
     const send = async () => {
       try {
-        const r = await call(pending.name, pending.args);
+        const r = await callRef.current(pending.name, pending.args);
         if (!alive) return;
         sessionStorage.removeItem(key);
         setReceipt(r);
@@ -36,9 +37,15 @@ export function useRemoteAction(
       } catch (e) {
         if (alive) {
           setError(errorText(e));
-          if (e instanceof CommandError && e.status >= 400 && e.status < 500) {
-            sessionStorage.removeItem(key);
-            setPending(null);
+          if (e instanceof CommandError && e.status >= 400 && e.status < 500 && ![401,403,429].includes(e.status)) {
+            // A gateway may report a persistence failure after the native effect.
+            // Check the durable intent before treating an HTTP error as rejection.
+            try {
+              const recorded=await callRef.current("action.read",pending.args.requestId);
+              if(!alive)return;
+              if(recorded)setReceipt(recorded);
+              sessionStorage.removeItem(key);setPending(null);
+            } catch { if(alive)timer=setTimeout(()=>void send(),5000); }
           } else timer = setTimeout(() => void send(), 5000);
         }
       }

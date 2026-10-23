@@ -156,3 +156,19 @@ Send a document or photo to stage it durably (8 MiB per file, up to 10 pending f
 `/notify all|errors|watched|off` 选择全部、仅异常/审批/自动恢复、仅关注任务或关闭；`/watch [任务ID]` 关注当前/指定任务并进入 watched 模式，`/unwatch ID` 取消关注。`/quiet 22-7` 设置跨午夜静默窗口，小时均为 **UTC**；`/quiet off` 关闭，起止相同表示全天静默。`/throttle 60` 设置通知发送间隔（0–3600 秒）。`/digest` 查看模式和排队摘要。
 
 每次轮询捕获到的变化先保存不可变通知内容，静默期间继续排队，重启后恢复发送；每轮最多 5 条，最多保留最近 200 条，溢出数量在摘要中显示。关闭通知会清空待发内容；切换过滤模式会剔除不匹配的通知。发送回执丢失可能导致单条重复（at-least-once），不会因此重跑任务。轮询之间已经发生又消失的瞬态状态不保证捕获。
+
+### 文件、实时控制、Goal 与自动化
+
+| 操作 | 命令 / 交互 |
+| --- | --- |
+| 上传任务文件 | 发送照片或文档，`/inbox` 检查，下一条 `/new` 或追问附带文件；字幕不自动执行 |
+| 下载已记录结果 | `/files [任务ID] [页码]`，点文件按钮；单文件最多 8 MiB |
+| 立即干预运行 | `/steer 补充指令`，作用于当前选中且正在运行的任务 |
+| 模型等待恢复 | `/models` 查看缓存；`/switchmodel MODEL [EFFORT]` 切换并恢复模型等待任务 |
+| 持续目标 | `/goal read`；`/goal create 20000 目标` 创建暂停目标；`/goal start`、`pause`、`clear` |
+| 修改目标/预算 | `/goal edit 新目标`；`/goal budget 40000` 或 `none`；编辑正文会重置原生累计统计，预算仍按原生轮次核算 |
+| 定时任务 | `/schedules`；`/schedule create 60 每小时检查项目`；`/schedule run|pause|enable|remove ID` |
+| 工作流批量控制 | `/wf pause WORKFLOW_ID`、`/wf resume WORKFLOW_ID` |
+| 从阶段返工 | `/wf preview WORKFLOW_ID STAGE`，审阅后 `/wf retry PREVIEW_ID`；分支默认暂停，原历史保留 |
+
+实时控制、Goal、定时和工作流操作在服务器先记意图，再执行。普通网络中断按同一请求编号确认；原生调用结果无法确定时返回未知状态，避免双重执行。修改 Goal 正文、立即执行定时任务和启动目标均需用户明确发出对应命令。工作流返工预览有效期十分钟。

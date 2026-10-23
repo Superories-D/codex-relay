@@ -55,7 +55,7 @@ describe.skipIf(process.platform !== "linux")("remote CLI", () => {
         url,
         "--token-file",
         tokenFile,
-      ]);
+      ],{env:{...process.env,RELAY_REMOTE_HOME:path.join(base,"client")}});
     try {
       const output = await cli([
         "run",
@@ -123,7 +123,7 @@ describe.skipIf(process.platform !== "linux")("remote CLI", () => {
         path.join(os.tmpdir(), "relay-remote-watch-"),
       ),
       file = path.join(root, "token");
-    await fs.writeFile(file, "a".repeat(64));
+    await fs.writeFile(file, "a".repeat(64),{mode:0o600});
     let connections = 0;
     const methods: string[] = [];
     const server = http.createServer((req, res) => {
