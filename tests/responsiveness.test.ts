@@ -85,7 +85,8 @@ it("coalesces queued disk writes without resolving checkpoints early and recover
     expect(completed).not.toHaveBeenCalled();
     release();
     await Promise.all([first, second, third]);
-    expect(spy).toHaveBeenCalledTimes(2);
+    expect(spy.mock.calls.filter(([, target]) => path.basename(String(target)) === "state.json")).toHaveLength(2);
+    expect(JSON.parse(await fs.readFile(path.join(root,"state.previous.json"),"utf8")).cursor).toBe(0);
     expect(
       JSON.parse(await fs.readFile(path.join(root, "state.json"), "utf8"))
         .cursor,

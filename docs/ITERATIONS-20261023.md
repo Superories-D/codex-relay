@@ -77,3 +77,12 @@ Shutdown now blocks new admissions before stopping Telegram or workers. Authenti
 ## 39 — Previous-generation state preservation
 
 Both platforms now retain the previous committed state before replacing the primary. Backup failure prevents replacement; corrupt primaries still fail closed rather than silently resurrecting stale tasks. Added a read-only offline inspector with counts/hashes and recovery guidance that distinguishes state generations from full backups. Validation: build and storage corruption/write-failure tests; broader scheduler integration is part of round 40.
+
+## 40 — Cross-platform delivery gates and integrated acceptance
+
+Added Linux CI distribution generation alongside the Windows installer workflow, aligned both with Node 24, and expanded real HTTP/browser coverage for the newly exposed controls. The remote browser fixture now drops a successful workflow response, restores its draft across reload, checks one admitted batch, changes project budgets and exercises settings/search/export. Authenticated API integration checks durable settings/templates, organization, bulk controls and report paths. The final visual pass also corrected mobile composer overlap, checkbox alignment and task-center card/summary layout.
+
+
+Final verification: TypeScript and production bundles passed; all 66 test files passed (533 tests passed, 2 Windows-only skipped on Linux). Real daemon/local CLI smoke passed singleton ownership, authentication and restart persistence. Production desktop UI passed Chinese/English/Japanese with zero renderer errors. Real remote-browser QA passed 390/900/1280px layouts, lost task/message/workflow acknowledgements, workflow draft reload, task-center project limits, settings health, search and Markdown download. The Linux distribution passed SHA-256 verification, isolated packaged-daemon startup and offline state inspection. Screenshots of the mobile conversation and remote task center were inspected.
+
+No live model calls, real Telegram messages or SSH destinations were used. Windows toast/tray/power behavior, native multi-monitor interaction and installer execution are not claimed as tested on this Linux host. Windows and Linux CI workflows are supplied; no external CI run or binary release is claimed. The standalone Linux archive was built locally; published Windows v0.6.17 remains unchanged.

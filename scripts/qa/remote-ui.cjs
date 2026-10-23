@@ -71,7 +71,7 @@ const { chromium } = require(
       if (language === "en") {
         let droppedStream = false,
           droppedSubmit = false,
-          droppedMessage = false;
+          droppedMessage = false, droppedWorkflow = false;
         await page.route("**/api/events", async (route) => {
           if (!droppedStream) {
             droppedStream = true;
@@ -79,6 +79,9 @@ const { chromium } = require(
           } else await route.continue();
         });
         await page.route("**/api/command", async (route) => {
+          if (!droppedWorkflow && route.request().postDataJSON()?.name === "workflow.add") {
+            droppedWorkflow=true;await route.fetch();await route.abort();return;
+          }
           if (
             !droppedMessage &&
             route.request().postDataJSON()?.name === "chat.submit"
@@ -159,7 +162,7 @@ const { chromium } = require(
         `Remote QA ${language}`,
       );
       await page.locator(".remote-messages article").waitFor();
-      await page.locator(".conversation-header .row button").first().click();
+      await page.locator(".conversation-header").getByRole("button",{name:/^(Pause|暂停|一時停止)$/}).click();
       await page.waitForFunction(async (title) => {
         const response = await fetch("/api/snapshot", {
           headers: {
@@ -223,6 +226,11 @@ const { chromium } = require(
           .locator(".workflow-builder textarea")
           .nth(1)
           .fill("Verify artifact.md");
+        await page.reload();
+        await page.locator(".connection-bar.online").waitFor();
+        await page.locator(".remote-workflow").click();
+        assert.equal(await page.locator(".workflow-builder input").first().inputValue(),"Remote pipeline");
+        assert.equal(await page.locator(".workflow-builder textarea").nth(1).inputValue(),"Verify artifact.md");
         await page.locator(".workflow-builder button[type=submit]").click();
         await page.locator(".workflow-builder").waitFor({ state: "detached" });
         await page.waitForFunction(
@@ -232,6 +240,29 @@ const { chromium } = require(
         await page.reload();
         await page.locator(".connection-bar.online").waitFor();
         assert.equal(await page.locator(".remote-task-list button").count(), 3);
+        await page.locator(".remote-header").getByRole("button",{name:"Task center",exact:true}).click();
+        await page.locator(".task-center").waitFor();
+        await page.locator(".task-filters select").selectOption(workspace);
+        await page.locator(".project-limit select").selectOption("1");
+        await page.waitForFunction(async()=>{const r=await fetch("/api/snapshot",{headers:{Authorization:`Bearer ${sessionStorage.getItem("relay.remote.token")}`}});return (await r.json()).projectLimits?.[0]?.limit===1;});
+        await page.waitForFunction(()=>document.querySelector(".project-limit select")?.value==="1");
+        await page.screenshot({path:"qa-output/remote-center-en-1280.png",fullPage:true});
+        await page.locator(".task-center").getByRole("button",{name:"Back to chat",exact:true}).click();
+        await page.locator(".remote-header").getByRole("button",{name:"Settings",exact:true}).click();
+        await page.locator(".runtime-settings").waitFor();
+        await page.locator(".runtime-settings").getByRole("button",{name:"Details",exact:true}).click();
+        await page.locator(".runtime-settings pre").waitFor();
+        assert.match(await page.locator(".runtime-settings pre").innerText(),/queuedMessages/);
+        await page.locator(".modal-close").click();
+        await page.locator(".remote-task-list button").filter({hasText:"Remote QA en"}).click();
+        await page.locator(".conversation-header").getByRole("button",{name:"Search conversation",exact:true}).click();
+        await page.locator(".chat-search input").fill("Remote QA");
+        await page.locator(".search-results button").first().waitFor();
+        await page.locator(".modal-close").click();
+        const download=page.waitForEvent("download");
+        await page.locator(".conversation-header").getByRole("button",{name:"Export Markdown",exact:true}).click();
+        assert.match((await download).suggestedFilename(),/^conversation-.*\.md$/);
+
       }
       await context.close();
     }
@@ -243,7 +274,7 @@ const { chromium } = require(
     const [code] = await exited;
     assert.equal(code, 0);
     console.log(
-      "PASS: real HTTP login, task submission, chat, pause, workflow creation, reload and 390/900/1280px layouts; zero model calls",
+      "PASS: real HTTP login, task submission, chat, pause, workflow draft reload/lost ACK, task center budgets, settings health, search/export and 390/900/1280px layouts; zero model calls",
     );
   } finally {
     if (browser) await browser.close();

@@ -383,9 +383,19 @@ pre {
 .task-center header,.task-summary,.task-filters,.task-bulk,.dispatch-controls,.project-controls {display:flex;flex-wrap:wrap;align-items:center;gap:.7rem;margin-bottom:1rem}
 .task-summary button {flex:1;min-width:110px}
 .task-list {display:grid;gap:.8rem}
-.task-card {border:1px solid var(--line);border-radius:12px;padding:1rem;display:grid;gap:.7rem}
-.task-card header {margin:0}.task-card small {color:var(--muted)}
+.task-list > article {border:1px solid var(--line);border-radius:12px;padding:1rem;display:grid;gap:.7rem}
+.task-list > article header {margin:0}.task-list > article small {color:var(--muted)}
 .task-card-actions {display:flex;gap:.5rem;flex-wrap:wrap}
 .dependency-options {display:grid;gap:.6rem;max-height:45vh;overflow:auto}
 .dependency-options label {display:flex;align-items:center;gap:.5rem}
 .dependency-options small {display:block;overflow-wrap:anywhere}
+
+.task-card-title {display:flex;align-items:center;gap:.5rem;flex-wrap:wrap}
+.task-card-title input {width:auto}
+.task-list > article p {overflow-wrap:anywhere}
+label:has(input[type="checkbox"]) {display:flex;align-items:center;gap:.6rem}
+label input[type="checkbox"] {width:auto;margin:0}
+.conversation-header .row + .row {margin-top:.6rem}
+@media(max-width:700px) {.remote-followup {position:static}.remote-header {padding:16px;align-items:flex-start}.remote-header > div:first-child {min-width:92px}}
+.task-summary button {display:flex;justify-content:center;align-items:center;gap:.5rem}
+.task-summary button[aria-pressed="true"] {border-color:#71cabd;background:#19322f}
