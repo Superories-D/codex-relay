@@ -12,3 +12,5 @@ ipc-token
 *.age
 
 qa-output/
+
+state.previous.json

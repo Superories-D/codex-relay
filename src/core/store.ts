@@ -67,6 +67,7 @@ export async function atomicWrite(
 export class Store {
   data = structuredClone(defaults);
   private writing = false;
+  private lastSaved?: string;
   private pending?: {
     content: string;
     waiters: { resolve: () => void; reject: (error: unknown) => void }[];
@@ -74,9 +75,8 @@ export class Store {
   constructor(readonly root: string) {}
   async load() {
     try {
-      const raw = JSON.parse(
-        await fs.readFile(path.join(this.root, "state.json"), "utf8"),
-      ) as AppState;
+      const content = await fs.readFile(path.join(this.root, "state.json"), "utf8");
+      const raw = JSON.parse(content) as AppState;
       if (
         raw.version !== 1 ||
         !Array.isArray(raw.accounts) ||
@@ -84,6 +84,7 @@ export class Store {
         !Array.isArray(raw.logs)
       )
         throw new Error("Unsupported state format");
+      this.lastSaved = content;
       this.data = {
         ...raw,
         settings: {
@@ -134,7 +135,9 @@ export class Store {
         const batch = this.pending;
         this.pending = undefined;
         try {
+          if (this.lastSaved !== undefined) await atomicWrite(path.join(this.root, "state.previous.json"), this.lastSaved);
           await atomicWrite(path.join(this.root, "state.json"), batch.content);
+          this.lastSaved = batch.content;
           batch.waiters.forEach((w) => w.resolve());
         } catch (error) {
           batch.waiters.forEach((w) => w.reject(error));

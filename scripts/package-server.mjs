@@ -6,7 +6,7 @@ const pkg=JSON.parse(await fs.readFile("package.json","utf8"));
 const name=`codex-relay-server-${pkg.version}-source`,output=path.resolve("release",name);
 await fs.mkdir("release",{recursive:true});
 await fs.rm(output,{recursive:true,force:true});await fs.mkdir(output,{recursive:true});
-for(const file of ["dist/server","scripts/relay.cjs","scripts/remote.cjs","scripts/remote-tunnel.cjs","deploy","docs/SERVER.md","docs/TELEGRAM.md","LICENSE"]){
+for(const file of ["dist/server","scripts/relay.cjs","scripts/remote.cjs","scripts/inspect-state.cjs","scripts/remote-tunnel.cjs","deploy","docs/SERVER.md","docs/TELEGRAM.md","LICENSE"]){
  await fs.mkdir(path.dirname(path.join(output,file)),{recursive:true});await fs.cp(file,path.join(output,file),{recursive:true});
 }
 await fs.writeFile(path.join(output,"package.json"),JSON.stringify({name:"codex-relay-server",version:pkg.version,private:true,engines:{node:">=24"},scripts:{start:"node dist/server/main.cjs",check:"node dist/server/main.cjs --check"}},null,2));

@@ -73,3 +73,7 @@ Added a shell-free OpenSSH launcher with validated host/port arguments, loopback
 ## 38 — Observable graceful service draining
 
 Shutdown now blocks new admissions before stopping Telegram or workers. Authenticated readiness reports `stopping` with HTTP 503; commands receive a retryable 503 rather than a misleading validation error. Already-admitted commands finish before process-confirmed shutdown, retaining the original restart semantics. Validation: build and real HTTP/runtime drain tests. Clients keep stable submission IDs across these responses.
+
+## 39 — Previous-generation state preservation
+
+Both platforms now retain the previous committed state before replacing the primary. Backup failure prevents replacement; corrupt primaries still fail closed rather than silently resurrecting stale tasks. Added a read-only offline inspector with counts/hashes and recovery guidance that distinguishes state generations from full backups. Validation: build and storage corruption/write-failure tests; broader scheduler integration is part of round 40.

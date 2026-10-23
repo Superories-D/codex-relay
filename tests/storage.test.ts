@@ -160,3 +160,22 @@ describe("credential and transcript boundaries", () => {
     expect(settingsSchema.safeParse({ pollSeconds: 0 }).success).toBe(false);
   });
 });
+
+it("retains the previous committed generation and refuses automatic rollback after primary corruption",async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),"relay-generations-"));
+ try{
+ const store=new Store(root);await store.save();store.data.settings.retrySeconds=180;await store.save();
+ expect(JSON.parse(await fs.readFile(path.join(root,"state.previous.json"),"utf8")).settings.retrySeconds).toBe(60);
+ const loaded=new Store(root);await loaded.load();expect(loaded.data.settings.retrySeconds).toBe(180);
+ await fs.writeFile(path.join(root,"state.json"),"{corrupt");await expect(new Store(root).load()).rejects.toThrow();
+ expect(JSON.parse(await fs.readFile(path.join(root,"state.previous.json"),"utf8")).settings.retrySeconds).toBe(60);
+ }finally{await fs.rm(root,{recursive:true,force:true});}
+});
+it("preserves the primary state if the previous-generation backup cannot be written",async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),"relay-backup-fail-"));
+ try{
+ const store=new Store(root);await store.save();await fs.mkdir(path.join(root,"state.previous.json"));store.data.settings.retrySeconds=180;
+ await expect(store.save()).rejects.toThrow();
+ expect(JSON.parse(await fs.readFile(path.join(root,"state.json"),"utf8")).settings.retrySeconds).toBe(60);
+ }finally{await fs.rm(root,{recursive:true,force:true});}
+});

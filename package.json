@@ -74,6 +74,10 @@
       {
         "from": "scripts/remote-tunnel.cjs",
         "to": "remote-tunnel.cjs"
+      },
+      {
+        "from": "scripts/inspect-state.cjs",
+        "to": "inspect-state.cjs"
       }
     ],
     "win": {
