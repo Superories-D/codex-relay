@@ -422,12 +422,14 @@ export function AgentApp({
         if (alive) setSnapshot(s);
       })
       .catch((e) => setError(String(e)));
+    const offOpen = window.relay.onOpenJob?.(id => {setSelected(id);setManage("");setScreen("chat");});
     const off = window.relay.onSnapshot((s) => {
       if (alive) setSnapshot(s);
     });
     return () => {
       alive = false;
       off();
+      offOpen?.();
     };
   }, []);
   useEffect(() => {

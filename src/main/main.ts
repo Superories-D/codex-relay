@@ -1,3 +1,4 @@
+import { NotificationState } from "../core/notification-state";
 import { WindowPlacement } from "./window-placement";
 import { serviceHealth } from "../core/service-health";
 import { respondApproval } from "../core/approval-command";
@@ -154,7 +155,7 @@ async function boot() {
   nativeTheme.themeSource = desktop.data.preferences.theme;
   nativeTheme.on("updated", applyDesktopPreferences);
   const terminals = new Terminals(dataRoot, () => store.data.settings.cliPath);
-  const notifiedStates = new Map(store.data.jobs.map((j) => [j.id, j.state]));
+  const notifications = new NotificationState(store.data.jobs);
   let scheduler: Scheduler;
   const accounts = new Accounts(
     store,
@@ -258,31 +259,15 @@ async function boot() {
   scheduler.on("snapshot", (snapshot) => {
     if (window && !window.isDestroyed())
       window.webContents.send("relay:snapshot", snapshot);
-    for (const job of store.data.jobs) {
-      const previous = notifiedStates.get(job.id);
-      if (
-        desktop.data.preferences.notifications &&
-        previous &&
-        previous !== job.state &&
-        !job.autoRecovery &&
-        ["completed", "needs_attention"].includes(job.state) &&
-        !window?.isFocused() &&
-        Notification.isSupported()
-      ) {
-        const notice = new Notification({
-          title:
-            job.state === "completed"
-              ? nativeText("Codex 已完成本轮任务")
-              : nativeText("Codex 需要你的处理"),
-          body: job.title,
-        });
-        notice.on("click", () => {
-          window?.show();
-          window?.focus();
-        });
+    const notices = notifications.update(snapshot.jobs,snapshot.approvals);
+    if (desktop.data.preferences.notifications && !window?.isFocused() && Notification.isSupported()) {
+      for (const event of notices) {
+        const job = store.data.jobs.find(j=>j.id===event.id);
+        if (!job) continue;
+        const notice = new Notification({title:nativeText(event.kind === "completed" ? "Codex 已完成本轮任务" : "Codex 需要你的处理"),body:job.title});
+        notice.on("click",()=>{window?.show();window?.focus();window?.webContents.send("relay:open-job",job.id);});
         notice.show();
       }
-      notifiedStates.set(job.id, job.state);
     }
     const running = store.data.jobs.some((j) =>
       ["preparing", "running", "pausing", "rotating", "watching"].includes(

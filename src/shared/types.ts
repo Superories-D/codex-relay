@@ -413,6 +413,7 @@ export interface TerminalSession {
   error?: string;
 }
 export interface Bridge {
+  onOpenJob?(fn: (id:string)=>void):()=>void;
   filePath?: (file: File) => string;
   snapshot(): Promise<Snapshot>;
   command(name: string, args?: unknown): Promise<unknown>;

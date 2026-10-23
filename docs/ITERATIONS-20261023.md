@@ -33,3 +33,7 @@ Linux is now recognized as a supported CLI platform in shared environment checks
 ## 28 — Windows multi-monitor session restoration
 
 Desktop window position, normal size and maximized state now persist through an atomic serialized store. Startup clamps geometry to a connected monitor, including negative-coordinate displays and smaller laptop screens after undocking. Corrupt geometry falls back safely. Validation: build and geometry tests; native multi-monitor window interaction remains Windows acceptance work.
+
+## 29 — Actionable Windows approval notifications
+
+Desktop notifications now include new approval requests and correctly notify when automatic recovery ends in manual attention without changing the underlying task state. Request identity/content deduplicates repeated snapshots. Clicking a notification opens its conversation, not merely the last selected tab. Validation: build and notification transition tests; real Windows toast delivery remains native acceptance work.

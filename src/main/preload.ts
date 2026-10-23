@@ -1,6 +1,11 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
 import type { Bridge, Snapshot } from "../shared/types";
 const bridge: Bridge = {
+  onOpenJob: (fn) => {
+    const listener = (_event: Electron.IpcRendererEvent, id:string) => fn(id);
+    ipcRenderer.on("relay:open-job",listener);
+    return () => ipcRenderer.removeListener("relay:open-job",listener);
+  },
   filePath: (file) => webUtils.getPathForFile(file),
   snapshot: () => ipcRenderer.invoke("relay:command", "snapshot"),
   command: (name, args) => ipcRenderer.invoke("relay:command", name, args),
