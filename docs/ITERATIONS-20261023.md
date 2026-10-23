@@ -9,3 +9,7 @@ Desktop IPC and authenticated server HTTP now share a privacy-preserving health 
 ## 22 — Transactional runtime configuration
 
 Both Windows desktop settings and Linux HTTP settings now use scheduler-serialized configuration. Active/recovering process ownership blocks replacement; failed disk writes restore previous settings. This closes the old desktop in-memory/disk mismatch and gives Linux a supported configuration API. Validation: build and scheduler tests, including persistence failure and active-worker rejection.
+
+## 23 — Remote pending-message workbench
+
+Linux web users can now edit, remove and reorder queued instructions using the same revision-checked queue as Windows. Per-task priority controls use the same persistent scheduler ordering. Switching conversations remounts queue edit state so drafts cannot migrate to another task. Validation: build, scheduler and localization suites.

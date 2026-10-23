@@ -190,6 +190,12 @@ export class ServerRuntime {
         const a = controlSchema.parse(args);
         return this.scheduler.control(a.id, a.action);
       }
+      case "chat.priority": {
+        const a = z.object({id:idSchema,priority:z.enum(["high","normal","low"])}).strict().parse(args);
+        return this.scheduler.priority(a.id,a.priority);
+      }
+      case "chat.queue":
+        return this.scheduler.editQueue(z.object({id:idSchema,messageId:idSchema,revision:z.number().int().nonnegative(),action:z.enum(["edit","remove","up","down"]),text:z.string().trim().min(1).max(100000).optional()}).strict().parse(args));
       case "chat.submit": {
         const a=z.object({requestId:idSchema,input:chatSendSchema}).strict().parse(args);
         return this.scheduler.send(a.input,a.requestId);

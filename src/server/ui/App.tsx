@@ -1,3 +1,4 @@
+import { MessageQueue } from "../../renderer/MessageQueue";
 import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { Job, Snapshot, ChatItem, NewJob } from "../../shared/types";
@@ -608,6 +609,10 @@ function App() {
                     pending={busy}
                   />
                   <RecoveryHistory job={job} />
+                  <label>{t("任务优先级")}<select aria-label={t("任务优先级")} value={job.priority || "normal"} disabled={busy} onChange={e => run("chat.priority",{id:job.id,priority:e.target.value})}>
+                    <option value="high">{t("高")}</option><option value="normal">{t("普通优先级")}</option><option value="low">{t("低")}</option>
+                  </select></label>
+                  <MessageQueue key={job.id} job={job} pending={busy} onChange={args => run("chat.queue",args)} />
                   {snapshot?.approvals
                     .filter((a) => a.jobId === job.id)
                     .map((a) => (
