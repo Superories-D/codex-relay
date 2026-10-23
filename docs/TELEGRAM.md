@@ -150,3 +150,9 @@ Send a document or photo to stage it durably (8 MiB per file, up to 10 pending f
 ## Recorded output downloads (iteration 3)
 
 `/files [TASK_ID] [PAGE]` lists recorded output/input files, with 20 download buttons per page and up to 100 references inspected. Links expire after ten minutes or restart. Downloads recheck the current file revision and the opened descriptor's real path; missing, changed, oversized, multiply-linked or out-of-root files are rejected. Text is filtered for known credentials; binary downloads preserve bytes. Each file is limited to 8 MiB. This is a recorded-artifact browser, not an arbitrary server filesystem endpoint.
+
+### 通知控制台
+
+`/notify all|errors|watched|off` 选择全部、仅异常/审批/自动恢复、仅关注任务或关闭；`/watch [任务ID]` 关注当前/指定任务并进入 watched 模式，`/unwatch ID` 取消关注。`/quiet 22-7` 设置跨午夜静默窗口，小时均为 **UTC**；`/quiet off` 关闭，起止相同表示全天静默。`/throttle 60` 设置通知发送间隔（0–3600 秒）。`/digest` 查看模式和排队摘要。
+
+每次轮询捕获到的变化先保存不可变通知内容，静默期间继续排队，重启后恢复发送；每轮最多 5 条，最多保留最近 200 条，溢出数量在摘要中显示。关闭通知会清空待发内容；切换过滤模式会剔除不匹配的通知。发送回执丢失可能导致单条重复（at-least-once），不会因此重跑任务。轮询之间已经发生又消失的瞬态状态不保证捕获。

@@ -1090,3 +1090,25 @@ it.skipIf(process.platform !== "linux")("exports recorded binary artifacts throu
  expect(Buffer.from(f.t.sent.at(-1).document.data,"base64")).toEqual(data);
  }finally{await f.close();}
 });
+
+it.skipIf(process.platform !== "linux")("persists quiet-hour notifications and drains immutable snapshots with throttling after restart",async()=>{
+ const f=await setup(),t=transport();let now=Date.UTC(2026,9,23,23),seq=11;
+ let bridge=await TelegramBridge.open(f.runtime,config,[f.workspace],t.api,atomicWrite,()=>now);
+ const send=async(text:string)=>{t.setUpdates([message(seq++,text)]);await bridge.pollOnce();t.setUpdates([]);};
+ try{
+ await bridge.initialize();await send("/run 1 Watched task");await send("/run 1 Other task");
+ const [a,b]=f.runtime.store.data.jobs;
+ await send(`/watch ${a.id}`);await send("/quiet 22-7");await send("/throttle 60");
+ a.state="completed";b.state="completed";await f.runtime.scheduler.chats.append(a.id,{id:"first",role:"assistant",kind:"message",text:"Immutable completed result",at:now});
+ const before=t.sent.length;await bridge.pollOnce();expect(t.sent).toHaveLength(before);
+ const stored=JSON.parse(await fs.readFile(path.join(f.runtime.store.root,"telegram-state.json"),"utf8"));expect(stored.notices).toHaveLength(1);expect(stored.notices[0].jobId).toBe(a.id);
+ a.state="needs_attention";a.lastError="Transient problem";await bridge.pollOnce();
+ await f.runtime.scheduler.chats.append(a.id,{id:"later",role:"assistant",kind:"message",text:"Later replacement result",at:now});
+ bridge=await TelegramBridge.open(f.runtime,config,[f.workspace],t.api,atomicWrite,()=>now);
+ now=Date.UTC(2026,9,24,8);t.failNextSend();await expect(bridge.pollOnce()).rejects.toThrow("lost send");
+ bridge=await TelegramBridge.open(f.runtime,config,[f.workspace],t.api,atomicWrite,()=>now);await bridge.pollOnce();
+ expect(t.sent.at(-1).text).toContain("Immutable completed result");expect(t.sent.at(-1).text).not.toContain("Later replacement");expect(t.sent.length-before).toBe(1);
+ await bridge.pollOnce();expect(t.sent.length-before).toBe(1);now+=60000;await bridge.pollOnce();expect(t.sent.length-before).toBe(2);expect(t.sent.at(-1).text).toContain("Transient problem");
+ await send("/notify off");expect(JSON.parse(await fs.readFile(path.join(f.runtime.store.root,"telegram-state.json"),"utf8")).notificationPolicy.mode).toBe("off");
+ }finally{await f.close();}
+});

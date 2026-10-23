@@ -1,3 +1,8 @@
+import {
+  notificationPolicySchema,
+  quietNow,
+  wantsNotice,
+} from "./notification-policy";
 import { attachmentsSchema } from "../main/validation";
 import {
   ServerUploads,
@@ -164,6 +169,20 @@ const stateSchema = z
     identity: z.string(),
     offset: z.number().int().nonnegative(),
     known: z.record(z.string(), z.string()),
+    notificationPolicy: notificationPolicySchema.optional(),
+    notices: z
+      .array(
+        z.object({
+          jobId: z.string().uuid(),
+          tag: z.string(),
+          text: z.string().max(4000),
+          at: z.number(),
+        }),
+      )
+      .max(200)
+      .optional(),
+    noticeDropped: z.number().int().nonnegative().optional(),
+    lastNoticeAt: z.number().optional(),
     context: contextSchema.optional(),
     inbox: attachmentsSchema.optional(),
     answerCode: z.string().optional(),
@@ -395,6 +414,71 @@ export class TelegramBridge {
     if (!match) return "Use /help for Relay commands.";
     const command = match[1].toLowerCase(),
       args = (match[2] || "").trim();
+    if (
+      ["notify", "watch", "unwatch", "quiet", "throttle", "digest"].includes(
+        command,
+      )
+    ) {
+      const policy = this.state!.notificationPolicy || {
+        mode: this.config.notify ? ("all" as const) : ("off" as const),
+        watched: [],
+        quiet: null,
+        intervalSeconds: 0,
+      };
+      const next = structuredClone(policy);
+      if (command === "digest")
+        return {
+          text: this.safe(
+            `通知模式: ${policy.mode} · 待发 ${this.state!.notices?.length || 0} · 队列溢出累计 ${this.state!.noticeDropped || 0}\n` +
+              (this.state!.notices || [])
+                .slice(0, 15)
+                .map(
+                  (n) =>
+                    `${n.jobId.slice(0, 8)} · ${n.tag} · ${new Date(n.at).toISOString()}`,
+                )
+                .join("\n") +
+              "\n/notify all|errors|watched|off\n/watch [任务ID] · /unwatch ID\n/quiet START-END（UTC 小时，或 off）\n/throttle 0..3600（秒）",
+          ),
+        };
+      if (command === "notify" && !args)
+        return this.execute(updateId, "/digest", context);
+      if (command === "notify")
+        next.mode = z.enum(["all", "errors", "watched", "off"]).parse(args);
+      if (command === "watch" || command === "unwatch") {
+        const job = this.findJob(args || context.task || "");
+        next.watched = [
+          ...new Set([
+            ...next.watched.filter((id) => id !== job.id),
+            ...(command === "watch" ? [job.id] : []),
+          ]),
+        ];
+        if (command === "watch") next.mode = "watched";
+      }
+      if (command === "quiet") {
+        const times = args.match(/^(\d{1,2})-(\d{1,2})$/);
+        if (args !== "off" && !times)
+          throw Error("Use /quiet 22-7 (UTC hours) or /quiet off");
+        next.quiet = times
+          ? { start: Number(times[1]), end: Number(times[2]) }
+          : null;
+      }
+      if (command === "throttle")
+        next.intervalSeconds = z
+          .number()
+          .int()
+          .min(0)
+          .max(3600)
+          .parse(Number(args));
+      const validated = notificationPolicySchema.parse(next);
+      await this.commit({
+        ...this.state!,
+        notificationPolicy: validated,
+        notices: (this.state!.notices || []).filter((n) =>
+          wantsNotice(validated, n.jobId, n.tag),
+        ),
+      });
+      return `通知设置已保存。模式: ${validated.mode} · 关注 ${validated.watched.length} · 间隔 ${validated.intervalSeconds}s\n静默 UTC: ${validated.quiet ? `${validated.quiet.start}-${validated.quiet.end}` : "off"}\n/digest 查看排队通知。`;
+    }
     if (command === "inbox") {
       if (args === "clear") {
         await this.commit({ ...this.state!, inbox: [] });
@@ -899,64 +983,90 @@ export class TelegramBridge {
       });
       await this.processIncoming();
     }
-    if (this.config.notify) await this.notify();
+    await this.notify();
   }
   private async notify() {
     const jobs = this.jobs(),
-      known = { ...this.state!.known };
-    let delivered = 0;
+      known = { ...this.state!.known },
+      policy = this.state!.notificationPolicy || {
+        mode: this.config.notify ? ("all" as const) : ("off" as const),
+        watched: [],
+        quiet: null,
+        intervalSeconds: 0,
+      };
+    let notices = [...(this.state!.notices || [])],
+      dropped = this.state!.noticeDropped || 0;
     for (const job of jobs) {
       const tag = this.tag(job);
       if (known[job.id] === tag) continue;
-      if (
-        ["completed", "cancelled", "needs_attention", "recovering"].includes(
-          tag,
-        ) ||
-        tag.startsWith("approval:")
-      ) {
-        // Leave undispatched transitions unknown for the next poll instead of dropping them.
-        if (delivered >= 5) continue;
-        let text = `Relay update\n${job.id.slice(0, 8)} · ${tag.startsWith("approval:") ? "needs your answer (/approvals)" : tag} · ${job.title.slice(0, 120)}`;
-        if (tag === "completed") {
-          const page = await this.runtime.scheduler.chats.read(job.id);
-          const latest = [...page.items]
+      known[job.id] = tag;
+      if (!wantsNotice(policy, job.id, tag)) continue;
+      let text = `Relay update\n${job.id.slice(0, 8)} · ${tag.startsWith("approval:") ? "needs your answer (/approvals)" : tag} · ${job.title.slice(0, 120)}`;
+      if (tag === "completed") {
+        const page = await this.runtime.scheduler.chats.read(job.id),
+          latest = [...page.items]
             .reverse()
             .find((i) => i.role === "assistant" && i.text.trim());
-          if (latest)
-            text += `\n\n${this.safe(latest.text, 1200)}${latest.text.length > 1200 ? "…（点击最新结果查看全文）" : ""}`;
-        } else if (tag === "needs_attention" && job.lastError)
-          text += `\n${this.safe(job.lastError, 1000)}`;
-        else if (tag === "recovering")
-          text += "\n正在自动检查并恢复；无需点击继续。手动暂停/取消仍然有效。";
-        const sent = await this.send({
-          text,
-          taskId: job.id,
-          keyboard: this.console.taskKeyboard(job),
-        });
-        const routes = { ...this.state!.routes };
-        if (Number.isSafeInteger(sent?.message_id))
-          routes[String(sent.message_id)] = job.id;
-        known[job.id] = tag;
-        // Commit each notification individually so a later send failure does not repeat the batch.
-        await this.commit({
-          ...this.state!,
-          known: { ...known },
-          routes: Object.fromEntries(
-            Object.entries(routes)
-              .sort((a, b) => Number(b[0]) - Number(a[0]))
-              .slice(0, 200),
-          ),
-        });
-        delivered++;
-      } else known[job.id] = tag;
+        if (latest)
+          text += `\n\n${this.safe(latest.text, 1200)}${latest.text.length > 1200 ? "…（点击最新结果查看全文）" : ""}`;
+      } else if (tag === "needs_attention" && job.lastError)
+        text += `\n${this.safe(job.lastError, 1000)}`;
+      else if (tag === "recovering")
+        text += "\n正在自动检查并恢复；无需点击继续。手动暂停/取消仍然有效。";
+      notices.push({
+        jobId: job.id,
+        tag,
+        text: this.safe(text),
+        at: this.now(),
+      });
     }
-    const ids = new Set(jobs.map((j) => j.id));
-    await this.commit({
-      ...this.state!,
-      known: Object.fromEntries(
-        Object.entries(known).filter(([id]) => ids.has(id)),
-      ),
-    });
+    if (notices.length > 200) {
+      dropped += notices.length - 200;
+      notices = notices.slice(-200);
+    }
+    const ids = new Set(jobs.map((j) => j.id)),
+      next = {
+        ...this.state!,
+        known: Object.fromEntries(
+          Object.entries(known).filter(([id]) => ids.has(id)),
+        ),
+        notices,
+        noticeDropped: dropped,
+      };
+    // Snapshot notification content before network I/O, including quiet periods.
+    if (JSON.stringify(next) !== JSON.stringify(this.state))
+      await this.commit(next);
+    if (quietNow(policy, this.now())) return;
+    let delivered = 0;
+    while (this.state!.notices?.length && delivered < 5) {
+      if (
+        policy.intervalSeconds &&
+        this.state!.lastNoticeAt !== undefined &&
+        this.now() - this.state!.lastNoticeAt < policy.intervalSeconds * 1000
+      )
+        return;
+      const notice = this.state!.notices[0],
+        job = this.runtime.store.data.jobs.find((j) => j.id === notice.jobId);
+      const sent = await this.send({
+          text: notice.text,
+          taskId: notice.jobId,
+          keyboard: job ? this.console.taskKeyboard(job) : homeKeyboard(),
+        }),
+        routes = { ...this.state!.routes };
+      if (Number.isSafeInteger(sent?.message_id))
+        routes[String(sent.message_id)] = notice.jobId;
+      await this.commit({
+        ...this.state!,
+        notices: this.state!.notices!.slice(1),
+        lastNoticeAt: this.now(),
+        routes: Object.fromEntries(
+          Object.entries(routes)
+            .sort((a, b) => Number(b[0]) - Number(a[0]))
+            .slice(0, 200),
+        ),
+      });
+      delivered++;
+    }
   }
   start(onError: (error: unknown) => void) {
     if (this.loop) return;
