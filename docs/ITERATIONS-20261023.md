@@ -25,3 +25,7 @@ The remote composer now supports the shared versioned task-template manager. Tem
 ## 26 — Remote runtime configuration panel
 
 A localized settings dialog exposes CLI path, concurrency, polling, retry timing and interruption-continuation instructions, plus a live health report. Unsaved edits remain local; save uses the transactional scheduler gate and retains input on errors. Validation: build and localization audit. Native desktop settings continue to use the same backend gate.
+
+## 27 — Headless installation doctor
+
+Linux is now recognized as a supported CLI platform in shared environment checks. Added offline `--doctor`, authenticated live diagnostics in the web settings panel, and remote CLI `doctor`/`health` commands. Checks resolve the configured executable and inspect its version without login or inference. Validation: build, diagnostics, remote-CLI and localization tests.

@@ -12,6 +12,7 @@ async function main() {
       "data-dir": { type: "string" },
       cli: { type: "string" },
       check: { type: "boolean" },
+      doctor: { type: "boolean" },
       "ipc-port": { type: "string" },
       "http-port": { type: "string" },
       workspace: { type: "string", multiple: true },
@@ -52,6 +53,14 @@ async function main() {
   } catch (error) {
     await runtime.close();
     throw error;
+  }
+  if (values.doctor) {
+    try {
+      const report: any = await runtime.command("environment.check");
+      console.log(JSON.stringify(report,null,2));
+      if (report.checks.some((c: any) => c.status === "error")) process.exitCode = 1;
+    } finally { await runtime.close(); }
+    return;
   }
   if (values.check) {
     await runtime.close();

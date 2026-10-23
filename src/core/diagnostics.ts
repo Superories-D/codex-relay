@@ -15,11 +15,11 @@ export async function checkEnvironment(
   const checks: Diagnostic[] = [];
   checks.push({
     name: "运行平台",
-    status: process.platform === "win32" ? "ok" : "warning",
+    status: ["win32","linux"].includes(process.platform) ? "ok" : "warning",
     detail:
       process.platform === "win32"
         ? "Windows；可使用 CLI 和 Desktop 适配"
-        : "当前为开发环境，官方 Desktop 模式需要 Windows",
+        : process.platform === "linux" ? "Linux；支持 CLI 服务，Desktop 适配需要 Windows" : "当前平台仅支持 CLI；Desktop 适配需要 Windows",
   });
   try {
     const resolved = await resolveCli(cli);

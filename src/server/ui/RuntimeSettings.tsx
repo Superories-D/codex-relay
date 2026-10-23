@@ -16,6 +16,7 @@ export function RuntimeSettings({settings,call,close}:{settings:Settings;call:(n
       {error && <p role="alert">{error}</p>}
       <button disabled={busy}>{t("保存设置")}</button>
       <button type="button" disabled={busy} onClick={()=>{setBusy(true);void call("health").then(setReport).catch(e=>setError(errorText(e))).finally(()=>setBusy(false));}}>{t("详情")}</button>
+      <button type="button" disabled={busy} onClick={()=>{setBusy(true);void call("environment.check").then(setReport).catch(e=>setError(errorText(e))).finally(()=>setBusy(false));}}>{t("检查运行环境")}</button>
       {report && <pre>{JSON.stringify(report,null,2)}</pre>}
     </form>
   </Dialog>;

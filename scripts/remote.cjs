@@ -26,7 +26,7 @@ const operation = positionals[0] || "help";
 if (operation === "help") {
   console.log(`Codex Relay remote CLI (Node.js 24)
  --url http://127.0.0.1:7899 --token-file /private/http-token
- status | watch [--id UUID] | report --id UUID | approvals
+ health | doctor | status | watch [--id UUID] | report --id UUID | approvals
  run --cwd /server/project --prompt-file task.txt [--request-id UUID] [--detach]
  send --id UUID --prompt-file followup.txt [--request-id UUID]
  pause|resume|cancel --id UUID
@@ -275,6 +275,8 @@ async function main() {
     result = await command("workflow.add", input, true);
   } else if (["pause", "resume", "cancel"].includes(operation))
     result = await command("job.control", { id: values.id, action: operation });
+  else if (operation === "health") result = await command("health");
+  else if (operation === "doctor") result = await command("environment.check");
   else if (operation === "approvals") result = await command("approval.list");
   else if (operation === "respond")
     result = await command("approval.respond", json());

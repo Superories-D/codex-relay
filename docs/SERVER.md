@@ -88,3 +88,7 @@ Reliable `chat.submit` receipts are saved atomically with the queue or pending m
 ## Optional Telegram control
 
 The service also supports an explicitly enabled private-chat controller with encrypted configuration and numeric sender allowlisting. See [TELEGRAM.md](TELEGRAM.md) for setup, supported commands, replay protection and test scope. It is disabled by default.
+
+### Diagnose an installation
+
+With the service stopped, run `node dist/server/main.cjs --data-dir /private/data --doctor` to check the configured CLI without model calls. Exit 1 means a failed check. For a running service, use `node scripts/remote.cjs doctor --token-file /private/data/http-token` or the web settings dialog. `health` reports operational counts without task text or account identities.

@@ -9,6 +9,7 @@ import type { ServerRuntime } from "./runtime";
 const allowed = new Set([
   "snapshot",
   "health",
+  "environment.check",
   "templates.list",
   "templates.save",
   "templates.remove",

@@ -1,3 +1,4 @@
+import { checkEnvironment } from "../core/diagnostics";
 import { Templates } from "../core/templates";
 import { serviceHealth } from "../core/service-health";
 import { WorkflowReports } from "../core/workflow-report";
@@ -121,6 +122,8 @@ export class ServerRuntime {
       }
       case "settings.save":
         return this.scheduler.configure(settingsSchema.parse(args));
+      case "environment.check":
+        return checkEnvironment(this.store.data.settings.cliPath);
       case "health":
         return serviceHealth(this.scheduler.snapshot(), this.closing);
       case "snapshot":
