@@ -1,3 +1,4 @@
+import { TaskTemplates } from "../../renderer/TaskTemplates";
 import { ChatSearch } from "../../renderer/ChatSearch";
 import { MessageQueue } from "../../renderer/MessageQueue";
 import React, { useEffect, useRef, useState } from "react";
@@ -60,6 +61,7 @@ function App() {
     [prompt, setPrompt] = useState(
       sessionStorage.getItem("relay.remote.draft") || "",
     );
+  const [templateOptions, setTemplateOptions] = useState({effort:"",planMode:false,multiAgent:false});
   const [pendingMessage, setPendingMessage] = useState<{
     id: string;
     requestId: string;
@@ -89,6 +91,7 @@ function App() {
   const [chat, setChat] = useState<ChatItem[]>([]),
     [before, setBefore] = useState<number>(),
     [chatError, setChatError] = useState("");
+  const [templates, setTemplates] = useState(false);
   const [searching, setSearching] = useState<string>();
   const [building, setBuilding] = useState(false),
     [report, setReport] = useState<string>();
@@ -286,7 +289,7 @@ function App() {
         cwd: directory,
         mode: "cli" as const,
         model,
-        effort: "",
+        ...templateOptions,
         bucket: "codex",
         approvalPolicy: "on-request" as const,
         sandbox: "workspaceWrite" as const,
@@ -450,6 +453,7 @@ function App() {
             <aside className="remote-sidebar">
               <section className="new-task">
                 <h2>{t("新建任务")}</h2>
+                <button disabled={!!pending || busy} onClick={() => setTemplates(true)}>{t("任务模板")}</button>
                 <form
                   onSubmit={(e) => {
                     e.preventDefault();
@@ -690,6 +694,10 @@ function App() {
               )}
             </section>
           </main>
+          {templates && <TaskTemplates draft={prompt} preferences={{model,...templateOptions}} call={call} close={() => setTemplates(false)} apply={template => {
+            setPrompt(value => value ? value + "\n\n" + template.prompt : template.prompt);
+            setModel(template.model); setTemplateOptions({effort:template.effort,planMode:template.planMode,multiAgent:template.multiAgent}); setTemplates(false);
+          }} />}
           {searching && <ChatSearch key={searching} id={searching} call={call} close={() => setSearching(undefined)} />}
           {building && (
             <WorkflowBuilder

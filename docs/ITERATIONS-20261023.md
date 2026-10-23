@@ -17,3 +17,7 @@ Linux web users can now edit, remove and reorder queued instructions using the s
 ## 24 — Remote full-history investigation
 
 The remote conversation menu now opens the shared full-history search dialog: role filters, pagination, bounded excerpts and original-message inspection. Backend validation requires a known task and bounds query/offset/detail sizes; results remain credential-redacted over HTTP. Validation: build, chat-history and localization tests.
+
+## 25 — Server-side reusable instructions
+
+The remote composer now supports the shared versioned task-template manager. Templates persist on the Linux host, can be reused across browser sessions, and reject stale concurrent edits. Applying a template updates the draft and model without submitting a task. Validation: build, template persistence/concurrency and localization tests.

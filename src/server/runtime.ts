@@ -1,3 +1,4 @@
+import { Templates } from "../core/templates";
 import { serviceHealth } from "../core/service-health";
 import { WorkflowReports } from "../core/workflow-report";
 import { promises as fs } from "node:fs";
@@ -21,6 +22,7 @@ import { ServerCipher } from "./vault";
 import { acquireOwner } from "./owner";
 export class ServerRuntime {
   private reports?: WorkflowReports;
+  private templates?: Templates;
   private closing = false;
   private closePromise?: Promise<void>;
   private inFlight = new Set<Promise<unknown>>();
@@ -110,6 +112,13 @@ export class ServerRuntime {
   }
   private async execute(name: string, args?: unknown): Promise<unknown> {
     switch (name) {
+      case "templates.list":
+      case "templates.save":
+      case "templates.remove": {
+        this.templates ||= new Templates(this.store.root);
+        if (name === "templates.list") return this.templates.list();
+        return name === "templates.save" ? this.templates.save(args) : this.templates.remove(args);
+      }
       case "settings.save":
         return this.scheduler.configure(settingsSchema.parse(args));
       case "health":
