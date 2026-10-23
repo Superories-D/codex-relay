@@ -54,11 +54,7 @@ export function useRemoteAction(
     try {
       const value = {
         name,
-        args: {
-          ...args,
-          ...(name === "goal.update" ? {} : { id }),
-          requestId: crypto.randomUUID(),
-        },
+        args: { ...args, requestId: crypto.randomUUID() },
       };
       sessionStorage.setItem(key, JSON.stringify(value));
       setReceipt(undefined);
@@ -81,6 +77,7 @@ export function ActionStatus({
         <p role="status">{t("正在确认操作回执，断线后自动恢复。")}</p>
       )}
       {action.error && <p role="alert">{action.error}</p>}
+      {action.receipt?.error && <p role="alert">{errorText(action.receipt.error)}</p>}
       {action.receipt && (
         <p role="status">
           {action.receipt.state === "succeeded"
@@ -124,7 +121,7 @@ export function LiveControls({
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            action.submit("task.steer", { text });
+            action.submit("task.steer", { id:job.id,text });
           }}
         >
           <label>
@@ -143,7 +140,7 @@ export function LiveControls({
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            action.submit("task.model", { model, effort });
+            action.submit("task.model", { id:job.id,model, effort });
           }}
         >
           <label>

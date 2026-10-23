@@ -1,3 +1,4 @@
+import {scheduleInputSchema} from "../core/schedule-command";
 import {updateGoal} from "../core/goal-command";
 import { conversationExport } from "../core/conversation-export";
 import { NotificationState } from "../core/notification-state";
@@ -619,25 +620,8 @@ async function boot() {
           return terminals.write(a.id, a.text ?? "");
         return terminals.resize(a.id, a.cols ?? 100, a.rows ?? 24);
       }
-      case "schedule.save": {
-        const a = z
-          .object({
-            id: idSchema.optional(),
-            title: z.string().trim().min(1).max(120),
-            prompt: z.string().trim().min(1).max(100000),
-            cwd: z.string().refine(path.isAbsolute),
-            enabled: z.boolean(),
-            cadence: z.enum(["interval", "daily", "weekly"]),
-            minutes: z.number().int().min(5).max(525600),
-            hour: z.number().int().min(0).max(23),
-            minute: z.number().int().min(0).max(59),
-            weekday: z.number().int().min(0).max(6),
-            worktree: z.boolean(),
-          })
-          .strict()
-          .parse(args);
-        return schedules.save(a);
-      }
+      case "schedule.save":
+        return schedules.save(scheduleInputSchema.parse(args));
       case "schedule.remove":
         return schedules.remove(idSchema.parse(args));
       case "schedule.run":

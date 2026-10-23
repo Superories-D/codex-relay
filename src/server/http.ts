@@ -9,6 +9,7 @@ import { z } from "zod";
 import { redact, redactValue } from "../core/redact";
 import type { ServerRuntime } from "./runtime";
 const allowed = new Set([
+  "schedule.list", "schedule.create", "schedule.save", "schedule.run", "schedule.remove",
   "goal.read", "goal.update",
   "action.read", "models.list", "task.steer", "task.model",
   "assets.list",

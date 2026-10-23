@@ -262,11 +262,32 @@ export class TelegramConsole {
         text:
           "Codex Relay · 手机控制台\n\n" +
           "1. /projects → 点选项目\n2. /new 任务描述 → 创建并选中任务\n3. 直接发文字追问；回复任务卡片可指定该任务\n\n" +
-          "/status [状态|all] [页码] · /task ID\n/result [ID] · /history [ID] · /export [ID]\n/search 关键词 · /report [ID]\n/goal read|create|edit|start|pause|budget|clear\n/steer 立即补充 · /switchmodel 模型 [推理强度] · /models\n/queue [ID] · /priority high|normal|low\n/edit 消息ID 版本 新文字\n/remove 消息ID 版本 · /up 消息ID 版本 · /down 消息ID 版本\n" +
+          "/status [状态|all] [页码] · /task ID\n/result [ID] · /history [ID] · /export [ID]\n/search 关键词 · /report [ID]\n/schedules · /schedule create|run|pause|enable|remove\n/goal read|create|edit|start|pause|budget|clear\n/steer 立即补充 · /switchmodel 模型 [推理强度] · /models\n/queue [ID] · /priority high|normal|low\n/edit 消息ID 版本 新文字\n/remove 消息ID 版本 · /up 消息ID 版本 · /down 消息ID 版本\n" +
           "/pause [ID] · /resume [ID] · /cancel [ID]\n/rename 名称 · /pin on|off · /archive on|off\n/depends ID ID（或 none）\n\n" +
           "/workflow 标题 换行 阶段一 换行 --- 换行 阶段二\n/workflows · /handoff 工作流ID\n/templates · /template ID（或 off）\n/defaults · /model 名称（或 default）\n/effort low|medium|high|xhigh|default · /plan on|off\n\n" +
           "/approvals [页码] · /answer CODE JSON\n/dispatch pause|resume [project|all]\n/limit 1..8|auto · /health · /accounts\n/forget 清除当前任务 · /dismiss 退出答题\n\n所有操作仅接受配置的本人私聊。",
       };
+    if(command === "schedules") {
+      const list:any=await this.runtime.command("schedule.list");
+      return this.paginate(`定时任务 · ${list.timeZone}\n`+list.tasks.map((task:any)=>`${task.id}\n${task.title} · ${task.enabled?"启用":"暂停"} · ${task.cadence}\n下一次: ${new Date(task.nextRun).toISOString()}\n${task.lastError||""}`).join("\n\n")+"\n/schedule create MINUTES 任务描述\n/schedule run|pause|enable|remove ID");
+    }
+    if(command === "schedule") {
+      const [action,...parts]=args.split(/\s+/),value=parts.join(" ");
+      if(action==="create"){
+        const minutes=Number(parts.shift()),prompt=parts.join(" "),input=await this.input(context,prompt);
+        const receipt:any=await this.runtime.command("schedule.create",{requestId,id:requestId,input:{title:input.title,prompt:input.prompt,cwd:input.cwd,enabled:true,cadence:"interval",minutes,hour:9,minute:0,weekday:1,worktree:false}});
+        return `定时任务: ${receipt.state} · ${requestId}\n/schedules 查看；时间为服务器时区。`;
+      }
+      const tasks:any=await this.runtime.command("schedule.list"),matches=tasks.tasks.filter((task:any)=>value.length>=8&&task.id.startsWith(value));
+      if(matches.length!==1)throw Error("Schedule ID is missing or ambiguous");
+      const task=matches[0];let receipt:any;
+      if(action==="pause"||action==="enable"){
+        const {title,prompt,cwd,cadence,minutes,hour,minute,weekday,worktree}=task;
+        receipt=await this.runtime.command("schedule.save",{requestId,id:task.id,input:{title,prompt,cwd,cadence,minutes,hour,minute,weekday,worktree,enabled:action==="enable"}});
+      }else if(action==="run"||action==="remove")receipt=await this.runtime.command(`schedule.${action}`,{requestId,id:task.id});
+      else throw Error("Use /schedule create|run|pause|enable|remove");
+      return `定时任务操作: ${receipt.state}\n/schedules 查看状态。`;
+    }
     if(command === "goal") {
       const job=this.job(context.task),match=args.match(/^(\S+)(?:\s+([\s\S]*))?$/),action=match?.[1]||"read",value=match?.[2]||"";
       if(action==="read")return this.paginate(JSON.stringify(await this.runtime.command("goal.read",{id:job.id}),null,2),job.id);

@@ -1,6 +1,16 @@
 import {  legacyEnglish } from "./legacy-en";
 import { nativeEnglish } from "./native-en";
 export const english: Record<string, string> = {
+"分钟":"Minutes",
+"启用":"Enable",
+"立即运行":"Run now",
+"确认删除":"Confirm deletion",
+"任务描述": "Task instructions",
+"创建定时任务": "Create schedule",
+"隔离工作树": "Isolated worktree",
+"星期（0 为周日）": "Weekday (0 = Sunday)",
+"间隔": "Interval",
+"服务器时区": "Server time zone",
 "启动目标": "Start goal",
 "Token 预算": "Token budget",
 "确认清除目标？": "Clear this goal?",

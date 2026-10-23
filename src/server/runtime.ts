@@ -1,3 +1,7 @@
+import { Desktop } from "../core/desktop";
+import { Schedules } from "../core/schedules";
+import { scheduleInputSchema } from "../core/schedule-command";
+import { prepareWorkspaces, resolveWorkspace } from "./workspaces";
 import {goalUpdateSchema,updateGoal} from "../core/goal-command";
 import { RemoteActions } from "./actions";
 import { ServerUploads } from "./uploads";
@@ -39,8 +43,13 @@ export class ServerRuntime {
     readonly accounts: Accounts,
     readonly scheduler: Scheduler,
     private owner: Awaited<ReturnType<typeof acquireOwner>>,
-  ) {}
-  static async open(directory: string, cliPath?: string) {
+    readonly desktop: Desktop,
+    private workspaceRoots: string[],
+  ) {
+    this.schedules=new Schedules(desktop,scheduler,()=>scheduler.changed(),Date.now,()=>Intl.DateTimeFormat().resolvedOptions().timeZone,async task=>{await resolveWorkspace(this.workspaceRoots,task.cwd);});
+  }
+  readonly schedules: Schedules;
+  static async open(directory: string, cliPath?: string, workspaces: string[] = []) {
     if (process.platform !== "linux")
       throw Error("The headless entry point currently supports Linux only");
     await fs.mkdir(directory, { recursive: true, mode: 0o700 });
@@ -97,7 +106,8 @@ export class ServerRuntime {
         (job) => recoverJob(job, store, accounts, ""),
       );
       await store.save();
-      const runtime = new ServerRuntime(store, accounts, scheduler, owner);
+      const desktop=new Desktop(root);await desktop.load();
+      const runtime = new ServerRuntime(store, accounts, scheduler, owner,desktop,await prepareWorkspaces(root,workspaces));
       return runtime;
     } catch (error) {
       await owner.release();
@@ -110,6 +120,7 @@ export class ServerRuntime {
       onFailure(Error("Server ownership lock was lost"));
     });
     this.scheduler.start();
+    this.schedules.start();
   }
   get draining() { return this.closing; }
   beginDrain() { this.closing = true; }
@@ -123,6 +134,24 @@ export class ServerRuntime {
   }
   private async execute(name: string, args?: unknown): Promise<unknown> {
     switch (name) {
+      case "schedule.list":
+        return {tasks:this.desktop.data.schedules,timeZone:Intl.DateTimeFormat().resolvedOptions().timeZone,serverTime:Date.now()};
+      case "schedule.create":
+      case "schedule.save": {
+        const a=z.object({requestId:idSchema,id:idSchema,input:scheduleInputSchema.omit({id:true})}).strict().parse(args);
+        a.input.cwd=await resolveWorkspace(this.workspaceRoots,a.input.cwd);
+        return (this.remoteActions ||= new RemoteActions(this.store.root)).run(a.requestId,name,a.id,a.input,async()=>{
+          if(this.desktop.data.schedules.length>=200 && name==="schedule.create")throw Error("Schedule limit reached (200)");
+          await this.schedules.save({...a.input,...(name==="schedule.save"?{id:a.id}:{})},name==="schedule.create"?a.id:undefined);
+          return this.desktop.data.schedules.find(t=>t.id===a.id);
+        });
+      }
+      case "schedule.remove":
+      case "schedule.run": {
+        const a=z.object({requestId:idSchema,id:idSchema}).strict().parse(args);
+        return (this.remoteActions ||= new RemoteActions(this.store.root)).run(a.requestId,name,a.id,{},async()=>name==="schedule.run"?this.schedules.run(a.id):this.schedules.remove(a.id).then(()=>({removed:true})));
+      }
+
       case "goal.read": {
         const a=z.object({id:idSchema}).strict().parse(args);
         return this.scheduler.goal(a.id,"thread/goal/get");
@@ -309,6 +338,7 @@ export class ServerRuntime {
   private async closeOnce() {
     this.closing = true;
     await Promise.allSettled([...this.inFlight]);
+    await this.schedules.shutdown();
     const resume = new Set(
       this.store.data.jobs
         .filter(

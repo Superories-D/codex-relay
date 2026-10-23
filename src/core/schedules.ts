@@ -33,6 +33,7 @@ export class Schedules {
     private changed: () => void = () => {},
     private now = Date.now,
     private timeZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone,
+    private beforeRun: (task: ScheduledTask) => Promise<void> = async () => {},
   ) {}
 
   private serial<T>(id: string, fn: () => Promise<T>): Promise<T> {
@@ -52,10 +53,11 @@ export class Schedules {
     if (!task) throw new Error("定时任务不存在");
     return task;
   }
-  save(input: ScheduleInput) {
-    const id = input.id || randomUUID();
+  save(input: ScheduleInput, creationId?: string) {
+    const id = input.id || creationId || randomUUID();
     return this.serial(id, async () => {
       if (this.closing) throw new Error("客户端正在退出，请稍后再操作定时任务");
+      if (creationId && (input.id || this.desktop.data.schedules.some(t=>t.id===creationId))) throw Error("Schedule creation ID already exists");
       const previous = input.id ? this.task(id) : undefined;
       const task: ScheduledTask = {
         ...previous,
@@ -158,6 +160,7 @@ export class Schedules {
           !["completed", "cancelled"].includes(previous.state))
       )
         throw new Error("此定时任务的上一次运行尚未结束");
+      await this.beforeRun(task);
       if (!task.pendingRun)
         task.pendingRun = { id: randomUUID(), requestedAt: now };
       // Collapse missed intervals to one occurrence. A manual run only consumes

@@ -47,7 +47,7 @@ async function main() {
     (values["http-port"]?.trim() === "" || !Number.isInteger(httpPort) || httpPort < 0 || httpPort > 65535)
   )
     throw Error("Invalid HTTP port");
-  const runtime = await ServerRuntime.open(root, values.cli);
+  const runtime = await ServerRuntime.open(root, values.cli, values.workspace || []);
   let botConfig;
   try {
     if (values.telegram || values["telegram-config"])

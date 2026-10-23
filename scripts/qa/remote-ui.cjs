@@ -73,7 +73,7 @@ const { chromium } = require(
         await page.route("**/api/uploads/**",async route=>{if(!droppedUpload && route.request().method()==="POST"){droppedUpload=true;await route.fetch();await route.abort();}else await route.continue();});
         let droppedStream = false,
           droppedSubmit = false,
-          droppedMessage = false, droppedWorkflow = false;
+          droppedMessage = false, droppedWorkflow = false, droppedSchedule=false;
         await page.route("**/api/events", async (route) => {
           if (!droppedStream) {
             droppedStream = true;
@@ -81,6 +81,8 @@ const { chromium } = require(
           } else await route.continue();
         });
         await page.route("**/api/command", async (route) => {
+          if(!droppedSchedule && route.request().postDataJSON()?.name === "schedule.create") {droppedSchedule=true;await route.fetch();await route.abort();return;}
+
           if (!droppedWorkflow && route.request().postDataJSON()?.name === "workflow.add") {
             droppedWorkflow=true;await route.fetch();await route.abort();return;
           }
@@ -174,6 +176,23 @@ const { chromium } = require(
         await page.locator(".remote-artifacts").getByRole("button",{name:"Preview",exact:true}).click();
         await page.locator(".remote-artifacts pre").getByText("Evidence document",{exact:true}).waitFor();
         const artifactDownload=page.waitForEvent("download");await page.locator(".remote-artifacts").getByRole("button",{name:"Download",exact:true}).click();assert.equal((await artifactDownload).suggestedFilename(),"upload-evidence.txt");
+      }
+
+      if(language === "en") {
+        await page.locator(".remote-schedules summary").click();
+        const panel=page.locator(".remote-schedules");
+        await panel.locator('form input').first().fill("Remote scheduled QA");
+        await panel.locator('form select').first().selectOption(workspace);
+        await panel.locator('form textarea').fill("Scheduled QA without model calls");
+        await panel.locator('form input[type=checkbox]').first().uncheck();
+        await panel.getByRole("button",{name:"Create schedule",exact:true}).click();
+        await panel.getByRole("heading",{name:"Remote scheduled QA",exact:true}).waitFor();
+        await page.reload();await page.locator(".connection-bar.online").waitFor();
+        await page.locator(".remote-schedules summary").click();
+        await panel.getByRole("heading",{name:"Remote scheduled QA",exact:true}).waitFor();
+        assert.equal(await panel.locator("article").count(),1,"lost schedule acknowledgment must not duplicate schedules");
+        await page.locator(".remote-task-list button").filter({hasText:"Remote QA en"}).click();
+        await page.locator(".remote-schedules summary").click();
       }
 
       await page.locator(".conversation-header").getByRole("button",{name:/^(Pause|暂停|一時停止)$/}).click();

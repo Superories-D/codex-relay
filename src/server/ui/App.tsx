@@ -1,3 +1,4 @@
+import {RemoteSchedules} from "./RemoteSchedules";
 import {RemoteGoal} from "./RemoteGoal";
 import {LiveControls} from "./LiveControls";
 import {RemoteArtifacts} from "./Artifacts";
@@ -484,6 +485,7 @@ function App() {
           {center && snapshot && <TaskCenter snapshot={snapshot} call={call} close={() => setCenter(false)} open={job => {setSelected(job.id);setCenter(false);}} />}
           {!center && <main className="remote-layout">
             <aside className="remote-sidebar">
+              <RemoteSchedules roots={roots} call={call}/>
               <section className="new-task">
                 <h2>{t("新建任务")}</h2>
                 <button disabled={!!pending || busy} onClick={() => setTemplates(true)}>{t("任务模板")}</button>
