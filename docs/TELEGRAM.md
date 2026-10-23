@@ -146,3 +146,7 @@ The dated implementation and acceptance record is available in [Telegram console
 ## Incoming files (iteration 1)
 
 Send a document or photo to stage it durably (8 MiB per file, up to 10 pending files). `/inbox` lists staged files; `/inbox clear` clears the selection without deleting files already referenced by tasks. The next `/new`, `/run` or task follow-up includes that attachment snapshot. Captions do not execute instructions automatically. Files are downloaded only from Telegram's official file endpoint with streaming size limits, saved under an opaque upload ID with checksum receipts, and reused across lost replies/restarts. Workflows require an empty inbox; attach files to individual stages instead.
+
+## Recorded output downloads (iteration 3)
+
+`/files [TASK_ID] [PAGE]` lists recorded output/input files, with 20 download buttons per page and up to 100 references inspected. Links expire after ten minutes or restart. Downloads recheck the current file revision and the opened descriptor's real path; missing, changed, oversized, multiply-linked or out-of-root files are rejected. Text is filtered for known credentials; binary downloads preserve bytes. Each file is limited to 8 MiB. This is a recorded-artifact browser, not an arbitrary server filesystem endpoint.

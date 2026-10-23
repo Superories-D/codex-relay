@@ -1,3 +1,4 @@
+import { ServerAssets } from "./assets";
 import { UPLOAD_LIMIT } from "./uploads";
 import { prepareWorkspaces, resolveWorkspace } from "./workspaces";
 import http from "node:http";
@@ -8,6 +9,8 @@ import { z } from "zod";
 import { redact, redactValue } from "../core/redact";
 import type { ServerRuntime } from "./runtime";
 const allowed = new Set([
+  "assets.list",
+  "assets.read",
   "snapshot",
   "health",
   "environment.check",
@@ -43,6 +46,7 @@ export async function openHttp(
   uiDirectory?: string,
 ) {
   const roots = await prepareWorkspaces(runtime.store.root, workspaces);
+  const assets=new ServerAssets(runtime,roots);
   const tokenFile = path.join(runtime.store.root, "http-token");
   try {
     await fs.writeFile(tokenFile, randomBytes(32).toString("hex"), {
@@ -193,6 +197,9 @@ export async function openHttp(
       if (!allowed.has(body.name))
         return send(res, 403, { error: "Command is not exposed over HTTP" });
       const args: any = body.args;
+      if(body.name === "assets.list")return send(res,200,{result:await assets.list(z.object({id:z.string().uuid()}).strict().parse(args).id)});
+      if(body.name === "assets.read"){const a=z.object({id:z.string().uuid(),assetId:z.string()}).strict().parse(args);return send(res,200,{result:await assets.read(a.id,a.assetId)});}
+
       if (body.name === "job.submit") {
         if (!args?.input) throw Error("Task input is required");
         args.input.cwd = await workspace(args.input.cwd);

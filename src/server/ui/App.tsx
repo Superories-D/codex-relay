@@ -1,3 +1,4 @@
+import {RemoteArtifacts} from "./Artifacts";
 import { RemoteAttachments,readAttachments,saveAttachments } from "./Attachments";
 import type {ChatAttachment} from "../../shared/types";
 import { TaskCenter } from "../../renderer/TaskCenter";
@@ -655,6 +656,7 @@ function App() {
                     pending={busy}
                   />
                   <RecoveryHistory job={job} />
+                  <RemoteArtifacts key={job.id} id={job.id} call={call}/>
                   <label>{t("任务优先级")}<select aria-label={t("任务优先级")} value={job.priority || "normal"} disabled={busy} onChange={e => run("chat.priority",{id:job.id,priority:e.target.value})}>
                     <option value="high">{t("高")}</option><option value="normal">{t("普通优先级")}</option><option value="low">{t("低")}</option>
                   </select></label>

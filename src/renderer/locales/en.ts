@@ -1,6 +1,15 @@
-import { legacyEnglish } from "./legacy-en";
+import {  legacyEnglish } from "./legacy-en";
 import { nativeEnglish } from "./native-en";
 export const english: Record<string, string> = {
+"输出文件":"Output files",
+"预览":"Preview",
+"下载":"Download",
+"此文件请下载后查看。":"Download this file to view it.",
+"上传中…":"Uploading…",
+"拖入文件 / 粘贴图片":"Drop files / paste images",
+"最多 10 个附件，单个最大 8 MiB":"Up to 10 attachments, 8 MiB each",
+"上次上传尚未确认，请重新选择文件。":"The previous upload is unconfirmed. Select the file again.",
+
   "请求标识已用于不同消息": "Request ID was used for a different message",
   "可靠投递仅支持排队消息，每个会话最多保留 1000 个投递回执": "Reliable delivery supports queued messages, with up to 1,000 receipts per conversation",
   "连接": "Connect",

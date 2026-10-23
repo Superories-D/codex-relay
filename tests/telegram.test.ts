@@ -1080,3 +1080,13 @@ it.skipIf(process.platform !== "linux")(
     }
   },
 );
+
+it.skipIf(process.platform !== "linux")("exports recorded binary artifacts through the durable Telegram document outbox",async()=>{
+ const f=await consoleFixture();try{
+ await f.send("/run 1 Artifacts");const job=f.runtime.store.data.jobs[0],file=path.join(f.workspace,"image.png"),data=Buffer.from([137,80,78,71,0,0]);await fs.writeFile(file,data);
+ await f.runtime.scheduler.chats.append(job.id,{id:"generated",role:"assistant",kind:"message",text:"Image",at:1000,images:[{id:"image",name:"image.png",path:file,origin:"generated"}]});
+ const listing=await f.send("/files"),download=buttons(listing).find(b=>b.callback_data.startsWith("/file "))!;
+ f.t.failNextSend();await expect(f.click(download.callback_data)).rejects.toThrow("Simulated");await f.restart();await f.bridge.pollOnce();
+ expect(Buffer.from(f.t.sent.at(-1).document.data,"base64")).toEqual(data);
+ }finally{await f.close();}
+});

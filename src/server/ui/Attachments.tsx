@@ -156,7 +156,7 @@ export function RemoteAttachments({
       }}
     >
       <label>
-        {t("附件")} · {uploading ? "上传中…" : "拖入文件 / 粘贴图片"}
+        {t("附件")} · {uploading ? t("上传中…") : t("拖入文件 / 粘贴图片")}
         <input
           type="file"
           multiple
@@ -188,7 +188,7 @@ export function RemoteAttachments({
           </button>
         </div>
       ))}
-      {error && <p role="alert">{error}</p>}
+      {error && <p role="alert">{t(error)}</p>}
     </div>
   );
 }

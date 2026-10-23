@@ -1,3 +1,4 @@
+import { ServerAssets } from "./assets";
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import { attachmentsSchema } from "../main/validation";
@@ -33,10 +34,26 @@ export const replySchema = z.object({
   taskId: z.string().uuid().optional(),
   document: z
     .object({
-      name: z.string().regex(/^[a-zA-Z0-9._-]+$/),
-      text: z.string().max(8 * 1024 * 1024),
+      name: z
+        .string()
+        .min(1)
+        .max(200)
+        .regex(/^[^\/\\\x00-\x1f]+$/),
+      text: z
+        .string()
+        .max(8 * 1024 * 1024)
+        .optional(),
+      data: z
+        .string()
+        .max(12 * 1024 * 1024)
+        .regex(/^[A-Za-z0-9+/]*={0,2}$/)
+        .optional(),
     })
     .strict()
+    .refine(
+      (d) => (d.text !== undefined) !== (d.data !== undefined),
+      "Choose text or binary document",
+    )
     .optional(),
 });
 export type TelegramReply = z.infer<typeof replySchema>;
@@ -59,6 +76,10 @@ const defaults: NonNullable<TelegramContext["defaults"]> = {
 
 /** Presentation and explicit user operations. It never invokes an arbitrary runtime command. */
 export class TelegramConsole {
+  private assetLinks = new Map<
+    string,
+    { jobId: string; assetId: string; expires: number }
+  >();
   private pages = new Map<
     string,
     { chunks: string[]; expires: number; taskId?: string }
@@ -127,7 +148,11 @@ export class TelegramConsole {
         button("导出对话", `/export ${job.id}`),
         button("诊断报告", `/report ${job.id}`),
       ],
-      [button("任务列表", "/status"), button("审批 / 提问", "/approvals")],
+      [
+        button("产物 / 附件", `/files ${job.id}`),
+        button("任务列表", "/status"),
+        button("审批 / 提问", "/approvals"),
+      ],
     ];
   }
   card(job: Job): TelegramReply {
@@ -484,6 +509,63 @@ export class TelegramConsole {
             : ""),
         job.id,
       );
+    }
+    if (command === "files") {
+      const [prefix, rawPage = "1"] = args.split(/\s+/),
+        job = this.job(prefix || context.task),
+        assets = new ServerAssets(this.runtime, this.roots),
+        listing = await assets.list(job.id),
+        number = Number(rawPage),
+        total = Math.max(1, Math.ceil(listing.files.length / 20));
+      if (!Number.isInteger(number) || number < 1 || number > total)
+        throw Error("Invalid files page");
+      const files = listing.files.slice((number - 1) * 20, number * 20);
+      for (const [key, value] of this.assetLinks)
+        if (value.expires <= this.now()) this.assetLinks.delete(key);
+      const page = this.paginate(
+        `产物 ${number}/${total}\n` +
+          files.map((f) => `${f.name} (${f.size} bytes)`).join("\n") ||
+          "暂无可下载产物。仅列出已记录、在允许目录内且不超过 8 MiB 的文件。",
+        job.id,
+      );
+      page.keyboard = files.map((f) => {
+        while (this.assetLinks.size >= 200)
+          this.assetLinks.delete(this.assetLinks.keys().next().value!);
+        const key = randomBytes(6).toString("hex");
+        this.assetLinks.set(key, {
+          jobId: job.id,
+          assetId: f.id,
+          expires: this.now() + 10 * 60 * 1000,
+        });
+        return [button(`下载 ${f.name}`, `/file ${key}`)];
+      });
+      const nav = [];
+      if (number > 1)
+        nav.push(button("上一页", `/files ${job.id} ${number - 1}`));
+      if (number < total)
+        nav.push(button("下一页", `/files ${job.id} ${number + 1}`));
+      if (nav.length) page.keyboard.push(nav);
+      page.keyboard.push([button("任务", `/task ${job.id}`)]);
+      return page;
+    }
+    if (command === "file") {
+      const link = this.assetLinks.get(args);
+      if (!link || link.expires <= this.now())
+        throw Error("文件链接已过期，请重新 /files");
+      const asset = await new ServerAssets(this.runtime, this.roots).read(
+        link.jobId,
+        link.assetId,
+      );
+      return {
+        text: `${asset.name} · ${asset.size} bytes${asset.redacted ? " · 已过滤已知凭据" : " · 原始二进制文件"}`,
+        taskId: link.jobId,
+        document: asset.redacted
+          ? {
+              name: asset.name,
+              text: Buffer.from(asset.data, "base64").toString("utf8"),
+            }
+          : { name: asset.name, data: asset.data },
+      };
     }
     if (command === "search") {
       const job = this.job(context.task);

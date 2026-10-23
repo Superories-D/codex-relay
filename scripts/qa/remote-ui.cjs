@@ -168,6 +168,14 @@ const { chromium } = require(
         `Remote QA ${language}`,
       );
       await page.locator(".remote-messages article").waitFor();
+      if(language === "en") {
+        await page.locator(".remote-artifacts summary").click();
+        await page.locator(".remote-artifacts").getByText("upload-evidence.txt",{exact:false}).waitFor();
+        await page.locator(".remote-artifacts").getByRole("button",{name:"Preview",exact:true}).click();
+        await page.locator(".remote-artifacts pre").getByText("Evidence document",{exact:true}).waitFor();
+        const artifactDownload=page.waitForEvent("download");await page.locator(".remote-artifacts").getByRole("button",{name:"Download",exact:true}).click();assert.equal((await artifactDownload).suggestedFilename(),"upload-evidence.txt");
+      }
+
       await page.locator(".conversation-header").getByRole("button",{name:/^(Pause|暂停|一時停止)$/}).click();
       await page.waitForFunction(async (title) => {
         const response = await fetch("/api/snapshot", {

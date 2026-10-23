@@ -108,3 +108,7 @@ With Node 24 and OpenSSH installed on the client, verify the server host key usi
 ### Remote browser attachments
 
 The task and follow-up forms accept file selection, drag/drop and clipboard files (8 MiB each, ten draft attachments). Draft references survive page reloads; a pending submission keeps its attachment snapshot. Authenticated `POST /api/uploads/UUID?name=ENCODED_NAME` accepts `application/octet-stream`; `GET /api/uploads/UUID` recovers the durable receipt. Uploaded references are validated against their checksum receipt before task admission. Uploaded files reside in the owner-only service data directory and must not be exposed through a public static-file server.
+
+### Recorded artifacts
+
+The selected-task view lists recorded outputs and attachments, previews text/images and downloads files. The authenticated `assets.list` / `assets.read` commands use opaque revision-bound IDs; clients cannot request arbitrary file paths. Up to 100 references are inspected and each file is capped at 8 MiB. Text exports filter known credentials; binary exports preserve their original content. The Linux service validates the opened file through `/proc/self/fd` to prevent a directory/symlink swap from escaping configured roots.

@@ -98,7 +98,11 @@ export function telegramApi(token: string): TelegramApi {
       nextSendAt = Date.now() + 1100;
     let payload: string | FormData = JSON.stringify(body);
     if (method === "sendDocument") {
-      const document = body.document as { name: string; text: string };
+      const document = body.document as {
+        name: string;
+        text?: string;
+        data?: string;
+      };
       const form = new FormData();
       for (const [key, value] of Object.entries(body)) {
         if (key !== "document" && value !== undefined)
@@ -109,7 +113,18 @@ export function telegramApi(token: string): TelegramApi {
       }
       form.set(
         "document",
-        new Blob([document.text], { type: "text/plain;charset=utf-8" }),
+        new Blob(
+          [
+            document.data
+              ? new Uint8Array(Buffer.from(document.data, "base64"))
+              : document.text || "",
+          ],
+          {
+            type: document.data
+              ? "application/octet-stream"
+              : "text/plain;charset=utf-8",
+          },
+        ),
         document.name,
       );
       payload = form;
@@ -725,7 +740,9 @@ export class TelegramBridge {
       reply.keyboard = reply.keyboard.map((row) =>
         row.map((b) => ({ ...b, text: this.safe(b.text, 60) })),
       );
-    if (reply.document) {
+    if (reply.document)
+      reply.document.name = this.safe(reply.document.name, 200);
+    if (reply.document?.text !== undefined) {
       const limit = 8 * 1024 * 1024;
       const truncated = reply.document.text.length > limit;
       reply.document.text =
