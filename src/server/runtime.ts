@@ -11,6 +11,7 @@ import { recoverJob } from "../core/recovery";
 import { respondApproval } from "../core/approval-command";
 import { taskReport } from "../core/task-report";
 import {
+  settingsSchema,
   newJobSchema,
   controlSchema,
   chatSendSchema,
@@ -109,6 +110,8 @@ export class ServerRuntime {
   }
   private async execute(name: string, args?: unknown): Promise<unknown> {
     switch (name) {
+      case "settings.save":
+        return this.scheduler.configure(settingsSchema.parse(args));
       case "health":
         return serviceHealth(this.scheduler.snapshot(), this.closing);
       case "snapshot":

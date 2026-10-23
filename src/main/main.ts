@@ -1398,16 +1398,7 @@ async function boot() {
         return;
       }
       case "settings.save":
-        if (
-          store.data.jobs.some((j) =>
-            ["preparing", "running", "pausing"].includes(j.state),
-          )
-        )
-          throw new Error("暂停任务后再修改运行设置");
-        store.data.settings = settingsSchema.parse(args);
-        await store.save();
-        scheduler.changed();
-        return;
+        return scheduler.configure(settingsSchema.parse(args));
       case "choose.directory": {
         const r = await dialog.showOpenDialog(window!, {
           properties: ["openDirectory"],

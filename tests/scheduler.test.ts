@@ -1970,3 +1970,18 @@ it("rolls back uncommitted follow-up receipts and inactive task state on disk fa
  expect(job.state).toBe("queued");expect(job.pendingMessage).toBe(message.text);
  const page=await scheduler.chats.read(job.id);expect(page.items.filter(i=>i.text===message.text)).toHaveLength(1);
 });
+
+it("rolls back runtime settings on persistence failure and rejects changes with active ownership", async () => {
+  await scheduler.dispatch(true);
+  const previous = structuredClone(store.data.settings);
+  const save = vi.spyOn(store,"save").mockRejectedValueOnce(Error("disk full"));
+  await expect(scheduler.configure({...previous,retrySeconds:120})).rejects.toThrow("disk full");
+  expect(store.data.settings).toEqual(previous);
+  save.mockRestore();
+  await scheduler.configure({...previous,retrySeconds:120});
+  expect(store.data.settings.retrySeconds).toBe(120);
+  await scheduler.dispatch(false);
+  await scheduler.add({...input,cwd:root});
+  await until(() => workers[0]?.started);
+  await expect(scheduler.configure(previous)).rejects.toThrow("Pause tasks");
+});

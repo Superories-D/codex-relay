@@ -1452,6 +1452,21 @@ export class Scheduler extends EventEmitter {
       } finally { this.maintaining = false; }
     });
   }
+  configure(settings: import("../shared/types").Settings) {
+    return this.queueMaintenance(async () => {
+      this.maintaining = true;
+      try {
+        await this.tickInFlight;
+        if (this.closing || this.active.size || this.store.data.jobs.some(j => j.recoveryRequired || ["preparing","running","pausing","rotating"].includes(j.state)))
+          throw Error("Pause tasks and finish process recovery before changing runtime settings");
+        const previous = this.store.data.settings;
+        this.store.data.settings = structuredClone(settings);
+        try { await this.store.save(); } catch (error) { this.store.data.settings = previous; throw error; }
+        this.changed();
+        return this.store.data.settings;
+      } finally { this.maintaining = false; }
+    });
+  }
   projectLimit(cwd: string, limit: number | null) {
     return this.queueMaintenance(async () => {
       this.maintaining = true;
