@@ -65,3 +65,7 @@ Added strict versioned JSON startup configuration with config-relative paths, bo
 ## 36 — Standalone Linux distribution
 
 Added a reproducible allowlisted server packaging command: bundled daemon/web assets, both control CLIs, service/configuration samples, docs, license and per-file SHA-256 manifest. The distribution runs on Node 24 without Electron or an on-host dependency install. Runtime data is excluded. Validation: build, package creation, manifest verification and a real packaged `--check` process with isolated private storage.
+
+## 37 — Windows/Linux remote connection launcher
+
+Added a shell-free OpenSSH launcher with validated host/port arguments, loopback-only forwarding, host-key verification, keepalives and clean signal forwarding. Both server distributions and Windows installer resources include the remote CLI and tunnel helper. Validation: argument-injection/port tests and `--check`; no real SSH destination was contacted.

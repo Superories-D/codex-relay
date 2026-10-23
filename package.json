@@ -16,7 +16,8 @@
     "package:win": "npm run build && electron-builder --win --x64",
     "package:dir": "npm run build && electron-builder --win --x64 --dir",
     "serve": "node dist/server/main.cjs",
-    "package:server": "npm run build && node scripts/package-server.mjs"
+    "package:server": "npm run build && node scripts/package-server.mjs",
+    "tunnel": "node scripts/remote-tunnel.cjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
@@ -65,6 +66,14 @@
       {
         "from": "scripts/relay.cjs",
         "to": "relay.cjs"
+      },
+      {
+        "from": "scripts/remote.cjs",
+        "to": "remote.cjs"
+      },
+      {
+        "from": "scripts/remote-tunnel.cjs",
+        "to": "remote-tunnel.cjs"
       }
     ],
     "win": {

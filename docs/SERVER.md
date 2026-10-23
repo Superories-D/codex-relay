@@ -100,3 +100,7 @@ Copy `deploy/server.example.json` and run `node dist/server/main.cjs --config /e
 ### Standalone server distribution
 
 `npm run package:server` produces `release/codex-relay-server-VERSION-source.tar.gz` with the bundled daemon/web UI, local/remote CLIs, example service/configuration, documentation and `SHA256SUMS`. Install Node.js 24, the official Codex CLI and `flock` on the target Linux host; no Electron or `npm install` is required inside this package. Extract into a versioned application directory and keep private runtime data outside it. Verify `sha256sum -c SHA256SUMS`, then run the packaged daemon with `--config` and `--doctor` before changing the service path. The package does not contain accounts or tokens.
+
+### Connect from Windows or Linux
+
+With Node 24 and OpenSSH installed on the client, verify the server host key using your normal SSH setup first. Then run `node scripts/remote-tunnel.cjs --host user@server` and open the printed localhost URL after SSH authentication. The helper enforces loopback binding, host-key verification, keepalives and failure on a busy forwarding port. `--check` validates without connecting. The Windows installation also ships `remote.cjs` and `remote-tunnel.cjs` in its resources folder. Closing the tunnel does not stop server tasks. Enter the HTTP token in the browser login; never put it in the URL.
