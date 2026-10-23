@@ -262,11 +262,19 @@ export class TelegramConsole {
         text:
           "Codex Relay · 手机控制台\n\n" +
           "1. /projects → 点选项目\n2. /new 任务描述 → 创建并选中任务\n3. 直接发文字追问；回复任务卡片可指定该任务\n\n" +
-          "/status [状态|all] [页码] · /task ID\n/result [ID] · /history [ID] · /export [ID]\n/search 关键词 · /report [ID]\n/queue [ID] · /priority high|normal|low\n/edit 消息ID 版本 新文字\n/remove 消息ID 版本 · /up 消息ID 版本 · /down 消息ID 版本\n" +
+          "/status [状态|all] [页码] · /task ID\n/result [ID] · /history [ID] · /export [ID]\n/search 关键词 · /report [ID]\n/steer 立即补充 · /switchmodel 模型 [推理强度] · /models\n/queue [ID] · /priority high|normal|low\n/edit 消息ID 版本 新文字\n/remove 消息ID 版本 · /up 消息ID 版本 · /down 消息ID 版本\n" +
           "/pause [ID] · /resume [ID] · /cancel [ID]\n/rename 名称 · /pin on|off · /archive on|off\n/depends ID ID（或 none）\n\n" +
           "/workflow 标题 换行 阶段一 换行 --- 换行 阶段二\n/workflows · /handoff 工作流ID\n/templates · /template ID（或 off）\n/defaults · /model 名称（或 default）\n/effort low|medium|high|xhigh|default · /plan on|off\n\n" +
           "/approvals [页码] · /answer CODE JSON\n/dispatch pause|resume [project|all]\n/limit 1..8|auto · /health · /accounts\n/forget 清除当前任务 · /dismiss 退出答题\n\n所有操作仅接受配置的本人私聊。",
       };
+    if(command === "models") return this.paginate(JSON.stringify(await this.runtime.command("models.list"),null,2));
+    if(command === "steer" || command === "switchmodel") {
+      const job=this.job(context.task);
+      const [model,effort="",...rest]=args.split(/\s+/);
+      if(command==="switchmodel"&&rest.length)throw Error("Use /switchmodel MODEL [EFFORT]");
+      const receipt:any=await this.runtime.command(command==="steer"?"task.steer":"task.model",{requestId,id:job.id,...(command==="steer"?{text:args}:{model,effort})});
+      return {taskId:job.id,text:`操作: ${receipt.action} · ${receipt.state}\n${receipt.id}\n${receipt.state==="succeeded"?JSON.stringify(receipt.result??{}):"执行结果未确认，请检查任务状态；不会重复执行。"}`,keyboard:this.taskKeyboard(job)};
+    }
     if (command === "page") {
       const [key, index] = args.split(/\s+/);
       return this.page(key, Number(index));

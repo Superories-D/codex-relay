@@ -1,6 +1,14 @@
 import {  legacyEnglish } from "./legacy-en";
 import { nativeEnglish } from "./native-en";
 export const english: Record<string, string> = {
+"候选模型来自已缓存的账号能力，实际可用性以执行结果为准。": "Suggestions use cached account capabilities; availability is checked during execution.",
+"切换模型并恢复": "Switch model and resume",
+"立即补充": "Send immediately",
+"立即补充当前执行": "Steer the running task",
+"任务状态已变化，操作未应用。": "Task state changed; operation was not applied.",
+"操作结果未知，请检查任务状态；不会自动重复执行。": "Operation outcome is unknown. Check task status; it will not execute again automatically.",
+"操作已确认": "Operation acknowledged",
+"正在确认操作回执，断线后自动恢复。": "Confirming operation receipt; reconnects automatically.",
 "输出文件":"Output files",
 "预览":"Preview",
 "下载":"Download",

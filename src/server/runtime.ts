@@ -1,3 +1,4 @@
+import { RemoteActions } from "./actions";
 import { ServerUploads } from "./uploads";
 import { conversationExport } from "../core/conversation-export";
 import { checkEnvironment } from "../core/diagnostics";
@@ -26,6 +27,7 @@ import { acquireOwner } from "./owner";
 export class ServerRuntime {
   get uploads() { return this.uploadStore ||= new ServerUploads(this.store.root); }
   private uploadStore?: ServerUploads;
+  private remoteActions?: RemoteActions;
   private reports?: WorkflowReports;
   private templates?: Templates;
   private closing = false;
@@ -120,6 +122,19 @@ export class ServerRuntime {
   }
   private async execute(name: string, args?: unknown): Promise<unknown> {
     switch (name) {
+      case "action.read":
+        return (this.remoteActions ||= new RemoteActions(this.store.root)).read(idSchema.parse(args));
+      case "models.list":
+        return this.store.data.accounts.filter(a=>a.enabled).map(a=>({account:a.label,ids:a.modelAccess?.ids||[],observedAt:a.modelAccess?.observedAt||0,complete:a.modelAccess?.complete||false}));
+      case "task.steer": {
+        const a=z.object({requestId:idSchema,id:idSchema,text:z.string().trim().min(1).max(100000)}).strict().parse(args);
+        return (this.remoteActions ||= new RemoteActions(this.store.root)).run(a.requestId,name,a.id,{text:a.text},()=>this.scheduler.send({id:a.id,text:a.text,attachments:[],action:"steer"}));
+      }
+      case "task.model": {
+        const a=z.object({requestId:idSchema,id:idSchema,model:z.string().trim().min(1).max(200),effort:z.string().max(20).regex(/^(?:[a-z][a-z0-9_-]*)?$/).default("")}).strict().parse(args);
+        return (this.remoteActions ||= new RemoteActions(this.store.root)).run(a.requestId,name,a.id,{model:a.model,effort:a.effort},()=>this.scheduler.model(a.id,a.model,a.effort));
+      }
+
       case "templates.list":
       case "templates.save":
       case "templates.remove": {
