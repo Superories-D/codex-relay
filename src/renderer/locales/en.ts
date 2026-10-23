@@ -1,6 +1,15 @@
 import {  legacyEnglish } from "./legacy-en";
 import { nativeEnglish } from "./native-en";
 export const english: Record<string, string> = {
+"工作流控制与重试":"Workflow controls and retry",
+"来源工作流":"Source workflow",
+"暂停未完成阶段":"Pause unfinished stages",
+"恢复未完成阶段":"Resume unfinished stages",
+"从阶段重试":"Retry from stage",
+"生成重试预览":"Preview retry",
+"保留原工作流，携带已完成阶段结果，新分支暂停等待启动。":"Keep the original workflow and carry completed results into a paused branch.",
+"创建暂停的重试分支":"Create paused retry branch",
+"打开重试分支":"Open retry branch",
 "分钟":"Minutes",
 "启用":"Enable",
 "立即运行":"Run now",

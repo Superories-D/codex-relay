@@ -1418,14 +1418,14 @@ export class Scheduler extends EventEmitter {
       this.changed();
     });
   }
-  addWorkflow(requestId: string, title: string, inputs: NewJob[]) {
+  addWorkflow(requestId: string, title: string, inputs: NewJob[], source?: {id:string;step:number}) {
     return this.queueMaintenance(async () => {
       this.maintaining = true;
       const created: Job[] = [];
       try {
         await this.tickInFlight;
-        if (this.closing || inputs.length < 2 || inputs.length > 12 || inputs.some(i => i.mode !== "cli" || i.attachments?.length)) throw Error("工作流需要 2 至 12 个 CLI 阶段，附件请在创建后添加");
-        const fingerprint = createHash("sha256").update(JSON.stringify({title,inputs})).digest("hex");
+        if (this.closing || inputs.length < (source ? 1 : 2) || inputs.length > 12 || inputs.some(i => i.mode !== "cli" || i.attachments?.length)) throw Error("工作流需要 2 至 12 个 CLI 阶段，附件请在创建后添加");
+        const fingerprint = createHash("sha256").update(JSON.stringify({title,inputs,...(source?{source}:{})})).digest("hex");
         const existing = this.store.data.jobs.filter(j => j.workflow?.id === requestId);
         if (existing.length) {
           if (existing.some(j => j.workflow?.fingerprint !== fingerprint) || existing.length !== inputs.length) throw Error("该创建请求已被处理，请检查现有工作流");
@@ -1434,8 +1434,8 @@ export class Scheduler extends EventEmitter {
         for (const input of inputs) {
           if (!(await fs.stat(input.cwd)).isDirectory()) throw Error("工作目录不存在");
           const now = Date.now();
-          created.push({ ...input, interactive: true, pendingMessage: input.prompt, id: randomUUID(), state: "queued", rotations: 0, createdAt: now, updatedAt: now, enqueuedAt: now,
-            workflow: {id: requestId, title, step: created.length + 1, total: inputs.length, fingerprint},
+          created.push({ ...input, interactive: true, pendingMessage: input.prompt, id: randomUUID(), state: source ? "paused" : "queued", ...(source?{stopIntent:"pause" as const}:{}), rotations: 0, createdAt: now, updatedAt: now, enqueuedAt: now,
+            workflow: {id: requestId, title, step: created.length + 1, total: inputs.length, fingerprint,...(source?{source:{id:source.id,step:source.step+created.length}}:{})},
             dependsOn: created.length ? [created.at(-1)!.id] : [] });
         }
         // Prepare journals before publishing any executable task. Failed batches

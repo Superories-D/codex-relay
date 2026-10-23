@@ -95,7 +95,7 @@ export interface RecoveryEvent {
 export interface Job {
   messageReceipts?: { id: string; fingerprint: string }[];
   clientRequest?: { id: string; fingerprint: string };
-  workflow?: { id: string; title: string; step: number; total: number; fingerprint: string };
+  workflow?: { id: string; title: string; step: number; total: number; fingerprint: string; source?: {id:string;step:number} };
   dependsOn?: string[];
   priority?: "high" | "normal" | "low";
   enqueuedAt?: number;

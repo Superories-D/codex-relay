@@ -1,3 +1,4 @@
+import {ServerWorkflows} from "./workflows";
 import { Desktop } from "../core/desktop";
 import { Schedules } from "../core/schedules";
 import { scheduleInputSchema } from "../core/schedule-command";
@@ -134,6 +135,24 @@ export class ServerRuntime {
   }
   private async execute(name: string, args?: unknown): Promise<unknown> {
     switch (name) {
+      case "workflow.previewRetry": {
+        const a=z.object({id:idSchema,fromStep:z.number().int().min(1).max(12)}).strict().parse(args);
+        return new ServerWorkflows(this,this.workspaceRoots).preview(a.id,a.fromStep);
+      }
+      case "workflow.retry": {
+        const a=z.object({requestId:idSchema,previewId:idSchema}).strict().parse(args);
+        const workflows=new ServerWorkflows(this,this.workspaceRoots),preview=await workflows.read(a.previewId);
+        return (this.remoteActions ||= new RemoteActions(this.store.root)).run(a.requestId,name,preview.sourceId,{previewId:a.previewId},()=>workflows.fork(a.requestId,a.previewId));
+      }
+      case "workflow.control": {
+        const a=z.object({requestId:idSchema,id:idSchema,action:z.enum(["pause","resume"])}).strict().parse(args);
+        return (this.remoteActions ||= new RemoteActions(this.store.root)).run(a.requestId,name,a.id,{action:a.action},async()=>{
+          const jobs=this.store.data.jobs.filter(j=>j.workflow?.id===a.id && !["completed","cancelled"].includes(j.state));
+          if(!jobs.length)throw Error("No unfinished workflow stages");
+          return this.scheduler.controlMany(jobs.map(j=>j.id),a.action);
+        });
+      }
+
       case "schedule.list":
         return {tasks:this.desktop.data.schedules,timeZone:Intl.DateTimeFormat().resolvedOptions().timeZone,serverTime:Date.now()};
       case "schedule.create":

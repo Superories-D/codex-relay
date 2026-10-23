@@ -1,3 +1,4 @@
+import {WorkflowOperations} from "./WorkflowOperations";
 import {RemoteSchedules} from "./RemoteSchedules";
 import {RemoteGoal} from "./RemoteGoal";
 import {LiveControls} from "./LiveControls";
@@ -659,6 +660,7 @@ function App() {
                     }
                     pending={busy}
                   />
+                  {job.workflow&&<WorkflowOperations key={`workflow-${job.workflow.id}`} job={job} jobs={snapshot?.jobs||[]} call={call} open={setSelected}/>}
                   <RecoveryHistory job={job} />
                   <LiveControls key={`live-${job.id}`} job={job} call={call}/>
                   <RemoteGoal key={`goal-${job.id}`} job={job} call={call}/>

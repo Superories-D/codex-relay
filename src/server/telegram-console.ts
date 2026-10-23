@@ -262,11 +262,22 @@ export class TelegramConsole {
         text:
           "Codex Relay · 手机控制台\n\n" +
           "1. /projects → 点选项目\n2. /new 任务描述 → 创建并选中任务\n3. 直接发文字追问；回复任务卡片可指定该任务\n\n" +
-          "/status [状态|all] [页码] · /task ID\n/result [ID] · /history [ID] · /export [ID]\n/search 关键词 · /report [ID]\n/schedules · /schedule create|run|pause|enable|remove\n/goal read|create|edit|start|pause|budget|clear\n/steer 立即补充 · /switchmodel 模型 [推理强度] · /models\n/queue [ID] · /priority high|normal|low\n/edit 消息ID 版本 新文字\n/remove 消息ID 版本 · /up 消息ID 版本 · /down 消息ID 版本\n" +
+          "/status [状态|all] [页码] · /task ID\n/result [ID] · /history [ID] · /export [ID]\n/search 关键词 · /report [ID]\n/wf preview|retry|pause|resume\n/schedules · /schedule create|run|pause|enable|remove\n/goal read|create|edit|start|pause|budget|clear\n/steer 立即补充 · /switchmodel 模型 [推理强度] · /models\n/queue [ID] · /priority high|normal|low\n/edit 消息ID 版本 新文字\n/remove 消息ID 版本 · /up 消息ID 版本 · /down 消息ID 版本\n" +
           "/pause [ID] · /resume [ID] · /cancel [ID]\n/rename 名称 · /pin on|off · /archive on|off\n/depends ID ID（或 none）\n\n" +
           "/workflow 标题 换行 阶段一 换行 --- 换行 阶段二\n/workflows · /handoff 工作流ID\n/templates · /template ID（或 off）\n/defaults · /model 名称（或 default）\n/effort low|medium|high|xhigh|default · /plan on|off\n\n" +
           "/approvals [页码] · /answer CODE JSON\n/dispatch pause|resume [project|all]\n/limit 1..8|auto · /health · /accounts\n/forget 清除当前任务 · /dismiss 退出答题\n\n所有操作仅接受配置的本人私聊。",
       };
+    if(command === "wf") {
+      const [action,id,extra]=args.split(/\s+/);
+      if(action==="preview"){
+        const preview:any=await this.runtime.command("workflow.previewRetry",{id,fromStep:Number(extra)});
+        return this.paginate(`重试预览 ${preview.id}\n原工作流 ${id} · 从阶段 ${preview.fromStep}\n新分支将暂停，原记录保留。\n${preview.steps.map((s:any,i:number)=>`${i+1}. ${s.title}\n${s.prompt.slice(0,1200)}`).join("\n\n")}\n/wf retry ${preview.id}\n有效期 10 分钟。`);
+      }
+      if(extra)throw Error("Unexpected workflow arguments");
+      const receipt:any=action==="retry"?await this.runtime.command("workflow.retry",{requestId,previewId:id}):["pause","resume"].includes(action)?await this.runtime.command("workflow.control",{requestId,id,action}):null;
+      if(!receipt)throw Error("/wf preview WORKFLOW_ID STAGE · /wf retry PREVIEW_ID · /wf pause|resume WORKFLOW_ID");
+      return this.paginate(`工作流操作: ${receipt.state}\n${JSON.stringify(receipt.result??receipt.error??{})}`);
+    }
     if(command === "schedules") {
       const list:any=await this.runtime.command("schedule.list");
       return this.paginate(`定时任务 · ${list.timeZone}\n`+list.tasks.map((task:any)=>`${task.id}\n${task.title} · ${task.enabled?"启用":"暂停"} · ${task.cadence}\n下一次: ${new Date(task.nextRun).toISOString()}\n${task.lastError||""}`).join("\n\n")+"\n/schedule create MINUTES 任务描述\n/schedule run|pause|enable|remove ID");
