@@ -480,6 +480,7 @@ export class Desktop {
       .filter(Boolean);
   }
   private gitOperations = new Map<string, Promise<unknown>>();
+  withRepository<T>(cwd:string,operation:(root:string)=>Promise<T>){return this.inRepository(cwd,operation);}
   // Canonical worktree roots share a queue, including nested folders/junctions.
   // Linked worktrees have separate indices and may operate independently.
   private async inRepository<T>(

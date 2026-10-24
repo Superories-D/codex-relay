@@ -287,7 +287,7 @@ export function AgentApp({
       return await window.relay.command(name, args);
     } catch (e) {
       // Git controls retain actionable errors beside the affected draft/diff.
-      if (!name.startsWith("telegram.") && ![
+      if (!name.startsWith("telegram.") && !name.startsWith("checkpoints.") && ![
         "workspace.branchList", "workspace.switchBranch", "workspace.changes",
         "workspace.diff", "workspace.git", "workspace.gitHunk",
       ].includes(name))

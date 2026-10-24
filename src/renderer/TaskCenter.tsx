@@ -1,4 +1,5 @@
 import { WorkflowReport } from "./WorkflowReport";
+import {WorkspaceCheckpoints} from "./WorkspaceCheckpoints";
 import { DeliveryCenter } from "./DeliveryCenter";
 import { OperationsCenter } from "./OperationsCenter";
 import { WorkflowBuilder } from "./WorkflowBuilder";
@@ -42,6 +43,7 @@ export function TaskCenter({
 }) {
   useI18n();
   const [workflowReport, setWorkflowReport] = useState<string>();
+  const [checkpoints,setCheckpoints]=useState(false);
   const [deliveryCenter, setDeliveryCenter] = useState(false);
   const [cockpit,setCockpit]=useState(false);
   const [building, setBuilding] = useState(false);
@@ -136,8 +138,10 @@ export function TaskCenter({
         </button>
         <button onClick={() => setDeliveryCenter(true)}>{t("交付中心")}</button>
         <button onClick={()=>setCockpit(true)}>{t("任务运行台")}</button>
+        <button onClick={()=>setCheckpoints(true)}>{t("工作区检查点")}</button>
         <button onClick={close}>{t("返回聊天")}</button>
       </header>
+      {checkpoints&&<WorkspaceCheckpoints call={call} jobs={jobs} initialCwd={project} initialJob={jobs.find(job=>selected.length===1&&job.id===selected[0])} close={()=>setCheckpoints(false)} open={job=>{setCheckpoints(false);open(job);}}/>}
       <section className="dispatch-controls">
         <div>
           <strong>

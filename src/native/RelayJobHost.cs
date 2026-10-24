@@ -78,13 +78,14 @@ static class RelayJobHost {
   [DllImport("kernel32.dll",SetLastError=true)] static extern bool CloseHandle(IntPtr handle);
   [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern bool MoveFileEx(string from,string to,uint flags);
 
-  static T Read<T>(string file) { using(var stream=new FileStream(file,FileMode.Open,FileAccess.Read,FileShare.ReadWrite|FileShare.Delete))return (T)new DataContractJsonSerializer(typeof(T)).ReadObject(stream); }
+  static string NativePath(string file){string value=Path.GetFullPath(file);if(value.StartsWith(@"\\?\"))return value;return value.StartsWith(@"\\")?@"\\?\UNC\"+value.Substring(2):@"\\?\"+value;}
+  static T Read<T>(string file) { using(var stream=new FileStream(NativePath(file),FileMode.Open,FileAccess.Read,FileShare.ReadWrite|FileShare.Delete))return (T)new DataContractJsonSerializer(typeof(T)).ReadObject(stream); }
   static void Write<T>(string file,T value) {
     string temp=file+"."+Guid.NewGuid().ToString("N")+".tmp";
     try {
-      using(var stream=new FileStream(temp,FileMode.CreateNew,FileAccess.Write,FileShare.None)){new DataContractJsonSerializer(typeof(T)).WriteObject(stream,value);stream.Flush(true);}
-      for(int i=0;;i++){if(MoveFileEx(temp,file,9))break;if(i>=4)throw new Win32Exception();Thread.Sleep(50*(1<<i));}
-    } finally {if(File.Exists(temp))File.Delete(temp);}
+      using(var stream=new FileStream(NativePath(temp),FileMode.CreateNew,FileAccess.Write,FileShare.None)){new DataContractJsonSerializer(typeof(T)).WriteObject(stream,value);stream.Flush(true);}
+      for(int i=0;;i++){if(MoveFileEx(NativePath(temp),NativePath(file),9))break;if(i>=4)throw new Win32Exception();Thread.Sleep(50*(1<<i));}
+    } finally {if(File.Exists(NativePath(temp)))File.Delete(NativePath(temp));}
   }
   static string Full(string path) {return Path.GetFullPath(path).TrimEnd('\\','/');}
   static bool Same(string a,string b) {return String.Equals(Full(a),Full(b),StringComparison.OrdinalIgnoreCase);}
@@ -192,7 +193,7 @@ static class RelayJobHost {
       if(!UpdateProcThreadAttribute(attributes,0,new IntPtr(0x20002),handleList,new IntPtr(IntPtr.Size*3),IntPtr.Zero,IntPtr.Zero))throw new Win32Exception();
       var startup=new StartupEx();startup.Basic.Size=(uint)Marshal.SizeOf(typeof(StartupEx));startup.Basic.Flags=0x100;startup.Basic.Input=handles[0];startup.Basic.Output=handles[1];startup.Basic.Error=handles[2];startup.Attributes=attributes;
       string command=Quote(request.executable)+" "+String.Join(" ",request.args.Select(Quote).ToArray());
-      if(!CreateProcess(request.executable,new StringBuilder(command),IntPtr.Zero,IntPtr.Zero,true,0x08080004,IntPtr.Zero,request.home,ref startup,out child))throw new Win32Exception();
+      if(!CreateProcess(NativePath(request.executable),new StringBuilder(command),IntPtr.Zero,IntPtr.Zero,true,0x08080004,IntPtr.Zero,NativePath(request.home),ref startup,out child))throw new Win32Exception();
       receipt.rootPid=(int)child.ProcessId;receipt.rootCreated=Created(child.Process);receipt.phase="running";Write(receiptFile,receipt);
       if(ResumeThread(child.Thread)==0xffffffff)throw new Win32Exception();
       while(WaitForSingleObject(child.Process,100)==258)if(WaitForSingleObject(parent,0)!=258)break;
@@ -209,6 +210,9 @@ static class RelayJobHost {
     }
   }
   static int Main(string[] args) {
+    AppContext.SetSwitch("Switch.System.IO.UseLegacyPathHandling",false);
+    AppContext.SetSwitch("Switch.System.IO.BlockLongPaths",false);
+    Console.OutputEncoding=new UTF8Encoding(false);
     try {
       if(args.Length==2&&args[0]=="identity"){
         int pid=Int32.Parse(args[1]);IntPtr process=OpenProcess(0x101000,false,pid);if(process==IntPtr.Zero)throw new Win32Exception();

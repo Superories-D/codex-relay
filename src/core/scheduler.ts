@@ -1661,6 +1661,27 @@ export class Scheduler extends EventEmitter {
       } finally { this.maintaining = false; }
     });
   }
+  addCheckpointTask(value:{restore:import("../shared/checkpoints").CheckpointRestore;manifest:import("../shared/checkpoints").CheckpointManifest;title:string;prompt:string}) {
+    return this.queueMaintenance(async()=>{
+      this.maintaining=true;
+      try{
+        await this.tickInFlight;if(this.closing)throw Error("客户端正在关闭");
+        const existing=this.store.data.jobs.find(job=>job.checkpoint?.restoreId===value.restore.id);
+        if(existing){if(existing.checkpoint!.manifestSha256!==value.restore.manifestSha256||existing.cwd!==value.restore.target)throw Error("恢复目标已经关联其他任务");return existing;}
+        if(value.restore.status!=="ready"||!(await fs.stat(value.restore.target)).isDirectory())throw Error("请先核对恢复目标");
+        const source=value.manifest.context?this.store.data.jobs.find(job=>job.id===value.manifest.context!.jobId):undefined,now=Date.now();
+        const job:Job={id:randomUUID(),title:value.title,prompt:value.prompt,cwd:value.restore.target,mode:"cli",interactive:true,pendingMessage:value.prompt,
+          model:source?.model||"",effort:source?.effort||"medium",bucket:source?.bucket||"codex",approvalPolicy:source?.approvalPolicy||"on-request",sandbox:source?.sandbox||"workspaceWrite",
+          review:source?.review,planMode:source?.planMode,multiAgent:source?.multiAgent,serviceTier:source?.serviceTier,
+          state:"paused",stopIntent:"pause",rotations:0,createdAt:now,updatedAt:now,
+          checkpoint:{id:value.manifest.id,restoreId:value.restore.id,manifestSha256:value.restore.manifestSha256,sourceJobId:value.manifest.context?.jobId,sourceCwd:value.manifest.source,branch:value.restore.branch,mode:value.restore.mode},
+          ...(value.manifest.context?.delivery?.checks.length?{delivery:{revision:1,checks:structuredClone(value.manifest.context.delivery.checks),reports:[]}}:{})};
+        await this.chats.user(job.id,job.prompt);this.store.data.jobs.push(job);
+        try{await this.store.save();}catch(error){this.store.data.jobs=this.store.data.jobs.filter(item=>item!==job);await fs.rm(this.chats.file(job.id),{force:true}).catch(()=>{});throw error;}
+        this.changed();return job;
+      }finally{this.maintaining=false;}
+    });
+  }
   configure(settings: import("../shared/types").Settings) {
     return this.queueMaintenance(async () => {
       this.maintaining = true;
@@ -2348,6 +2369,7 @@ export class Scheduler extends EventEmitter {
       const fork: Job = {
         id: randomUUID(),
         runtimeHomeId: source.runtimeHomeId || source.id,
+        checkpoint:source.checkpoint?structuredClone(source.checkpoint):undefined,
         title: `${source.title.slice(0, 100)} · 分支`,
         prompt: "",
         cwd: source.cwd,

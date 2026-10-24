@@ -47,11 +47,15 @@ export async function spawnWindowsDomain(executable:string,args:string[],home:st
   let child:DomainChild|undefined;
   try{
     await atomicWrite(requestFile,JSON.stringify({version:1,nonce,home:actual,executable:target,args}));
-    child=spawn(host,["run",requestFile],{env,cwd:actual,shell:false,windowsHide:true,stdio:["pipe","pipe","pipe"]}) as DomainChild;
+    // libuv's process launcher can reject a long cwd before the managed host
+    // starts. Its private home is authenticated in the request; the host itself
+    // can start beside its executable and launch the target in that owned home.
+    child=spawn(host,["run",requestFile],{env,cwd:path.dirname(host),shell:false,windowsHide:true,stdio:["pipe","pipe","pipe"]}) as DomainChild;
     let failure:Error|undefined;child.once("error",error=>{failure=error;});
+    for(const stream of [child.stdin,child.stdout,child.stderr])stream.on("error",error=>{failure||=error;});
     child.relayDomain={owner,ownerFile};
     if(!child.pid){await new Promise(resolve=>child!.once("error",resolve));throw failure||Error("Windows 进程管理组件无法启动");}
-    owner.pid=child.pid;await atomicWrite(ownerFile,JSON.stringify(owner));return child;
+    owner.pid=child.pid;await atomicWrite(ownerFile,JSON.stringify(owner));if(failure)throw failure;return child;
   }catch(error){
     // A started host may own a live job: retain its durable marker for recovery.
     if(!child?.pid){const current=JSON.parse(await fs.readFile(ownerFile,"utf8").catch(()=>"{}"));if(current.nonce===nonce)await fs.rm(ownerFile);}

@@ -1233,6 +1233,18 @@ const input: NewJob = {
   approvalPolicy: "on-request",
   sandbox: "workspaceWrite",
 };
+it("creates checkpoint tasks paused without inference, keeps source intent and deduplicates after persistence",async()=>{
+  scheduler.runtimeReady=()=>false;const source=await scheduler.add({...input,cwd:root,interactive:true,deliveryChecks:[{kind:"file",path:"result.txt",label:"Result",minBytes:1}]});source.state="cancelled";source.stopIntent="cancel";source.threadId="source-thread";
+  const restore:any={id:crypto.randomUUID(),checkpointId:crypto.randomUUID(),manifestSha256:"a".repeat(64),status:"ready",target:root,branch:"checkpoint/test",mode:"independent"},manifest:any={id:restore.checkpointId,source:root,context:{jobId:source.id,delivery:{revision:1,status:"pending",checks:structuredClone(source.delivery!.checks)}}};
+  source.delivery!.checks[0].label="Changed after capture";const before=structuredClone(source);
+  const branch=await scheduler.addCheckpointTask({restore,manifest,title:"Branch",prompt:"Inspect restored files"});expect(branch.state).toBe("paused");expect(branch.stopIntent).toBe("pause");expect(branch.threadId).toBeUndefined();expect(branch.runtimeHomeId).toBeUndefined();expect(branch.delivery?.reports).toEqual([]);expect(branch.delivery?.checks).toEqual(manifest.context.delivery.checks);expect(branch.delivery?.checks).not.toEqual(source.delivery?.checks);expect(branch.checkpoint?.sourceJobId).toBe(source.id);expect(source).toEqual(before);
+  scheduler.runtimeReady=()=>true;await(scheduler as any).tick();expect(workers).toHaveLength(0);expect((await scheduler.addCheckpointTask({restore,manifest,title:"Retry",prompt:"Retry"})).id).toBe(branch.id);
+  const loaded=new Store(root);await loaded.load();expect(loaded.data.jobs.find(j=>j.id===branch.id)?.checkpoint?.restoreId).toBe(restore.id);
+});
+it("does not admit a checkpoint task if persistence fails",async()=>{
+  const restore:any={id:crypto.randomUUID(),checkpointId:crypto.randomUUID(),manifestSha256:"a".repeat(64),status:"ready",target:root,branch:"checkpoint/test",mode:"independent"},manifest:any={id:restore.checkpointId,source:root};
+  const write=vi.spyOn(store,"save").mockRejectedValueOnce(Error("disk full"));await expect(scheduler.addCheckpointTask({restore,manifest,title:"Branch",prompt:"Inspect"})).rejects.toThrow("disk full");write.mockRestore();expect(store.data.jobs).toHaveLength(0);expect(workers).toHaveLength(0);
+});
 function account(id: string): Account {
   return {
     id,

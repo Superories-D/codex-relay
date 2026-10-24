@@ -32,6 +32,7 @@ if(m.method==='fixture.exit')setTimeout(()=>process.exit(0),50);
 });}
 `);
     const shim=path.join(root,"cli.cmd"),entry=path.join(root,"node_modules/@openai/codex/bin/codex.js");await fs.mkdir(path.dirname(entry),{recursive:true});await fs.copyFile(fixture,entry);await fs.writeFile(shim,"");
+    const longHome=path.join(root,"nested-"+"x".repeat(185));assert.ok(longHome.length<250);assert.ok(path.join(longHome,"relay-domain-00000000-0000-4000-8000-000000000000.json").length>260);await fs.mkdir(longHome,{recursive:true});const longRpc=await Rpc.open(shim,longHome);live.push(longRpc);assert.deepEqual(await longRpc.call("fixture.echo",{longPath:true}),{longPath:true});assert.ok((await inspectWindowsDomain(longHome)).active>0);await longRpc.close();report.checks.push("A native runtime writes receipts beyond MAX_PATH, exchanges RPC, inspects and releases with long-path-aware I/O while retaining a Windows-supported process cwd");
     outside=spawn(process.execPath,[fixture,"child",path.join(root,"outside.json")],{windowsHide:true,stdio:"ignore"});await until(()=>fs.access(path.join(root,"outside.json")).then(()=>true,()=>false));
     const home=path.join(root,"home");await fs.mkdir(home);
     const rpc=await Rpc.open(shim,home);live.push(rpc);

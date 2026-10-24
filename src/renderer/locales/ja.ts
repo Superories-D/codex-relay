@@ -1,10 +1,12 @@
 import { vaultJapanese } from "./vault";
 import { operationsJapanese } from "./operations";
 import {recoveryJapanese} from "./recovery";
+import {checkpointJapanese} from "./checkpoints";
 export const japanese: Record<string, string> = {
 ...vaultJapanese,
 ...operationsJapanese,
 ...recoveryJapanese,
+...checkpointJapanese,
 "重新加载": "再読み込み",
 "创建或管理 Bot": "Bot を作成・管理",
 "取消验收": "検証を中止",

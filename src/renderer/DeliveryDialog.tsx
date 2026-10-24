@@ -154,6 +154,7 @@ export function DeliveryDialog({
           )}
         </p>
         {job && <code className="delivery-workspace">{job.cwd}</code>}
+        {job?.checkpoint&&<div className="delivery-help"><strong>{t("检查点任务分支")}: {job.checkpoint.branch}</strong><p>{t("来源工作区")}: {job.checkpoint.sourceCwd}</p><code>SHA256 {job.checkpoint.manifestSha256}</code><p>{t("验收条件需要在当前分支重新验证。")}</p></div>}
         {error && <p role="alert">{error}</p>}
         {blocked && (
           <p role="status">{t("请先暂停任务，再修改或运行验收。")}</p>

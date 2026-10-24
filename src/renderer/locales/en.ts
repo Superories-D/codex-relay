@@ -3,10 +3,12 @@ import { nativeEnglish } from "./native-en";
 import { vaultEnglish } from "./vault";
 import { operationsEnglish } from "./operations";
 import {recoveryEnglish} from "./recovery";
+import {checkpointEnglish} from "./checkpoints";
 export const english: Record<string, string> = {
 ...vaultEnglish,
 ...operationsEnglish,
 ...recoveryEnglish,
+...checkpointEnglish,
 "重新加载": "Reload",
 "创建或管理 Bot": "Create or manage a bot",
 "取消验收": "Cancel verification",

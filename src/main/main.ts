@@ -7,6 +7,7 @@ import { WindowsTelegram, createTelegramTransport } from "./telegram-notificatio
 import { DeliveryPlans } from "./delivery-plans";
 import { DeliveryBatches } from "./delivery-batches";
 import { Vaults } from "./vault";
+import {Checkpoints} from "./checkpoints";
 import { OperationsHistory } from "./operations-history";
 import {RecoveryDomains} from "../core/recovery-domains";
 import { WindowPlacement } from "./window-placement";
@@ -253,6 +254,8 @@ async function boot() {
     invalidate: (id, revision, reportId, reason) => scheduler.flagDeliveryEvidence(id, revision, reportId, reason),
     protect: directory => protectDataDirectory(path.join(scripts, "protect-directory.ps1"), directory), text: nativeText,
     report:error=>scheduler.log(error,"warning")});
+  const checkpoints=new Checkpoints({root:dataRoot,target:id=>scheduler.deliveryTarget(id),lookup:id=>{const job=store.data.jobs.find(j=>j.id===id);if(!job)throw Error("任务不存在");return job;},withRepository:(cwd,action)=>desktop.withRepository(cwd,action),admit:value=>scheduler.addCheckpointTask(value),
+    protect:directory=>protectDataDirectory(path.join(scripts,"protect-directory.ps1"),directory),report:error=>scheduler.log(error,"warning")});
   scheduler.runtimeReady = () => cliSetup.state.phase === "ready";
   const operationsHistory=new OperationsHistory({root:dataRoot,worker:path.join(__dirname,"operations-worker.cjs"),report:issue=>scheduler.log(issue,"warning")});
   try{await operationsHistory.start(scheduler.operationsObservation());}catch(error){operationsHistory.pause(error);}
@@ -366,6 +369,19 @@ async function boot() {
       case "delivery.batch.cancel": return deliveryBatches.cancel(idSchema.parse(args));
       case "delivery.batch.export": return deliveryBatches.export(idSchema.parse(args));
       case "vault.list": return vaults.list();
+      case "checkpoints.list":return checkpoints.list();
+      case "checkpoints.preview":return checkpoints.preview(args);
+      case "checkpoints.capture":return checkpoints.capture(idSchema.parse(args));
+      case "checkpoints.detail":return checkpoints.detail(args);
+      case "checkpoints.verify":return checkpoints.verify(idSchema.parse(args));
+      case "checkpoints.cancel":return checkpoints.cancel(idSchema.parse(args));
+      case "checkpoints.linkedReview":return checkpoints.linkedReview(idSchema.parse(args));
+      case "checkpoints.restore":return checkpoints.restore(args);
+      case "checkpoints.recover":return checkpoints.recover(idSchema.parse(args));
+      case "checkpoints.admit":return checkpoints.admit(args);
+      case "checkpoints.task":return checkpoints.task(idSchema.parse(args));
+      case "checkpoints.open":case "checkpoints.openRestore":{const directory=await checkpoints.openDirectory(idSchema.parse(args),name==="checkpoints.openRestore"),issue=await shell.openPath(directory);if(issue)throw Error(issue);return;}
+      case "checkpoints.storage":{const result=await dialog.showOpenDialog(window!,{title:nativeText("选择检查点存储位置"),properties:["openDirectory","createDirectory"]});return result.canceled||!result.filePaths[0]?checkpoints.list():checkpoints.setStorage(result.filePaths[0]);}
       case "operations.read": return {...scheduler.operations(),recording:operationsHistory.view()};
       case "recovery.plan":return scheduler.recoveryPlan();
       case "recovery.inspect":return scheduler.inspectRecovery(z.object({id:z.string().regex(/^[a-f0-9]{64}$/)}).strict().parse(args).id);
@@ -1575,6 +1591,7 @@ async function boot() {
             deliveryPlans.drain(),
             deliveryBatches.shutdown(),
             vaults.shutdown(),
+            checkpoints.shutdown(),
             importer.drain(),
             backgroundHistory.shutdown(),
             scheduler.shutdown(),
@@ -1595,6 +1612,7 @@ async function boot() {
           telegram.resume();
           deliveryBatches.resume();
           vaults.resume();
+          checkpoints.resume();
           existing.start();
           schedules.start();
           catalog.resume();

@@ -4,9 +4,11 @@ import type {RecoveryPlan} from "../shared/recovery";
 import type {Snapshot,Job} from "../shared/types";
 import {t,useI18n,errorText,formatDate} from "./i18n";
 import "./recovery.css";
+import {WorkspaceCheckpoints} from "./WorkspaceCheckpoints";
 const reasons:Record<string,string>={contained:"已核实受管进程域与资源归属",missingProof:"缺少可验证的运行凭据，继续全局等待",changedResources:"任务资源已变化，需要重新核查",unknownOwner:"归属记录无法核实，继续全局等待",externalSession:"已有会话或 Desktop 需要全局核查",unconfined:"原有权限或额外授权需要全局核查",storage:"恢复证据未能落盘，继续全局等待"};
 export function RecoveryPanel({call,snapshot,open}:{call:(name:string,args?:unknown)=>Promise<any>;snapshot:Snapshot;open:(job:Job)=>void}){
   useI18n();const [plan,setPlan]=useState<RecoveryPlan>(),[busy,setBusy]=useState(false),[error,setError]=useState("");
+  const [checkpoints,setCheckpoints]=useState(false);
   const [expanded,setExpanded]=useState<Record<string,boolean>>({});const live=useRef(true),generation=useRef(0),pending=useRef(false);
   async function load(){const ticket=++generation.current;try{const value=await call("recovery.plan");if(live.current&&ticket===generation.current)setPlan(value);}catch(e){if(live.current&&ticket===generation.current)setError(errorText(e));}}
   useEffect(()=>{live.current=true;void load();return()=>{live.current=false;generation.current++;};},[]);
@@ -18,6 +20,8 @@ export function RecoveryPanel({call,snapshot,open}:{call:(name:string,args?:unkn
   const choose=(id:string)=>{const job=snapshot.jobs.find(j=>j.id===id);if(job)open(job);};
   return <section className="recovery-plan"><header><div><h2>{t("Windows 恢复计划")}</h2><p>{t("核对故障影响范围，保留原任务的暂停、取消与恢复意图。")}</p></div><button disabled={busy||!plan} onClick={()=>void inspect()}><RefreshCw size={15}/>{t(busy?"正在核查归属…":"重新核查归属")}</button></header>
     <p className="recovery-plan-caption">{t("核查只读取归属并保存证据，不会发送模型请求或停止进程。自动恢复仍按原任务意图进行。")}</p>
+    <button onClick={()=>setCheckpoints(true)}>{t("核对工作区检查点")}</button>
+    {checkpoints&&<WorkspaceCheckpoints call={call} jobs={snapshot.jobs} close={()=>setCheckpoints(false)} open={open}/>}
     {error&&<p className="ops-error" role="alert">{error}</p>}
     {!plan?<p role="status">{t("正在读取恢复计划…")}</p>:!plan.entries.length?<div className="recovery-clear"><ShieldCheck size={28}/><h3>{t("当前没有待核查的恢复占用")}</h3><p>{t("任务仍按账户额度、依赖与并发条件调度。")}</p></div>:<>
       <div className="recovery-summary"><span>{t("局部占用：{count}",{count:plan.entries.filter(e=>e.status==="scoped").length})}</span><span>{t("全局等待：{count}",{count:plan.entries.filter(e=>e.status==="global").length})}</span></div>

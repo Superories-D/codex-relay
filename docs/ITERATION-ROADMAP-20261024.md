@@ -73,7 +73,7 @@ checks now run the four Windows layouts only.
    Setup download/SHA and public binary sizes passed. Source/main/tag:
    `ae405bb8c772aa5c9d9fbf6d35a4c91932d1d611`. See
    `OPERATIONS-COCKPIT-20261025.md`.
-6. **Windows recovery domains (v0.6.27 publication gate).** Investigate separating
+6. **Windows recovery domains (published v0.6.27).** Investigate separating
    unrelated-project recovery from task admission while retaining strict shared
    account, session-family and process ownership. Build a reviewable recovery
    plan with explicit user intent, durable evidence and restart behavior. First
@@ -86,10 +86,12 @@ checks now run the four Windows layouts only.
    Fourteen actual native ownership/scheduler checks, restart/save failure,
    legacy fallback, Cancel persistence and four native UI locales pass. Full
    packaged acceptance passed, including the packaged native host, eight QA
-   flows, Setup wizard, ten ASAR bundles and all 89 ZIP files. Full attachment
-   upload/readback remains the publication gate. See
+   flows, Setup wizard, ten ASAR bundles and all 89 ZIP files. All five full
+   attachments passed LAN download/SHA; anonymous full Setup download/SHA,
+   public binary sizes and complete metadata downloads passed. Source/main/tag:
+   `36889676461fea7e83cf6546e6837bf70f789321`. See
    `RECOVERY-DOMAINS-20261025.md`.
-7. **Windows recoverable workspace checkpoints and task branches (next goal).**
+7. **Windows recoverable workspace checkpoints and task branches (v0.6.28).**
    Preserve a reviewable source/index/worktree state before isolated task
    branches, carry intended uncommitted changes without overwriting the original,
    and restore a checkpoint into a new worktree after interruption. Connect the
@@ -97,6 +99,28 @@ checks now run the four Windows layouts only.
    actual Windows path/byte semantics and stale-state guards. Verify restoration
    using real Git repositories, changed and untracked files, index differences,
    large data and restart before publishing a complete Windows release.
+   Capture/restore, independent Git objects, durable publication/recovery,
+   idempotent restore requests, paused task provenance, full file pagination and
+   the native interface are implemented. Repository/service tests cover conflicts,
+   split/sparse indexes, flags, submodules, nested repositories, unborn and SHA-256
+   repositories, source removal, tampering, cancellation and storage failure.
+   Final regression passes696tests/43platformskips. All nine packaged Windows
+   flows plus the Setup wizard pass, including complete64MiB/159-entry checkpoint
+   restore, source-review cancellation, paused tasks, restart and four locales.
+   Ten JS/CSS bundles/native helper match the build and all89 ZIP files match.
+   Complete Windows artifacts are prepared for publication. See
+   `WORKSPACE-CHECKPOINTS-20261025.md`.
+8. **Windows task handoff and branch review (next substantial goal).** Turn a
+   completed isolated task into a reviewable handoff: compare checkpoint base,
+   current source and task results; build an integrated proposal in a fresh
+   worktree; expose conflicts and acceptance evidence before adoption. Bind every
+   action to freshly reviewed repository/index/file identities. Preserve dirty
+   source work, pause/cancel intent and checkpoint/delivery provenance. Adoption
+   of an existing workspace must be an explicit guarded action with recoverable
+   evidence, never an implicit overwrite. Validate real divergent repositories,
+   conflicts, large binary/Unicode content, stale reviews, restart and Windows
+   locales before the next full release. Begin implementation after the .28
+   publisher has captured its clean release source.
 
 Every milestone includes complete Windows Setup, Portable and ZIP artifacts,
 instructions and SHA256 checksums. Upload through the authorized LAN Gitea API
