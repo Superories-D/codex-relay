@@ -28,7 +28,7 @@ const { chromium } = require(
       .locator(".agent-model-list button span")
       .allTextContents();
     assert.ok(models.length > 0);
-    await picker.locator(".agent-model-name").click();
+    await picker.locator(".agent-model-list-heading button").click();
     const out = path.resolve(__dirname, "../../qa-output");
     await picker.screenshot({ path: path.join(out, "agent-model-live.png") });
     const report = {

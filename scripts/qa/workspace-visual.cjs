@@ -54,7 +54,11 @@ function fixture({ theme, language }) {
       if (name === "history.importAll.cancel") { progress.phase = "cancelled"; return structuredClone(progress); }
       if (name === "chat.read") return { items, total: items.length };
       if (name === "chat.update") { Object.assign(job, args); listener?.(structuredClone(data)); return job; }
-      if (name === "account.models") return [{ id: "gpt-6-astra", model: "gpt-6-astra", displayName: "GPT-6 Astra", description: "", defaultReasoningEffort: "high", supportedReasoningEfforts: ["low", "medium", "high", "xhigh", "max", "ultra"].map((reasoningEffort) => ({ reasoningEffort, description: reasoningEffort })) }];
+      if (name === "account.models") return ["GPT-6.1 Sol", "GPT-6 Astra", "GPT-6 Sol", "GPT-6 Luna", "GPT-5.6 Sol", "GPT-5.6 Terra", "GPT-5.6 Luna"].map((displayName, i) => ({
+        id: i === 1 ? "gpt-6-astra" : `model-${i}`, model: i === 1 ? "gpt-6-astra" : `model-${i}`,
+        displayName, description: "", isDefault: i === 1, defaultReasoningEffort: i === 0 ? "medium" : "high",
+        supportedReasoningEfforts: (i === 0 ? ["low", "medium", "high"] : ["low", "medium", "high", "xhigh", "max", "ultra"]).map((reasoningEffort) => ({ reasoningEffort, description: reasoningEffort })),
+      }));
       if (name === "workspace.files") return [];
       if (name === "workspace.changes") return { root: cwd, branch: "main", files: [] };
       if (name === "chat.assets") return { files: [], images: [], sources: [] };
@@ -65,7 +69,8 @@ function fixture({ theme, language }) {
   localStorage.setItem("relay.inspector", "false");
 }
 
-(async () => {
+module.exports = { fixture };
+if (require.main === module) (async () => {
   fs.mkdirSync(output, { recursive: true });
   let browser;
   const server = http.createServer((req, res) => {
@@ -139,10 +144,50 @@ function fixture({ theme, language }) {
       await page.locator('.agent-model-trigger').click();
       await page.locator('.agent-model-popover input[type="range"]').waitFor();
       const modelGeometry = await checkPopover('.agent-model-popover');
-      assert.ok(modelGeometry.width <= 300 && modelGeometry.height <= 170, JSON.stringify(modelGeometry));
+      assert.ok(modelGeometry.width <= 256 && modelGeometry.height <= 115, JSON.stringify(modelGeometry));
       await page.locator('.agent-model-popover input').press('End');
       assert.equal(await page.locator('.agent-model-popover input').inputValue(), '5');
       await page.screenshot({ path: path.join(output, `popover-model-${theme}-${language}-${width}.png`) });
+      const popup = page.locator('.agent-model-popover');
+      await popup.locator('.agent-model-heading button').click();
+      assert.equal(await popup.locator('input').inputValue(), '2', 'reset restores the model default');
+      await popup.locator('input').focus();
+      await page.keyboard.press('Home');
+      await page.keyboard.press('ArrowRight');
+      assert.equal(await popup.locator('input').inputValue(), '1');
+      // Move focus away so the visual preview shows the resting surface.
+      await popup.locator('.agent-model-name').focus();
+      await popup.evaluate(() => document.activeElement?.blur());
+      await page.mouse.move(0, 0);
+      await popup.screenshot({ path: path.join(output, `model-effort-${theme}-${language}-${width}.png`) });
+      await popup.locator('.agent-model-name').click();
+      const modelButtons = popup.locator('.agent-model-list button');
+      assert.equal(await modelButtons.count(), 8);
+      assert.equal(await modelButtons.nth(2).getAttribute('aria-pressed'), 'true');
+      assert.ok(await modelButtons.nth(2).evaluate(node => node === document.activeElement));
+      await page.keyboard.press('Home');
+      assert.ok(await modelButtons.first().evaluate(node => node === document.activeElement));
+      await page.keyboard.press('End');
+      assert.ok(await modelButtons.last().evaluate(node => node === document.activeElement));
+      await popup.evaluate(() => document.activeElement?.blur());
+      await page.mouse.move(0, 0);
+      await popup.screenshot({ path: path.join(output, `model-list-${theme}-${language}-${width}.png`) });
+      await page.keyboard.press('Escape');
+      assert.equal(await popup.getAttribute('data-view'), 'effort');
+      assert.ok(await popup.locator('.agent-model-name').evaluate(node => node === document.activeElement));
+      // Unsupported effort falls back to the newly selected model's default.
+      await popup.locator('input').press('End');
+      await popup.locator('.agent-model-name').click();
+      await popup.getByRole('button', { name: 'GPT-6.1 Sol', exact: true }).click();
+      assert.equal(await popup.locator('input').getAttribute('max'), '2');
+      assert.equal(await popup.locator('input').inputValue(), '1');
+      await popup.locator('.agent-model-name').click();
+      await modelButtons.first().click();
+      assert.equal(await popup.locator('input').getAttribute('max'), '5');
+      await popup.locator('input').press('End');
+      await popup.locator('.agent-model-name').click();
+      assert.equal(await modelButtons.first().getAttribute('aria-pressed'), 'true', 'adjusting effort preserves the default model');
+      await popup.locator('.agent-model-list-heading button').click();
       await page.keyboard.press('Escape');
       await page.locator('.agent-model-popover').waitFor({ state: 'detached' });
       await page.locator('.permission-trigger').press('ArrowDown');
@@ -174,7 +219,7 @@ function fixture({ theme, language }) {
       report.layouts.push({ theme, language, width, height, ...dimensions });
       await page.close();
     }
-    report.checks = ["60 projects and long titles", "compact composer grows and shrinks", "resizing wrapped draft", "successful import collapsed", "start and cancel import", "failed import reveals details", "light/dark and four languages", "compact model panel above input", "permission keyboard selection, Escape focus and outside dismissal", "150 percent display scale", "Japanese UI preserves original user content"];
+    report.checks = ["60 projects and long titles", "compact composer grows and shrinks", "resizing wrapped draft", "successful import collapsed", "start and cancel import", "failed import reveals details", "light/dark and four languages", "compact model panel above input", "model list selection, default, unsupported effort fallback and reset", "slider and model list keyboard navigation and nested Escape focus", "permission keyboard selection, Escape focus and outside dismissal", "150 percent display scale", "Japanese UI preserves original user content"];
     assert.deepEqual(report.rendererErrors, []);
     report.status = "passed";
     console.log(JSON.stringify(report));

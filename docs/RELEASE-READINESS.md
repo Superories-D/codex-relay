@@ -1,4 +1,4 @@
-# Release readiness — v0.6.17 checkpoint
+# Release readiness — active iteration, 2026-10-24
 
 User goal: 持续迭代该项目，让各项功能达到可正式发布的水平。
 The goal was explicitly reactivated after v0.6.15 delivery. Preserve the original
@@ -6,14 +6,16 @@ scope: a usable Codex Desktop-style client backed by the real Codex CLI, account
 relay, subagents, multilingual interaction and responsive UI. The user additionally
 requires concurrent tasks across multiple threads.
 
-The user supplied an HTTP origin after the initial v0.6.17 binary uploads failed
-and explicitly resumed the long-term goal. The existing release now contains
-verified binary volumes, instructions and checksums. Further iteration is stopping
-under the user's shutdown deadline; leave the Goal paused. The incomplete gates
-below remain open and are not achieved by publication. Current stop/resume entry:
-`HANDOFF-20261019-SHUTDOWN.md`.
+The user explicitly resumed sustained iteration and requires commit, push and a
+complete release at every verified milestone. The goal is active. v0.6.19 ships
+complete Setup, Portable and ZIP files plus instructions/checksums; all five
+attachments passed download verification. LAN Gitea upload avoids the previous
+public upload limit without splitting artifacts or changing server configuration.
+See `RELEASE-0619.md`. Windows acceptance: 546 passed / 43 platform skips;
+actual CLI installation, packaged and portable startup and Git review verified.
+The incomplete gates below remain open and are not achieved by publication.
 
-Shutdown constraint: at 2026-10-18 23:32 (Asia/Shanghai), the user allowed another
+Historical shutdown constraint (superseded by the user's resumed work): at 2026-10-18 23:32 (Asia/Shanghai), the user allowed another
 160 minutes and instructed stopping if the objective remains unfinished. Stop by
 2026-10-19 02:12 local time, reserving the final five minutes for verified commits,
 pushes and handoff. This deadline does not authorize quota-consuming tests or
