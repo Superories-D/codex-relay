@@ -31,3 +31,11 @@ Run the service under a dedicated unprivileged user with a private data director
 ## Boundaries
 
 Passing tests are evidence for the exercised cases, not a guarantee that every scenario works. One real account cannot establish real quota-exhaustion rotation across multiple accounts. Telegram user interaction must be tested from the authorized user's client; a successful outgoing Bot API call alone does not prove command routing. Voice, arbitrary project-file downloads and server lifecycle administration are not implemented Telegram features. Backups exclude external project directories; see BACKUP.md.
+
+## Additional live acceptance and backup correction
+
+The real-account task was continued after a service restart, and a two-stage file handoff workflow completed. Repeating the same workflow request returned the same task IDs. These were bounded real model calls, separate from synthetic automated QA.
+
+Production backup initially failed: Codex CLI 0.162.1 created a roughly 103 MiB temporary plugin catalog checkout under each task home's `.tmp/plugins`, exceeding the 10,000-entry bound after only three tasks. Backup now excludes only those disposable per-job catalog directories and records each omission. Other temporary files, installed skills/plugins and conversation state remain included. The regression test uses an oversized cache file and verifies restore still preserves a sibling temporary file. Linux build and the backup create/verify/restore/authentication regression passed after this change.
+
+A stopped production backup was then created and authenticated successfully: 446 entries, 23,839,453 original bytes, with three temporary catalog directories and the owner lock excluded. The service was restarted successfully. This live backup was verified; production restoration was not attempted. Isolated restoration is covered by the regression test.

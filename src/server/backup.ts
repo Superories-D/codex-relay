@@ -137,6 +137,12 @@ export async function createBackup(
         }
         if (lost) throw Error("Backup ownership was lost");
         const stat = await fs.lstat(file);
+        // Codex downloads a disposable plugin catalog checkout here for each home.
+        // Keep other temporary files and all installed skills/plugins in the backup.
+        if (stat.isDirectory() && /^runtime\/jobs\/[^/]+\/\.tmp\/plugins$/.test(name)) {
+          excluded.push(name);
+          continue;
+        }
         if (
           stat.isSymbolicLink() &&
           /^runtime\/jobs\/[^/]+\/(skills|plugins)$/.test(name)

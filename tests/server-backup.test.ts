@@ -35,6 +35,12 @@ it.skipIf(process.platform !== "linux")(
       );
       await runtime.close();
       runtime = undefined;
+      const temporary = path.join(root, "runtime/jobs/backup-fixture/.tmp");
+      await fs.mkdir(path.join(temporary, "plugins"), { recursive: true });
+      const cache = await fs.open(path.join(temporary, "plugins/catalog.pack"), "w");
+      await cache.truncate(65 * 1024 * 1024);
+      await cache.close();
+      await fs.writeFile(path.join(temporary, "keep.txt"), "retain other temporary data");
       await fs.mkdir(path.join(root, "empty"));
       await fs.writeFile(
         path.join(root, "历史记录.json"),
@@ -68,6 +74,8 @@ it.skipIf(process.platform !== "linux")(
         restoreBackup(archive, path.join(base, "different"), password),
       ).rejects.toThrow("original absolute");
       await restoreBackup(archive, root, password);
+      await expect(fs.stat(path.join(temporary, "plugins"))).rejects.toMatchObject({ code: "ENOENT" });
+      expect(await fs.readFile(path.join(temporary, "keep.txt"), "utf8")).toBe("retain other temporary data");
       expect((await fs.stat(root)).mode & 0o077).toBe(0);
       expect((await fs.stat(archive)).mode & 0o077).toBe(0);
       const restoredCipher = await ServerCipher.open(root, false);
