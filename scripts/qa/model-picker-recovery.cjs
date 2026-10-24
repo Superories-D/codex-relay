@@ -97,6 +97,7 @@ const root = path.resolve(__dirname, "../.."),
     await popup.getByRole("slider").waitFor();
     await popup.locator(".agent-model-name").click();
     const selected = popup.locator('.agent-model-list [aria-pressed="true"]');
+    await popup.locator('input[type="search"]').press('ArrowDown');
     assert.ok(
       await selected.evaluate((node) => node === document.activeElement),
     );
@@ -139,14 +140,14 @@ const root = path.resolve(__dirname, "../.."),
       window.releaseCatalog();
     });
     await selected.waitFor();
-    await page.waitForFunction(() => document.querySelector('.agent-model-list [aria-pressed="true"]') === document.activeElement);
+    await page.waitForFunction(() => document.querySelector('.agent-model-search input') === document.activeElement);
     report.checks.push(
       "failed startup read retries once on opening",
       "open failure has no retry loop",
       "manual retry survives delayed response",
       "nested Escape and keyboard entry preserve focus",
       "healthy catalog remains cached",
-      "account catalog arriving after loading restores list focus",
+      "account catalog arriving after loading restores search focus",
     );
     assert.deepEqual(report.errors, []);
     report.status = "passed";

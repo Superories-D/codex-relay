@@ -164,6 +164,8 @@ if (require.main === module) (async () => {
       const modelButtons = popup.locator('.agent-model-list button');
       assert.equal(await modelButtons.count(), 8);
       assert.equal(await modelButtons.nth(2).getAttribute('aria-pressed'), 'true');
+      assert.ok(await popup.locator('input[type="search"]').evaluate(node => node === document.activeElement));
+      await page.keyboard.press('ArrowDown');
       assert.ok(await modelButtons.nth(2).evaluate(node => node === document.activeElement));
       await page.keyboard.press('Home');
       assert.ok(await modelButtons.first().evaluate(node => node === document.activeElement));

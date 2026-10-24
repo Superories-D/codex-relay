@@ -1,6 +1,10 @@
 import {  legacyEnglish } from "./legacy-en";
 import { nativeEnglish } from "./native-en";
 export const english: Record<string, string> = {
+"搜索模型": "Search models",
+"名称或模型 ID": "Name or model ID",
+"清除模型搜索": "Clear model search",
+"没有匹配的模型": "No matching models",
 "Codex CLI 尚未就绪": "Codex CLI is not ready",
 "正在准备 Codex CLI": "Preparing Codex CLI",
 "正在检查已有安装…": "Checking existing installations…",

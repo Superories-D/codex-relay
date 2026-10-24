@@ -1,4 +1,8 @@
 export const japanese: Record<string, string> = {
+"搜索模型": "モデルを検索",
+"名称或模型 ID": "名前またはモデル ID",
+"清除模型搜索": "モデル検索をクリア",
+"没有匹配的模型": "一致するモデルがありません",
 "Codex CLI 尚未就绪": "Codex CLI はまだ利用できません",
 "正在准备 Codex CLI": "Codex CLI を準備中",
 "正在检查已有安装…": "既存のインストールを確認中…",

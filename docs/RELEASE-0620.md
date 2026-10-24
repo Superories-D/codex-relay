@@ -1,6 +1,11 @@
 # v0.6.20 — compact model controls
 
 Windows x64 delivery: [v0.6.20](https://code.taiko.im/Superories/codex-go/releases/tag/v0.6.20).
+Published from `f154ddd`; all five attachments were downloaded and matched local
+SHA256 values. Actual packaged application passed two launches at version 0.6.20;
+portable startup/exit and the upgrade wizard passed. All 86 ZIP files match.
+ZIP generation follows NSIS packaging because NSIS adds `resources/elevate.exe`;
+the initial parallel ZIP was rejected by verification and repaired before upload.
 Complete Setup EXE, Portable EXE and unpacked ZIP are supplied with `INSTALL.txt`
 and `SHA256SUMS.txt`; no binary splitting. Existing v0.6.19 CLI bootstrap and
 Git review changes are retained.

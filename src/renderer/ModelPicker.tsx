@@ -7,6 +7,8 @@ import {
   ChevronLeft,
   ChevronRight,
   RotateCcw,
+  Search,
+  X,
   Zap,
 } from "lucide-react";
 import { useComposerPopover } from "./useComposerPopover";
@@ -55,6 +57,7 @@ export function ModelPicker({
   const popoverStyle = useComposerPopover(root, open, 256);
   const modelButton = useRef<HTMLButtonElement>(null);
   const modelList = useRef<HTMLDivElement>(null);
+  const searchInput = useRef<HTMLInputElement>(null);
   const previousList = useRef(false);
   const previousOpen = useRef(false);
   const [models, setModels] = useState<ModelOption[]>([]);
@@ -62,6 +65,7 @@ export function ModelPicker({
   const [error, setError] = useState("");
   const [retry, setRetry] = useState(0);
   const [list, setList] = useState(false);
+  const [query, setQuery] = useState("");
   const defaultModel = models.find((m) => m.isDefault);
   const current =
     models.find((m) => m.model === model || m.id === model) ??
@@ -72,6 +76,22 @@ export function ModelPicker({
   const fraction = Math.max(0, index) / Math.max(1, options.length - 1);
   const name = current?.displayName || model || t("默认模型");
   const strength = value ? label(value) : t("默认强度");
+  const terms = query
+    .normalize("NFKC")
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean);
+  const matches = (m: ModelOption, extra = "") => {
+    const text = `${m.displayName} ${m.model} ${m.id} ${extra}`
+      .normalize("NFKC")
+      .toLowerCase();
+    return terms.every((term) => text.includes(term));
+  };
+  const filtered = models.filter(
+    (m) => (!m.hidden || m === current) && matches(m),
+  );
+  const showDefault = defaultModel && matches(defaultModel, t("默认"));
 
   const choose = (option: ModelOption, useDefault = false) => {
     onChange(
@@ -95,8 +115,9 @@ export function ModelPicker({
       const selected = modelList.current?.querySelector<HTMLButtonElement>(
         '[aria-pressed="true"]',
       );
-      if (!modelList.current?.contains(document.activeElement)) {
+      if (!popup?.contains(document.activeElement)) {
         (
+          searchInput.current ??
           selected ??
           modelList.current?.querySelector<HTMLButtonElement>("button")
         )?.focus();
@@ -112,6 +133,10 @@ export function ModelPicker({
     }
     previousList.current = list;
   }, [open, list, loading, models, error]);
+
+  useEffect(() => {
+    setQuery("");
+  }, [list, accountId]);
 
   useEffect(() => {
     const opening = open && !previousOpen.current;
@@ -155,7 +180,7 @@ export function ModelPicker({
       if (!root.current?.contains(e.target as Node)) setOpen(false);
     };
     const escape = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
+      if (e.key === "Escape" && !e.isComposing) {
         if (list) {
           setList(false);
           return;
@@ -266,57 +291,104 @@ export function ModelPicker({
           ) : (
             <>
               {list ? (
-                <div
-                  className="agent-model-list"
-                  ref={modelList}
-                  role="group"
-                  aria-label={t("可用模型")}
-                  onKeyDown={(event) => {
-                    if (
-                      !["ArrowDown", "ArrowUp", "Home", "End"].includes(
-                        event.key,
+                <>
+                  <div className="agent-model-search">
+                    <Search size={14} aria-hidden="true" />
+                    <input
+                      ref={searchInput}
+                      type="search"
+                      aria-label={t("搜索模型")}
+                      placeholder={t("名称或模型 ID")}
+                      value={query}
+                      onChange={(event) => setQuery(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.nativeEvent.isComposing) return;
+                        const buttons =
+                          modelList.current?.querySelectorAll<HTMLButtonElement>(
+                            "button",
+                          );
+                        if (
+                          event.key === "ArrowDown" ||
+                          event.key === "ArrowUp"
+                        ) {
+                          event.preventDefault();
+                          const selected =
+                            !terms.length &&
+                            modelList.current?.querySelector<HTMLButtonElement>(
+                              '[aria-pressed="true"]',
+                            );
+                          (event.key === "ArrowUp"
+                            ? buttons?.[buttons.length - 1]
+                            : selected || buttons?.[0]
+                          )?.focus();
+                        } else if (event.key === "Enter") {
+                          event.preventDefault();
+                          if (terms.length && buttons?.length === 1)
+                            buttons[0].click();
+                        }
+                      }}
+                    />
+                    {query && (
+                      <button
+                        aria-label={t("清除模型搜索")}
+                        onClick={() => {
+                          setQuery("");
+                          searchInput.current?.focus();
+                        }}
+                      >
+                        <X size={13} aria-hidden="true" />
+                      </button>
+                    )}
+                  </div>
+                  <div
+                    className="agent-model-list"
+                    ref={modelList}
+                    role="group"
+                    aria-label={t("可用模型")}
+                    onKeyDown={(event) => {
+                      if (
+                        !["ArrowDown", "ArrowUp", "Home", "End"].includes(
+                          event.key,
+                        )
                       )
-                    )
-                      return;
-                    event.preventDefault();
-                    const buttons = Array.from(
-                      event.currentTarget.querySelectorAll<HTMLButtonElement>(
-                        "button",
-                      ),
-                    );
-                    const at = buttons.indexOf(
-                      document.activeElement as HTMLButtonElement,
-                    );
-                    const next =
-                      event.key === "Home"
-                        ? 0
-                        : event.key === "End"
-                          ? buttons.length - 1
-                          : (at +
-                              (event.key === "ArrowDown" ? 1 : -1) +
-                              buttons.length) %
-                            buttons.length;
-                    buttons[next]?.focus();
-                  }}
-                >
-                  {defaultModel && (
-                    <button
-                      className="agent-model-default"
-                      aria-pressed={!model}
-                      onClick={() => choose(defaultModel, true)}
-                    >
-                      <span>
-                        {t("默认")}
-                        <small>
-                          {defaultModel.displayName || defaultModel.model}
-                        </small>
-                      </span>
-                      {!model && <Check size={17} aria-hidden="true" />}
-                    </button>
-                  )}
-                  {models
-                    .filter((m) => !m.hidden || m === current)
-                    .map((m) => (
+                        return;
+                      event.preventDefault();
+                      const buttons = Array.from(
+                        event.currentTarget.querySelectorAll<HTMLButtonElement>(
+                          "button",
+                        ),
+                      );
+                      const at = buttons.indexOf(
+                        document.activeElement as HTMLButtonElement,
+                      );
+                      const next =
+                        event.key === "Home"
+                          ? 0
+                          : event.key === "End"
+                            ? buttons.length - 1
+                            : (at +
+                                (event.key === "ArrowDown" ? 1 : -1) +
+                                buttons.length) %
+                              buttons.length;
+                      buttons[next]?.focus();
+                    }}
+                  >
+                    {showDefault && (
+                      <button
+                        className="agent-model-default"
+                        aria-pressed={!model}
+                        onClick={() => choose(defaultModel, true)}
+                      >
+                        <span>
+                          {t("默认")}
+                          <small>
+                            {defaultModel.displayName || defaultModel.model}
+                          </small>
+                        </span>
+                        {!model && <Check size={17} aria-hidden="true" />}
+                      </button>
+                    )}
+                    {filtered.map((m) => (
                       <button
                         key={m.id}
                         className={model && m === current ? "selected" : ""}
@@ -330,12 +402,17 @@ export function ModelPicker({
                         )}
                       </button>
                     ))}
-                  {!models.length && (
-                    <p className="agent-model-note">
-                      {t("CLI 未返回可用模型。")}
-                    </p>
-                  )}
-                </div>
+                    {!filtered.length && !showDefault && (
+                      <p className="agent-model-note" role="status">
+                        {t(
+                          models.length
+                            ? "没有匹配的模型"
+                            : "CLI 未返回可用模型。",
+                        )}
+                      </p>
+                    )}
+                  </div>
+                </>
               ) : (
                 <>
                   {options.length > 0 ? (
