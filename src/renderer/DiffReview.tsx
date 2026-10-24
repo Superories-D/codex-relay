@@ -10,14 +10,10 @@ import {
   WrapText,
 } from "lucide-react";
 import { gitHunks } from "../shared/git-hunks";
-import {
-  reviewDiff,
-  reviewCodeBlock,
-  reviewExcerpt,
-  reviewLocation,
-} from "../shared/review-diff";
+import { reviewDiff } from "../shared/review-diff";
 import { t, useI18n } from "./i18n";
 import "./review.css";
+import { ReviewHunkBody } from "./ReviewHunkBody";
 
 export function DiffReview({
   diff,
@@ -45,14 +41,39 @@ export function DiffReview({
     [diff, conflict],
   );
   const [wrap, setWrap] = useState(true);
-  const [collapsed, setCollapsed] = useState<Set<number>>(new Set());
+  const initialCollapsed = useMemo(
+    () =>
+      parsed.hunks.reduce((n, h) => n + h.lines.length, 0) > 4000
+        ? new Set(parsed.hunks.slice(1).map((h) => h.index))
+        : new Set<number>(),
+    [parsed],
+  );
+  const [collapseState, setCollapseState] = useState({
+    diff,
+    items: initialCollapsed,
+  });
+  const collapsed =
+    collapseState.diff === diff ? collapseState.items : initialCollapsed;
+  const setCollapsed = (
+    change: Set<number> | ((old: Set<number>) => Set<number>),
+  ) => {
+    setCollapseState((old) => ({
+      diff,
+      items:
+        typeof change === "function"
+          ? change(old.diff === diff ? old.items : initialCollapsed)
+          : change,
+    }));
+  };
   const [active, setActive] = useState(0);
   const container = useRef<HTMLDivElement>(null);
   const id = useId();
   useEffect(() => {
-    setCollapsed(new Set());
+    setCollapseState((old) =>
+      old.diff === diff ? old : { diff, items: initialCollapsed },
+    );
     setActive(0);
-  }, [diff]);
+  }, [diff, initialCollapsed]);
   const allCollapsed =
     parsed.hunks.length > 0 && collapsed.size === parsed.hunks.length;
   const jump = (index: number) => {
@@ -137,6 +158,11 @@ export function DiffReview({
         <p className="diff-note">{t("此差异仅支持整文件操作")}</p>
       )}
       <div className="diff-lines review-lines" data-wrap={wrap} ref={container}>
+        {!!initialCollapsed.size && (
+          <p className="diff-note">
+            {t("大差异先展开首块，可展开其他块继续审阅。")}
+          </p>
+        )}
         {!!parsed.metadata.length && (
           <details className="review-metadata" open={!parsed.hunks.length}>
             <summary>{t("差异元数据")}</summary>
@@ -188,52 +214,14 @@ export function DiffReview({
               )}
             </header>
             <div id={`${id}-${hunk.index}`} hidden={collapsed.has(hunk.index)}>
-              {hunk.lines.map((line) => (
-                <div
-                  className={`review-line ${line.kind}`}
-                  key={line.index}
-                  data-old-line={line.oldLine}
-                  data-new-line={line.newLine}
-                >
-                  <span className="review-number" aria-hidden="true">
-                    {line.oldLine}
-                  </span>
-                  <span className="review-number" aria-hidden="true">
-                    {line.newLine}
-                  </span>
-                  {line.kind !== "note" ? (
-                    <button
-                      className="review-comment"
-                      disabled={!ready}
-                      title={t("把这一行加入审查意见")}
-                      aria-label={t("评论 {p0}（{p1}）", {
-                        p0: reviewLocation(path, line),
-                        p1: line.kind === "removed" ? t("旧版本") : t("新版本"),
-                      })}
-                      onClick={() =>
-                        comment(
-                          t(
-                            "请检查 {p0}（{p1}）附近的变更：\n\n{p2}\n\n意见：",
-                            {
-                              p0: reviewLocation(path, line),
-                              p1:
-                                line.kind === "removed"
-                                  ? t("旧版本")
-                                  : t("新版本"),
-                              p2: reviewCodeBlock(reviewExcerpt(line, hunk)),
-                            },
-                          ),
-                        )
-                      }
-                    >
-                      <Plus size={12} />
-                    </button>
-                  ) : (
-                    <span />
-                  )}
-                  <code>{line.text || " "}</code>
-                </div>
-              ))}
+              {!collapsed.has(hunk.index) && (
+                <ReviewHunkBody
+                  hunk={hunk}
+                  path={path}
+                  ready={ready}
+                  comment={comment}
+                />
+              )}
             </div>
           </section>
         ))}

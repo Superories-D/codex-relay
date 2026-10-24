@@ -1,4 +1,5 @@
 import {scheduleInputSchema} from "../core/schedule-command";
+import { deliverySaveSchema } from "./validation";
 import {updateGoal} from "../core/goal-command";
 import { conversationExport } from "../core/conversation-export";
 import { NotificationState } from "../core/notification-state";
@@ -43,7 +44,7 @@ import { Scheduler } from "../core/scheduler";
 import { CliWorker } from "../core/cli-worker";
 import { DesktopWorker } from "../core/desktop-worker";
 import { recoverJob } from "../core/recovery";
-import { redact } from "../core/redact";
+import { redact, redactValue } from "../core/redact";
 import { startCommandServer } from "./ipc-server";
 import { loadRenderer } from "./load-renderer";
 import {
@@ -1145,6 +1146,18 @@ async function boot() {
       }
       case "snapshot":
         return scheduler.snapshot();
+      case "delivery.read": return scheduler.readDelivery(idSchema.parse(args));
+      case "delivery.run": return scheduler.checkDelivery(idSchema.parse(args));
+      case "delivery.cancel": return scheduler.cancelDelivery(idSchema.parse(args));
+      case "delivery.repair": return scheduler.deliveryPrompt(idSchema.parse(args));
+      case "delivery.save": {
+        const value = deliverySaveSchema.parse(args);
+        return scheduler.saveDelivery(value.id, value.revision, value.checks);
+      }
+      case "delivery.export": {
+        const id = idSchema.parse(args), job = store.data.jobs.find(j => j.id === id);
+        return redactValue({schemaVersion: 1, jobId: id, title: job?.title, workspace: job?.cwd, exportedAt: Date.now(), delivery: scheduler.readDelivery(id)});
+      }
       case "job.add":
         return scheduler.add(newJobSchema.parse(args));
       case "workflow.report":

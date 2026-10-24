@@ -93,6 +93,7 @@ export async function startCommandServer(
                 ...additionalCommands,
                 "snapshot",
                 "job.add",
+                "delivery.read", "delivery.run", "delivery.cancel", "delivery.repair", "delivery.save", "delivery.export",
                 "job.report",
                 "job.control",
                 "approval.respond",

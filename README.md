@@ -1,10 +1,12 @@
 # Codex Relay
 
+**2026-10-25 Windows 大节点：[可验证交付闭环](docs/DELIVERY-ACCEPTANCE-20261025.md)。** 任务开始前定义文件、内容、完整 SHA256 或 JSON 字段条件；结束后读取实际产物，未通过时保留追问并阻止依赖任务。支持证据导出、修正草稿、单独取消、重启恢复和工作流交付报告。大差异按块加载、超大块分页，全文和完整块暂存保留。[0.6.22 发布记录](docs/RELEASE-0622.md)。Linux 专项开发按用户要求暂停，下一大节点为 Windows Telegram Bot 通知；[迭代清单](docs/ITERATION-ROADMAP-20261024.md)。
+
 **2026-10-24 启动与审阅更新：** 启动时检测 Codex CLI，缺失时自动下载安装，验证成功后再调度任务；提供安装状态、失败详情与重试。Git 面板新增准确行号、分块导航/折叠、换行、文件筛选和可展开工作面板，审阅意见追加到已有草稿。[CLI 安装与验证](docs/CLI-BOOTSTRAP-20261024.md) · [审阅体验与官方资料对照](docs/REVIEW-EXPERIENCE-20261024.md)。
 
 正在持续打磨 Codex Desktop 的功能、界面和顺滑体验，已验证工作流和待补项目见 [桌面功能对齐记录](docs/DESKTOP-PARITY.md)。每个验证节点执行 commit + push + 完整 Release，安装包不分卷。
 
-**Windows Agent 客户端：[v0.6.20](https://code.taiko.im/Superories/codex-go/releases/tag/v0.6.20)。** 完整安装版、便携版、ZIP 和 SHA256 校验均已发布，新增紧凑模型面板、键盘选择、默认模型保留和目录重试；[交付记录](docs/RELEASE-0620.md)。后续 [0.6.21 模型搜索](docs/RELEASE-0621.md) 继续按节点完整发布。启动缺失 CLI 自动安装、Git 审阅和此前源码功能已打包；[0.6.19 记录](docs/RELEASE-0619.md)。基于官方 Codex CLI，提供项目与对话侧栏、多轮聊天、执行记录、审批、附件、排队发送和自动账户接力。额度不足时确认原进程停止，再使用可用账户继续原会话；全部账户受限时等待并复查服务器额度。
+**Windows Agent 客户端：[v0.6.22](https://code.taiko.im/Superories/codex-go/releases/tag/v0.6.22)。** 每个完整节点提供安装版、便携版、ZIP 和 SHA256 校验。本版贯通可验证交付；此前 [紧凑模型面板](docs/RELEASE-0620.md)、[模型搜索](docs/RELEASE-0621.md)、[缺失 CLI 自动安装与 Git 审阅](docs/RELEASE-0619.md) 已包含。基于官方 Codex CLI，提供项目与对话侧栏、多轮聊天、执行记录、审批、附件、排队发送和自动账户接力。额度不足时确认原进程停止，再使用可用账户继续原会话；全部账户受限时等待并复查服务器额度。
 
 **2026-10-22 源码迭代（现已包含在 v0.6.19 及后续版本）：** 新增任务中心与批量控制、任务优先级、可编辑待发送队列、文字与附件草稿恢复、会话全文检索、任务模板和诊断报告。自动恢复有持久化时间线；CLI 监控断线后自动重连，支持 `status --json`、`watch --json` 和 `report --id`。新增持久化任务依赖、2–12 阶段工作流、全局／项目调度开关、项目并发上限和可预览的工作流交付报告。[逐轮实现与验证记录](docs/ITERATIONS-20261022.md)。
 

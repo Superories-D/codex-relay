@@ -93,6 +93,7 @@ export interface RecoveryEvent {
   detail?: string;
 }
 export interface Job {
+  delivery?: import("./delivery").DeliveryState;
   messageReceipts?: { id: string; fingerprint: string }[];
   clientRequest?: { id: string; fingerprint: string };
   workflow?: { id: string; title: string; step: number; total: number; fingerprint: string; source?: {id:string;step:number} };
@@ -331,7 +332,7 @@ export type NewJob = Pick<
   | "planMode"
   | "multiAgent"
   | "serviceTier"
->;
+> & { deliveryChecks?: import("./delivery").DeliveryCheck[] };
 export interface AgentState {
   conversationId?: string;
   threadId: string;

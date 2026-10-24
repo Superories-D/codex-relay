@@ -1,5 +1,6 @@
 import { dispatchHeld, projectLimit } from "../shared/dispatch";
 import { dependencyBlockers } from "../shared/task-dependencies";
+import { deliveryAccepted } from "../shared/delivery";
 import type { Snapshot } from "../shared/types";
 import { redact, redactValue } from "./redact";
 export function taskReport(
@@ -17,6 +18,7 @@ export function taskReport(
   const approvals = snapshot.approvals.filter((a) => a.jobId === id).length;
   const enabled = snapshot.accounts.filter((a) => a.enabled);
   const blockers: string[] = [];
+  if(job.delivery?.checks.length&&!deliveryAccepted(job.delivery))blockers.push("delivery");
   if (dispatchHeld(snapshot, job, environment.platform)) blockers.push("dispatch");
   if (dependencyBlockers(job, snapshot.jobs).length) blockers.push("dependencies");
   if (job.recoveryRequired) blockers.push("ownership");
@@ -59,6 +61,7 @@ export function taskReport(
       autoRecovery: job.autoRecovery,
       submissionUncertain: !!job.submissionUncertain,
       queuedMessages: job.queuedMessages?.length || 0,
+      delivery: job.delivery?.checks.length ? {revision:job.delivery.revision,pendingCompletion:!!job.delivery.pendingCompletion,accepted:deliveryAccepted(job.delivery),latest:job.delivery.reports.at(-1)} : undefined,
       lastError: redact(job.lastError).slice(0, 4000),
       lastActivityAt: job.lastActivityAt,
       lastHeartbeatAt: job.lastHeartbeatAt,

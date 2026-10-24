@@ -106,6 +106,38 @@
   align-items: start;
   padding-right: 10px;
 }
+.review-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 8px;
+  color: var(--subtle);
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  font:
+    11px/1.5 system-ui,
+    sans-serif;
+}
+.review-pagination > span {
+  margin-right: auto;
+}
+.desktop-shell .review-pagination button,
+.desktop-shell .review-pagination select {
+  display: flex;
+  align-items: center;
+  padding: 4px;
+  min-width: 0;
+  border-radius: 4px;
+  color: var(--text);
+  background: var(--control);
+  font: inherit;
+}
+.review-pagination small {
+  flex-basis: 100%;
+  font: inherit;
+  color: var(--muted);
+}
 .review-line.added {
   background: #53854419;
 }

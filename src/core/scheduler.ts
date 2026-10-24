@@ -1,4 +1,6 @@
 import { dispatchHeld, projectKey, projectHasCapacity } from "../shared/dispatch";
+import { verifyDelivery } from "./delivery";
+import { deliveryChecksSchema, deliveryRepairPrompt, type DeliveryCheck, type DeliveryReport } from "../shared/delivery";
 import { dependencyBlockers, validateDependencies } from "../shared/task-dependencies";
 import { EventEmitter } from "node:events";
 import { orderTasks } from "../shared/task-order";
@@ -72,6 +74,9 @@ export class Scheduler extends EventEmitter {
   private tickInFlight?: Promise<void>;
   private controls: Promise<unknown> = Promise.resolve();
   private closing = false;
+  private verification = new AbortController();
+  private deliveryRecovery?: Promise<void>;
+  private deliveryControllers = new Map<string, AbortController>();
   private maintaining = false;
   private get currentRun() {
     return Promise.all([...this.active.values()].map((run) => run.done));
@@ -109,6 +114,9 @@ export class Scheduler extends EventEmitter {
     ]).then(fn);
     this.controls = task;
     return task;
+  }
+  private dependenciesBlocked(job: Job) {
+    return dependencyBlockers(job, this.store.data.jobs).length > 0 || (job.dependsOn || []).some(id => this.active.has(id) || this.jobControls.has(this.store.jobHome(id)));
   }
   private selectAccount(job: Job) {
     // Keep array indexes stable for round-robin cursors. CLI runtimes share only
@@ -297,6 +305,103 @@ export class Scheduler extends EventEmitter {
       finally { this.maintaining = false; }
     });
   }
+  saveDelivery(id: string, revision: number, input: DeliveryCheck[]) {
+    const checks = deliveryChecksSchema.parse(input);
+    return this.queueControl(id, async () => {
+      const job = this.store.data.jobs.find(j => j.id === id);
+      if (!job) throw Error("任务不存在");
+      if (this.closing || this.familyActive(id) || job.recoveryRequired) throw Error("请先暂停任务，再修改验收条件");
+      if ((job.delivery?.revision || 0) !== revision) throw Error("验收条件已更改，请重新打开后再保存");
+      const previous = job.delivery, state = job.state, before = structuredClone(job);
+      job.delivery = {revision: revision + 1, checks, reports: previous?.reports || [],
+        blockedCompletion: !!checks.length && (state === "completed" || previous?.blockedCompletion), pendingCompletion: false};
+      if (job.delivery.blockedCompletion && state === "completed") {job.state = "needs_attention"; job.lastError = "验收条件已更改，请重新验收交付产物";}
+      try {
+        if(!checks.length && previous?.blockedCompletion && state === "needs_attention" && !job.stopIntent) {
+          job.state="completed";job.lastError=undefined;
+          await this.advanceDeliveryQueue(job);
+        }
+        await this.store.save();
+      } catch (failure) {
+        for(const key of Object.keys(job))if(!Object.hasOwn(before,key))delete (job as any)[key];
+        Object.assign(job,before);throw failure;
+      }
+      this.changed();
+      return structuredClone(job.delivery);
+    });
+  }
+  readDelivery(id: string) {
+    const job = this.store.data.jobs.find(j => j.id === id);
+    if (!job) throw Error("任务不存在");
+    return structuredClone(job.delivery || {revision: 0, checks: [], reports: []});
+  }
+  deliveryPrompt(id: string) {
+    const delivery = this.readDelivery(id), report = delivery.reports.at(-1);
+    if (!report || report.revision !== delivery.revision || report.status === "passed") throw Error("没有当前版本的失败验收结果");
+    return deliveryRepairPrompt(report);
+  }
+  cancelDelivery(id:string) {
+    if(!this.store.data.jobs.some(job=>job.id===id))throw Error("任务不存在");
+    const controller=this.deliveryControllers.get(id);controller?.abort();return {cancelled:!!controller};
+  }
+  checkDelivery(id: string, source: "manual" | "recovery" = "manual") {
+    return this.queueControl(id, async () => {
+      const job = this.store.data.jobs.find(j => j.id === id);
+      if (!job) throw Error("任务不存在");
+      if (this.closing || this.familyActive(id) || job.recoveryRequired) throw Error("请先暂停任务，再检查交付产物");
+      const delivery = job.delivery;
+      if (!delivery?.checks.length) throw Error("请先设置交付验收条件");
+      const previous = structuredClone(job);
+      try {
+      const wasBlocked = delivery.blockedCompletion || delivery.pendingCompletion;
+      const report = await this.recordDelivery(job, source);
+      if (report.status !== "passed" && job.state === "completed") {
+        job.state = "needs_attention"; delivery.blockedCompletion = true;
+        job.lastError = "交付验收未通过，请检查结果并修正产物";
+      }
+      if (wasBlocked && report.status === "passed" && job.state === "needs_attention" && !job.stopIntent) {
+        job.state = "completed"; job.lastError = undefined; delivery.blockedCompletion = false;
+        await this.advanceDeliveryQueue(job);
+      }
+      await this.store.save(); this.changed();
+      return structuredClone(job.delivery);
+      } catch (error) {
+        for (const key of Object.keys(job)) if (!Object.hasOwn(previous, key)) delete (job as any)[key];
+        Object.assign(job, previous);
+        this.changed();
+        throw error;
+      }
+    });
+  }
+  private async recordDelivery(job: Job, source: DeliveryReport["source"]) {
+    const delivery = job.delivery!;
+    const controller=new AbortController();this.deliveryControllers.set(job.id,controller);
+    try {
+    if (source !== "manual") {delivery.pendingCompletion = true; await this.store.save();}
+    job.stage = "正在验收交付产物"; this.changed();
+    const report = await verifyDelivery(job.cwd, delivery.checks, {revision: delivery.revision, source, turnId: job.turnId, signal: AbortSignal.any([this.verification.signal,controller.signal])});
+    delivery.reports = [...delivery.reports, report].slice(-10);
+    delivery.pendingCompletion = false;
+    if (source !== "manual") delivery.blockedCompletion = report.status !== "passed";
+    job.stage = report.status === "passed" ? "交付验收通过" : "交付验收未通过";
+    return report;
+    } finally {if(this.deliveryControllers.get(job.id)===controller)this.deliveryControllers.delete(job.id);}
+  }
+  private async advanceDeliveryQueue(job: Job) {
+    const next = job.queuedMessages?.[0];
+    if (!next) return;
+    job.queuedMessages = job.queuedMessages!.slice(1);
+    job.queueRevision = (job.queueRevision || 0) + 1;
+    await this.chats.user(job.id, next.text, next.attachments.map(a => a.path).join("\n"), next.id);
+    job.pendingMessage = next.text; job.attachments = next.attachments;
+    if (next.model !== undefined) job.model = next.model;
+    if (next.effort !== undefined) job.effort = next.effort;
+    if (next.planMode !== undefined) job.planMode = next.planMode;
+    if (next.multiAgent !== undefined) job.multiAgent = next.multiAgent;
+    if (next.serviceTier !== undefined) job.serviceTier = next.serviceTier;
+    job.review = next.review; job.completionMarker = undefined; job.completionRetries = 0;
+    job.state = "queued"; job.enqueuedAt = Date.now();
+  }
   private async addOnce(
     input: NewJob,
     existing?: { link: ExistingLink; threadId: string; turnId?: string },
@@ -343,8 +448,11 @@ export class Scheduler extends EventEmitter {
         ))
     )
       throw new Error("另一任务已开始，请先暂停它再接入原会话");
+    const {deliveryChecks, ...jobInput} = input;
+    const checks = deliveryChecksSchema.parse(deliveryChecks || []);
     const job: Job = {
-      ...input,
+      ...jobInput,
+      ...(checks.length ? {delivery: {revision: 1, checks, reports: []}} : {}),
       ...(requestId ? {clientRequest: {id: requestId, fingerprint: fingerprint!}} : {}),
       ...(schedule ? { schedule } : {}),
       ...(input.interactive ? { pendingMessage: input.prompt } : {}),
@@ -375,6 +483,16 @@ export class Scheduler extends EventEmitter {
     return job;
   }
   start() {
+    if (this.verification.signal.aborted) this.verification = new AbortController();
+    if (!this.deliveryRecovery) {
+      this.deliveryRecovery = (async () => {
+        for (const job of this.store.data.jobs.filter(j => j.delivery?.pendingCompletion && !j.stopIntent)) {
+          if (this.closing) break;
+          try { await this.checkDelivery(job.id, "recovery"); }
+          catch (error) { this.log(error, "warning", job.id); }
+        }
+      })().finally(() => {this.deliveryRecovery = undefined;});
+    }
     this.warmups.start();
     if (this.timer) clearInterval(this.timer);
     this.timer = setInterval(
@@ -393,8 +511,11 @@ export class Scheduler extends EventEmitter {
       if (!(await fs.stat(input.cwd)).isDirectory())
         throw new Error("工作目录不存在");
       this.maintaining = true;
+      const {deliveryChecks, ...jobInput} = input;
+      const checks = deliveryChecksSchema.parse(deliveryChecks || []);
       const job: Job = {
-        ...input,
+        ...jobInput,
+        ...(checks.length ? {delivery: {revision: 1, checks, reports: []}} : {}),
         prompt: "",
         interactive: true,
         id: randomUUID(),
@@ -700,7 +821,7 @@ export class Scheduler extends EventEmitter {
           this.familyActive(job.id) ||
           dispatchHeld(this.store.data, job, process.platform) ||
           !projectHasCapacity(this.store.data, job, [...this.active.values()].map(r => r.job), process.platform) ||
-          dependencyBlockers(job, this.store.data.jobs).length > 0 ||
+          this.dependenciesBlocked(job) ||
           job.autoRecovery ||
           this.jobControls.has(this.store.jobHome(job.id)) ||
           !["queued", "waiting"].includes(job.state)
@@ -798,6 +919,7 @@ export class Scheduler extends EventEmitter {
     let outcome: Outcome | undefined;
     try {
       job.state = "preparing";
+      if(job.delivery) {job.delivery.blockedCompletion=false;job.delivery.pendingCompletion=false;}
       job.waitingFor = undefined;
       this.syncAgentRoot(job, { status: "pendingInit" });
       job.accountId = account.id;
@@ -1078,6 +1200,11 @@ export class Scheduler extends EventEmitter {
         await this.chats.flush(agent.threadId);
     }
     await this.queueWrites.get(job.id)?.catch(() => {});
+    let deliveryFailed = false;
+    if (outcome?.kind === "completed" && !active.failedStop && !active.reason && !job.stopIntent && !this.closing && job.delivery?.checks.length) {
+      const report = await this.recordDelivery(job, "automatic");
+      deliveryFailed = report.status !== "passed";
+    }
     const stopReason = active.reason || job.stopIntent;
     if (stopReason) {
       job.goalResumeAfterQuota = false;
@@ -1091,6 +1218,11 @@ export class Scheduler extends EventEmitter {
       job.state = "needs_attention";
       job.lastError = "无法确认原进程停止，禁止启动第二个任务进程";
       scheduleRecovery(job, "process");
+    } else if (deliveryFailed) {
+      job.state = "needs_attention";
+      job.lastError = "交付验收未通过，请检查结果并修正产物";
+      clearRecovery(job); job.recoveryAttempts = 0;
+      this.log(job.lastError, "warning", job.id);
     } else if (outcome?.kind === "quota") {
       account.status = "limited";
       account.blockedUntil = resetDeadline(
@@ -1156,24 +1288,7 @@ export class Scheduler extends EventEmitter {
       clearRecovery(job);
       job.recoveryAttempts = 0;
       this.log("Codex 正常完成本轮任务，未检测到额度中断", "info", job.id);
-      const next = job.queuedMessages?.[0];
-      if (next) {
-        job.queuedMessages = job.queuedMessages!.slice(1);
-        job.queueRevision = (job.queueRevision || 0) + 1;
-        await this.chats.user(job.id, next.text, next.attachments.map((a) => a.path).join("\n"));
-        job.pendingMessage = next.text;
-        job.attachments = next.attachments;
-        if (next.model !== undefined) job.model = next.model;
-        if (next.effort !== undefined) job.effort = next.effort;
-        if (next.planMode !== undefined) job.planMode = next.planMode;
-        if (next.multiAgent !== undefined) job.multiAgent = next.multiAgent;
-        if (next.serviceTier !== undefined) job.serviceTier = next.serviceTier;
-        job.review = next.review;
-        job.completionMarker = undefined;
-        job.completionRetries = 0;
-        job.state = "queued";
-        job.enqueuedAt = Date.now();
-      }
+      await this.advanceDeliveryQueue(job);
     } else if (
       outcome?.kind === "recoverable" ||
       outcome?.kind === "interrupted"
@@ -2219,6 +2334,7 @@ export class Scheduler extends EventEmitter {
       if (job.autoRecovery) recordRecovery(job, "stopped");
       const active = this.active.get(id);
       if (active) active.reason = action;
+      this.deliveryControllers.get(id)?.abort();
       // Keep the process-check loop alive after a failed stop, but never resume
       // inference once the user has asked to pause/cancel.
       if (!job.recoveryRequired) clearRecovery(job);
@@ -2332,12 +2448,14 @@ export class Scheduler extends EventEmitter {
   }
   async shutdown() {
     this.closing = true;
+    this.verification.abort();
     if (this.timer) clearInterval(this.timer);
     try {
       await this.warmups.shutdown();
       await this.backgroundProbe;
       await this.controls.catch(() => {});
       await this.tickInFlight;
+      await this.deliveryRecovery;
       await Promise.allSettled([...this.jobControls.values()]);
       const stopped = await Promise.allSettled(
         [...this.active.values()]

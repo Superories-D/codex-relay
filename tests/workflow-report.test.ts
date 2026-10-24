@@ -89,3 +89,14 @@ it("marks complete only for all completed stages and explicitly flags long respo
     await fs.rm(root, { recursive: true, force: true });
   }
 });
+it("holds handoff completion until the current delivery contract has passed", async () => {
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),"workflow-delivery-"));
+  try{
+    const check={kind:"file",path:"artifact",label:"Artifact",minBytes:1};
+    const job:any={id:"a",title:"Delivery",cwd:root,state:"completed",workflow:{id:"w",title:"Flow",step:1,total:1},delivery:{revision:2,checks:[check],reports:[{id:"r",revision:1,status:"passed",findings:[{check,status:"passed",code:"verified",sha256:"a".repeat(64)}]}]}};
+    const reports=new WorkflowReports(new Chats(root),()=>[job]);
+    const stale=await reports.preview("w");expect(stale.report.complete).toBe(false);expect(stale.markdown).toContain("not accepted");
+    job.delivery.reports[0].revision=2;const accepted=await reports.preview("w");expect(accepted.report.complete).toBe(true);expect(accepted.report.stages[0].delivery?.latest?.findings[0].sha256).toBe("a".repeat(64));
+    job.delivery.blockedCompletion=true;expect((await reports.preview("w")).report.complete).toBe(false);
+  }finally{await fs.rm(root,{recursive:true,force:true});}
+});

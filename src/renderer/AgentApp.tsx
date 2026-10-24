@@ -5,6 +5,8 @@ import { ChatSearch } from "./ChatSearch";
 import { TaskCenter } from "./TaskCenter";
 import { TaskTemplates } from "./TaskTemplates";
 import { TaskReport } from "./TaskReport";
+import { DeliveryDialog, DeliverySummary } from "./DeliveryDialog";
+import { readDeliveryDraft, writeDeliveryDraft, clearDeliveryDraft } from "./delivery-draft";
 import { CopyButton } from "./CopyButton";
 import { CliSetupNotice } from "./CliSetupNotice";
 import { RecoveryNotice, RecoveryHistory } from "./RecoveryNotice";
@@ -149,6 +151,7 @@ export function AgentApp({
   const [contentSearch, setContentSearch] = useState(false);
   const [templatesOpen, setTemplatesOpen] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
+  const [deliveryOpen, setDeliveryOpen] = useState(false), [deliveryVersion,setDeliveryVersion]=useState(0);
   const [visibleProjects, setVisibleProjects] = useState(30),
     [visibleThreads, setVisibleThreads] = useState<Record<string, number>>({});
   const [selected, setSelected] = useState<string | undefined>(
@@ -276,6 +279,7 @@ export function AgentApp({
     }
   }, [selected, questionsSignature]);
   const key = selected ?? `new:${cwd}`;
+  const deliveryDraft = useMemo(()=>readDeliveryDraft(key),[key,deliveryVersion]);
   const draft = drafts[key] ?? "",
     attachments = files[key] ?? [];
   const call = async (name: string, args?: unknown): Promise<any> => {
@@ -666,9 +670,11 @@ export function AgentApp({
         review,
         planMode,
         multiAgent,
+        deliveryChecks: deliveryDraft,
         ...(creatingGoal ? { tokenBudget, start: !saveGoalOnly } : {}),
       })) as Job;
       setSelected(added.id);
+      clearDeliveryDraft(key,deliveryDraft);setDeliveryVersion(value=>value+1);
       localStorage.setItem("relay.lastChat", added.id);
       setGoalMode(false);
     } else {
@@ -1477,6 +1483,7 @@ export function AgentApp({
                         <ChevronRight size={17} />
                       </button>
                     )}
+                    {job&&<DeliverySummary job={job} open={()=>setDeliveryOpen(true)}/>}
                     {job?.autoRecovery && (
                       <RecoveryNotice
                         job={job}
@@ -1740,6 +1747,7 @@ export function AgentApp({
                                 <span>{t("启用子代理")}</span>
                                 {multiAgent && <Check size={15} />}
                               </button>
+                              <button role="menuitem" onClick={()=>{setDeliveryOpen(true);setComposerMenu(false);}}><ListTodo size={17}/><span>{t("交付验收")}</span>{(job?.delivery?.checks.length||deliveryDraft.length)>0&&<Check size={15}/>}</button>
                               {!job && (
                                 <button
                                   role="menuitem"
@@ -2195,6 +2203,7 @@ export function AgentApp({
                     {t("会话历史与编辑")}
                   </button>
                   <button role="menuitem" className="task-report-trigger" onClick={() => { setReportOpen(true); setThreadMenu(false); }}><CircleHelp size={15} />{t("会话诊断报告")}</button>
+                  <button role="menuitem" className="delivery-trigger" onClick={()=>{setDeliveryOpen(true);setThreadMenu(false);}}><ListTodo size={15}/>{t("交付验收")}</button>
                   <button role="menuitem" onClick={() => { setContentSearch(true); setThreadMenu(false); }}><Search size={15} />{t("搜索会话内容")}</button>
                   <button
                     role="menuitem"
@@ -2364,6 +2373,7 @@ export function AgentApp({
           )}
         </ModalPresence>
         <ModalPresence>{reportOpen && job && <TaskReport id={job.id} call={call} close={() => setReportOpen(false)} />}</ModalPresence>
+        <ModalPresence>{deliveryOpen&&<DeliveryDialog key={key} job={job} initial={deliveryDraft} call={call} close={()=>setDeliveryOpen(false)} saveDraft={checks=>{writeDeliveryDraft(key,checks);setDeliveryVersion(value=>value+1);}} repair={text=>{setDrafts(old=>({...old,[key]:[old[key],text].filter(Boolean).join("\n\n")}));setTimeout(()=>messageInput.current?.focus(),250);}}/>}</ModalPresence>
         <ModalPresence>{templatesOpen && <TaskTemplates draft={draft} preferences={{ model, effort, planMode, multiAgent }} call={call} close={() => setTemplatesOpen(false)} apply={(template) => {
           setDrafts((d) => ({ ...d, [key]: [d[key], template.prompt].filter(Boolean).join("\n\n") }));
           setModel(template.model); setEffort(template.effort); setPlanMode(template.planMode); setMultiAgent(template.multiAgent);

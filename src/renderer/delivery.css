@@ -1,0 +1,129 @@
+.delivery-summary {
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  text-align: left;
+  margin: 8px 0;
+  padding: 8px 12px;
+  border: 1px solid var(--line, #7775);
+  border-radius: 8px;
+  color: var(--subtle, #aaa);
+  background: var(--control, #7772);
+  font-size: 12px;
+}
+.delivery-dialog {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+.delivery-dialog > p {
+  margin: 0;
+  line-height: 1.6;
+}
+.delivery-dialog h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+.delivery-help,
+.delivery-workspace {
+  color: var(--muted, #999);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.delivery-dialog fieldset {
+  min-width: 0;
+  border: 1px solid var(--line, #7775);
+  border-radius: 10px;
+  padding: 12px;
+}
+.delivery-check {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line, #7775);
+}
+.delivery-check:first-of-type {
+  padding-top: 0;
+}
+.delivery-dialog .delivery-check label {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  margin: 0;
+  min-width: 0;
+  color: var(--subtle, #aaa);
+}
+.delivery-check label:has(textarea),
+.delivery-check label:has(input[aria-label^="SHA256"]) {
+  grid-column: 1 / -1;
+}
+.delivery-check input,
+.delivery-check textarea {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+.delivery-check textarea {
+  min-height: 64px;
+  resize: vertical;
+}
+.delivery-dialog button {
+  padding: 6px 9px;
+  border-radius: 6px;
+  background: var(--control, #7772);
+  color: inherit;
+}
+.delivery-dialog .delivery-remove {
+  justify-self: end;
+  align-self: end;
+  grid-column: 2;
+  font-size: 12px;
+}
+@media (max-width: 600px) {
+  .delivery-check {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .delivery-dialog .delivery-remove {
+    grid-column: 1;
+  }
+}
+.delivery-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 8px;
+}
+.delivery-results {
+  display: grid;
+  gap: 9px;
+  min-width: 0;
+}
+.delivery-results h3,
+.delivery-results p {
+  margin: 0;
+}
+.delivery-results article {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid var(--line, #7775);
+  border-radius: 8px;
+}
+.delivery-results code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+}
+.delivery-results [data-status="passed"] > strong,
+.delivery-results h3[data-status="passed"] {
+  color: var(--accent, #89aee9);
+}
+.delivery-results [data-status="failed"] > strong {
+  color: var(--danger, #d98d80);
+}
+.delivery-results [data-status="unverified"] > strong {
+  color: var(--muted, #999);
+}

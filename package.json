@@ -1,7 +1,7 @@
 {
   "name": "codex-relay",
   "productName": "Codex Relay",
-  "version": "0.6.21",
+  "version": "0.6.22",
   "description": "Codex CLI agent client with conversations and automatic account relay",
   "private": true,
   "license": "MIT",

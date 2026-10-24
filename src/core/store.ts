@@ -95,7 +95,15 @@ export class Store {
       };
       for (const j of this.data.jobs) {
         for (const message of j.queuedMessages || []) message.id ||= randomUUID();
-        if (j.existing && j.existing.phase !== "managed") {
+        if (j.delivery?.pendingCompletion) {
+          // This marker is saved only after the worker has positively closed.
+          // Resume read-only verification rather than sending another model turn.
+          j.state = j.stopIntent === "cancel" ? "cancelled" : j.stopIntent === "pause" ? "paused" : "needs_attention";
+          j.recoveryRequired = false;
+          j.autoRecovery = undefined;
+          j.delivery.blockedCompletion = true;
+          j.lastError = "交付验收中断，正在重新检查产物";
+        } else if (j.existing && j.existing.phase !== "managed") {
           if (!["completed", "cancelled"].includes(j.state)) {
             j.state = "needs_attention";
             j.lastError =

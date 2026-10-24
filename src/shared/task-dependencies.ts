@@ -1,7 +1,8 @@
 import type { Job } from "./types";
+import { deliveryAccepted } from "./delivery";
 export function dependencyBlockers(job: Job, jobs: Job[]) {
   return (job.dependsOn || []).filter(
-    (id) => jobs.find((j) => j.id === id)?.state !== "completed",
+    (id) => { const parent = jobs.find(j => j.id === id); return parent?.state !== "completed" || !deliveryAccepted(parent.delivery); },
   );
 }
 export function validateDependencies(jobs: Job[], id: string, ids: string[]) {

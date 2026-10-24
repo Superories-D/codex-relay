@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { deliveryAccepted } from "../shared/delivery";
 import type { Job } from "../shared/types";
 import type { Chats } from "./chat";
 import { redactValue } from "./redact";
@@ -44,6 +45,7 @@ export class WorkflowReports {
         step: job.workflow!.step,
         title: job.title,
         state: job.state,
+        delivery: job.delivery?.checks.length ? {revision: job.delivery.revision, accepted: deliveryAccepted(job.delivery), latest: job.delivery.reports.at(-1) || null} : null,
         cwd: job.cwd,
         dependsOn: job.dependsOn || [],
         lastError: job.lastError,
@@ -74,7 +76,7 @@ export class WorkflowReports {
       complete:
         !missingStages.length &&
         stages.length === expected &&
-        stages.every((s) => s.state === "completed"),
+        stages.every((s) => s.state === "completed" && (!s.delivery || s.delivery.accepted)),
       stages,
     };
     const report = redactValue(raw);
@@ -88,6 +90,8 @@ export class WorkflowReports {
         ...report.stages.flatMap((s) => [
           `## Stage ${s.step}: ${s.title.replace(/[\r\n]/g, " ")}`,
           `State: ${s.state}`,
+          s.delivery ? `Delivery acceptance: ${s.delivery.accepted ? "passed" : "not accepted"} · Contract r${s.delivery.revision}` : "",
+          s.delivery ? block(JSON.stringify(s.delivery.latest, null, 2)) : "",
           `Workspace: ${JSON.stringify(s.cwd)}`,
           `Dependencies: ${s.dependsOn.join(", ") || "none"}`,
           s.lastError ? block(s.lastError) : "",

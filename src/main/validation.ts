@@ -1,6 +1,7 @@
 import path from "node:path";
 import { z } from "zod";
 import { GOAL_OBJECTIVE_MAX_LENGTH } from "../shared/goal";
+import { deliveryChecksSchema } from "../shared/delivery";
 export const goalObjectiveSchema = z
   .string()
   .trim()
@@ -44,6 +45,7 @@ export const chatSendSchema = z
   .strict();
 export const newJobSchema = z
   .object({
+    deliveryChecks: deliveryChecksSchema.optional(),
     title: z.string().trim().min(1).max(120),
     prompt: z.string().trim().min(1).max(100000),
     cwd: absolute,
@@ -90,6 +92,7 @@ export const settingsSchema = z
   })
   .strict();
 export const idSchema = z.string().uuid();
+export const deliverySaveSchema = z.object({id: idSchema, revision: z.number().int().min(0), checks: deliveryChecksSchema}).strict();
 export const sessionScanSchema = z
   .object({ home: absolute.optional(), threadId: idSchema.optional() })
   .strict();

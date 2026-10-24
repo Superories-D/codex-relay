@@ -54,6 +54,77 @@ class FakeWorker extends EventEmitter implements Worker {
   }
   respond() {}
 }
+it("verifies delivery only after the worker closes and includes the contract in the prompt", async () => {
+  const job = await scheduler.add({...input,cwd:root,interactive:true,deliveryChecks:[{kind:"contains",path:"result.txt",label:"Result",text:"verified"}]});
+  await until(()=>workers[0]?.started);
+  expect(workers[0].submitted).toContain('"result.txt"');
+  vi.spyOn(workers[0],"close").mockImplementation(async()=>{await fs.writeFile(path.join(root,"result.txt"),"verified");});
+  workers[0].settle({kind:"completed"});await (scheduler as any).currentRun;
+  expect(job.state).toBe("completed");expect(job.delivery?.reports.at(-1)).toMatchObject({status:"passed",source:"automatic"});
+  const disk=new Store(root);await disk.load();expect(disk.data.jobs.find(j=>j.id===job.id)?.delivery?.reports.at(-1)?.status).toBe("passed");
+});
+it("blocks dependent tasks on failed delivery and releases them after explicit successful recheck", async () => {
+  scheduler.runtimeReady=()=>false;
+  const job=await scheduler.add({...input,cwd:root,deliveryChecks:[{kind:"file",path:"result.txt",label:"Result",minBytes:1}]});
+  const dependent=await scheduler.add({...input,cwd:root,title:"Dependent"});dependent.dependsOn=[job.id];
+  scheduler.runtimeReady=()=>true;await (scheduler as any).tick();await until(()=>workers[0]?.started);
+  workers[0].settle({kind:"completed"});await (scheduler as any).currentRun;
+  expect(job.state).toBe("needs_attention");expect(job.delivery?.reports.at(-1)?.status).toBe("failed");
+  await (scheduler as any).tick();expect(workers).toHaveLength(1);expect(scheduler.deliveryPrompt(job.id)).toContain("result.txt");
+  await fs.writeFile(path.join(root,"result.txt"),"done");await scheduler.checkDelivery(job.id);
+  expect(job.state).toBe("completed");await (scheduler as any).tick();await until(()=>workers[1]?.started);expect(workers[1].ctx.job.id).toBe(dependent.id);
+});
+it("preserves follow-ups on failed acceptance and advances one queued message after repair", async () => {
+  const job=await scheduler.add({...input,cwd:root,interactive:true,deliveryChecks:[{kind:"file",path:"result.txt",label:"Result",minBytes:1}]});
+  await until(()=>workers[0]?.started);job.queuedMessages=[{id:crypto.randomUUID(),text:"Follow-up",attachments:[]}];
+  workers[0].settle({kind:"completed"});await (scheduler as any).currentRun;
+  expect(job.queuedMessages).toHaveLength(1);expect(job.state).toBe("needs_attention");
+  await fs.writeFile(path.join(root,"result.txt"),"done");await scheduler.checkDelivery(job.id);
+  expect(job.state).toBe("queued");expect(job.pendingMessage).toBe("Follow-up");expect(job.queuedMessages).toHaveLength(0);
+  expect((await scheduler.chats.read(job.id)).items.filter(i=>i.role==="user"&&i.text==="Follow-up")).toHaveLength(1);
+});
+it("does not publish passing delivery evidence when persistence fails", async () => {
+  scheduler.runtimeReady=()=>false;const job=await scheduler.add({...input,cwd:root,deliveryChecks:[{kind:"file",path:"result.txt",label:"Result",minBytes:1}]});
+  job.state="needs_attention";job.delivery!.blockedCompletion=true;await fs.writeFile(path.join(root,"result.txt"),"done");await store.save();
+  const save=vi.spyOn(store,"save").mockRejectedValueOnce(Error("disk unavailable"));
+  await expect(scheduler.checkDelivery(job.id)).rejects.toThrow("disk unavailable");save.mockRestore();
+  expect(job.state).toBe("needs_attention");expect(job.delivery?.reports).toHaveLength(0);expect(job.delivery?.blockedCompletion).toBe(true);
+});
+it("uses optimistic contract revisions and rejects changes while the family is active", async () => {
+  scheduler.runtimeReady=()=>false;const job=await scheduler.add({...input,cwd:root});
+  await scheduler.saveDelivery(job.id,0,[{kind:"file",path:"result.txt",label:"Result",minBytes:1}]);
+  await expect(scheduler.saveDelivery(job.id,0,[])).rejects.toThrow("已更改");
+  scheduler.runtimeReady=()=>true;await (scheduler as any).tick();await until(()=>workers[0]?.started);
+  await expect(scheduler.saveDelivery(job.id,1,[])).rejects.toThrow("暂停");
+});
+it("recovers a persisted post-close verification without sending a new model turn", async () => {
+  scheduler.runtimeReady=()=>false;const job=await scheduler.add({...input,cwd:root,deliveryChecks:[{kind:"file",path:"result.txt",label:"Result",minBytes:1}]});
+  job.state="running";job.delivery!.pendingCompletion=true;await fs.writeFile(path.join(root,"result.txt"),"done");await store.save();
+  const disk=new Store(root);await disk.load();expect(disk.data.jobs[0]).toMatchObject({state:"needs_attention",recoveryRequired:false});
+  store.data=disk.data;scheduler.start();await until(()=>store.data.jobs[0].state==="completed");expect(workers).toHaveLength(0);
+  expect(store.data.jobs[0].delivery?.reports.at(-1)).toMatchObject({source:"recovery",status:"passed"});
+});
+it("does not treat an earlier accepted execution as completion after a later execution error", async()=>{
+  const job=await scheduler.add({...input,cwd:root,deliveryChecks:[{kind:"file",path:"artifact",label:"Artifact",minBytes:1}]});
+  await until(()=>workers[0]?.started);workers[0].settle({kind:"completed"});await (scheduler as any).currentRun;
+  expect(job.delivery?.blockedCompletion).toBe(true);await scheduler.control(job.id,"resume");await (scheduler as any).tick();await until(()=>workers[1]?.started);
+  workers[1].settle({kind:"error",error:Error("permanent task failure")});await (scheduler as any).currentRun;expect(job.state).toBe("needs_attention");expect(job.delivery?.blockedCompletion).toBe(false);
+  await fs.writeFile(path.join(root,"artifact"),"done");await scheduler.checkDelivery(job.id);expect(job.delivery?.reports.at(-1)?.status).toBe("passed");expect(job.state).toBe("needs_attention");
+});
+it("releases only its own acceptance hold when the user removes all checks",async()=>{
+  scheduler.runtimeReady=()=>false;const job=await scheduler.add({...input,cwd:root,deliveryChecks:[{kind:"file",path:"artifact",label:"Artifact",minBytes:1}]});
+  job.state="needs_attention";job.delivery!.blockedCompletion=true;job.queuedMessages=[{id:crypto.randomUUID(),text:"Previously queued follow-up",attachments:[]}];
+  await scheduler.saveDelivery(job.id,1,[]);expect(job.state).toBe("queued");expect(job.pendingMessage).toBe("Previously queued follow-up");expect(job.delivery?.checks).toEqual([]);expect(workers).toHaveLength(0);
+});
+it("cancels one verification without cancelling another task's evidence",async()=>{
+  scheduler.runtimeReady=()=>false;await fs.writeFile(path.join(root,"artifact"),"done");
+  const first=await scheduler.add({...input,cwd:root,deliveryChecks:[{kind:"file",path:"artifact",label:"One",minBytes:1}]}),second=await scheduler.add({...input,cwd:root,deliveryChecks:[{kind:"file",path:"artifact",label:"Two",minBytes:1}]});
+  const verifier=await import("../src/core/delivery"),original=verifier.verifyDelivery;
+  let signalStarted!:()=>void,release!:()=>void;const started=new Promise<void>(r=>signalStarted=r),gate=new Promise<void>(r=>release=r);
+  const intercepted=vi.spyOn(verifier,"verifyDelivery").mockImplementation(async(cwd,checks,options)=>{if(checks[0].label==="One"){signalStarted();await gate;}return original(cwd,checks,options);});
+  try{const checking=scheduler.checkDelivery(first.id);await started;expect(scheduler.cancelDelivery(first.id)).toEqual({cancelled:true});const other=await scheduler.checkDelivery(second.id);expect(other?.reports.at(-1)?.status).toBe("passed");release();const cancelled=await checking;expect(cancelled?.reports.at(-1)?.findings[0].code).toBe("cancelled");}
+  finally{release();intercepted.mockRestore();}
+});
 it("keeps queued work intact until startup CLI preparation is ready", async () => {
   scheduler.runtimeReady = () => false;
   const job = await scheduler.add({ ...input, cwd: root, interactive: true });
