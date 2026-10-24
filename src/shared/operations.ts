@@ -7,7 +7,8 @@ export const operationFactSchema=z.object({
   active:z.boolean(),controlling:z.boolean(),accountId:identity.optional(),rotations:z.number().int().nonnegative(),queued:z.number().int().nonnegative(),
   workflow:z.object({id:identity,title:z.string().max(1000),step:z.number().int().positive(),total:z.number().int().positive()}).strict().optional(),
   recovery:z.object({required:z.boolean(),attempt:z.number().int().nonnegative(),reason:z.enum(["process","interrupted","unknown"]).optional(),nextAt:time.optional(),
-    last:z.object({at:time,kind:z.enum(["scheduled","resumed","stopped","completed"]),attempt:z.number().int().nonnegative()}).strict().optional()}).strict(),
+    last:z.object({at:time,kind:z.enum(["scheduled","resumed","stopped","completed"]),attempt:z.number().int().nonnegative()}).strict().optional(),
+    scope:z.object({status:z.enum(["scoped","global"]),reason:z.string().max(100),at:time,processes:z.number().int().nonnegative().optional()}).strict().optional()}).strict(),
   acceptance:z.object({revision:z.number().int().nonnegative(),reportId:identity.optional(),status:z.enum(["none","pending","passed","failed","unverified","stale"])}).strict(),
   requests:z.array(z.object({id:identity,reviewId:z.string().uuid().optional(),historyId:identity.optional(),kind:z.enum(["command","file","input","permissions","elicitation","unsupported"]),pending:z.boolean()}).strict()),
 }).strict();

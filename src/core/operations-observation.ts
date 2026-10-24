@@ -19,6 +19,7 @@ export function operationObservation(data:Pick<AppState,"jobs"|"dispatch">,appro
         accountId:job.accountId,rotations:job.rotations||0,queued:job.queuedMessages?.length||0,
         workflow:job.workflow?{id:job.workflow.id,title:job.workflow.title,step:job.workflow.step,total:job.workflow.total}:undefined,
         recovery:{required:!!job.recoveryRequired,attempt:job.autoRecovery?.attempt??job.recoveryAttempts??0,reason:job.autoRecovery?.reason,nextAt:job.autoRecovery?.nextAttemptAt,
+          scope:job.recoveryDomainObservation?{status:job.recoveryDomainObservation.status,reason:job.recoveryDomainObservation.reason,at:job.recoveryDomainObservation.at,processes:job.recoveryDomainObservation.processes}:undefined,
           last:recovery?{at:recovery.at,kind:recovery.kind,attempt:recovery.attempt}:undefined},
         acceptance:{revision:delivery?.revision||0,reportId:report?.id,status},requests:requests.get(job.id)||[]};
     })};

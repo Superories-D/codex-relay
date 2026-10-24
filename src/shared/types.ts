@@ -93,6 +93,8 @@ export interface RecoveryEvent {
   detail?: string;
 }
 export interface Job {
+  runtimeDomain?: {version:1;nonce:string;accountId:string;home:string;workspace:string;project:string;sandbox:"workspaceWrite"|"readOnly"};
+  recoveryDomainObservation?: {signature:string;status:"scoped"|"global";reason:string;at:number;processes?:number};
   delivery?: import("./delivery").DeliveryState;
   messageReceipts?: { id: string; fingerprint: string }[];
   clientRequest?: { id: string; fingerprint: string };

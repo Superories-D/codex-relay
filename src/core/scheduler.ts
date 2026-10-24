@@ -1,6 +1,8 @@
 import { dispatchHeld, projectKey, projectHasCapacity } from "../shared/dispatch";
 import { operationCard, accountGateReasons,indexOperations, type AccountGateCode } from "./operations";
 import { operationObservation } from "./operations-observation";
+import {RecoveryDomains,captureWindowsDomain} from "./recovery-domains";
+import type {RecoveryPlan} from "../shared/recovery";
 import { verifyDelivery } from "./delivery";
 import { deliveryChecksSchema, deliveryRepairPrompt, type DeliveryCheck, type DeliveryReport } from "../shared/delivery";
 import { dependencyBlockers, validateDependencies } from "../shared/task-dependencies";
@@ -124,8 +126,10 @@ export class Scheduler extends EventEmitter {
   private selectionPool(job: Job) {
     // Keep array indexes stable for round-robin cursors. CLI runtimes share only
     // access tokens; a Desktop runtime must exclusively own its account profile.
+    const held=this.domains?.blockedAccounts([...this.recoveryTasks.keys()]);
     return this.store.data.accounts.map((account) => {
       const conflict =
+        held?.has(account.id)||
         this.accounts.busy.has(account.id) ||
         [...this.active.values()].some(
           (run) =>
@@ -188,6 +192,7 @@ export class Scheduler extends EventEmitter {
     private factories: Record<"cli" | "desktop", WorkerFactory>,
     private recover: (job: Job) => Promise<void> = async () => {},
     private beforeStart: (job: Job) => Promise<void> = async () => {},
+    private domains?:RecoveryDomains,
   ) {
     super();
     this.chats = new Chats(store.root);
@@ -266,7 +271,7 @@ export class Scheduler extends EventEmitter {
     const snapshot:Snapshot={...this.store.data,approvals:this.approvals,platform:process.platform},now=Date.now();
     const jobs=new Map(snapshot.jobs.map(job=>[job.id,job])),homes=new Map<string,string>();
     const runtime=indexOperations(snapshot,{cliReady:this.runtimeReady(),closing:this.closing,maintaining:this.maintaining,priming:this.warmupRecoveryCount>0,primeBlocking:!this.ticking||this.awaitingWarmups,
-      active:[...this.active.keys()],controls:[...this.jobControls.keys()],recovering:[...this.recoveryTasks.keys()],
+      active:[...this.active.keys()],controls:[...this.jobControls.keys()],recovering:[...this.recoveryTasks.keys()],ownership:job=>this.ownershipBlockers(job),
       home:(id:string)=>{let home=homes.get(id);if(!home){home=this.store.jobHome(id,jobs);homes.set(id,home);}return home;},selectable:(job:Job)=>!!this.selectAccount(job),
       accountReasons:(job:Job)=>{
         const counts:Partial<Record<AccountGateCode,number>>={},pool=this.selectionPool(job);
@@ -685,6 +690,7 @@ export class Scheduler extends EventEmitter {
         (typeof a.expiresAt === "number" && a.expiresAt <= now) ||
         a.status === "reauth" ||
         this.accounts.busy.has(a.id) ||
+        this.domains?.blockedAccounts([...this.recoveryTasks.keys()]).has(a.id) ||
         Object.values(a.warmups || {}).some(
           (w) => w.status === "running" || w.processSafe === false,
         ) ||
@@ -721,6 +727,18 @@ export class Scheduler extends EventEmitter {
       this.tickInFlight = undefined;
     });
     return this.tickInFlight;
+  }
+  private ownershipIds(){return [...new Set([...this.recoveryTasks.keys(),...this.store.data.jobs.filter(j=>j.recoveryRequired).map(j=>j.id)])];}
+  private ownershipBlockers(job:Job){return this.domains?this.domains.blockers(job,[...this.recoveryTasks.keys()]):this.ownershipIds();}
+  private globalOwnership(){return this.domains?this.domains.global([...this.recoveryTasks.keys()]):this.ownershipIds();}
+  private async refreshRecoveryDomains(){if(this.domains){await this.domains.refresh([...this.recoveryTasks.keys()]);this.changed();}}
+  recoveryPlan():RecoveryPlan{
+    const recovering=[...this.recoveryTasks.keys()],entries=this.domains?.view(recovering)||this.ownershipIds().map(id=>({id,title:this.store.data.jobs.find(j=>j.id===id)?.title||id,status:"global" as const,reason:"missingProof" as const,affected:this.store.data.jobs.filter(j=>["queued","waiting"].includes(j.state)).map(j=>j.id),accounts:[],projects:[]}));
+    return {id:this.domains?.identity(recovering)||createHash("sha256").update(JSON.stringify(entries)).digest("hex"),at:Date.now(),entries};
+  }
+  async inspectRecovery(expected?:string){
+    if(expected&&this.recoveryPlan().id!==expected)throw Error("恢复计划已变化，请重新查看");
+    await this.refreshRecoveryDomains();return this.recoveryPlan();
   }
   private pumpRecovery(now: number) {
     for (const job of this.store.data.jobs) {
@@ -825,11 +843,11 @@ export class Scheduler extends EventEmitter {
       const now = Date.now();
       if (this.closing || this.maintaining) return;
       this.pumpRecovery(now);
+      await this.refreshRecoveryDomains();
       if (
-        this.recoveryTasks.size > 0 ||
+        this.globalOwnership().length > 0 ||
         this.store.data.jobs.some(
           (j) =>
-            j.recoveryRequired ||
             (j.existing &&
               j.existing.phase !== "managed" &&
               !["cancelled", "completed"].includes(j.state)),
@@ -841,6 +859,7 @@ export class Scheduler extends EventEmitter {
           (j) =>
             ["queued", "waiting"].includes(j.state) &&
             !j.autoRecovery &&
+            !this.ownershipBlockers(j).length &&
             !dispatchHeld(this.store.data, j, process.platform) &&
             projectHasCapacity(this.store.data, j, [...this.active.values()].map(r => r.job), process.platform) &&
             !dependencyBlockers(j, this.store.data.jobs).length &&
@@ -874,7 +893,8 @@ export class Scheduler extends EventEmitter {
         this.warmupRecovery = this.recoverWarmups();
       }
       this.warmups.pump();
-      if (this.closing || this.store.data.jobs.some((j) => j.recoveryRequired))
+      await this.refreshRecoveryDomains();
+      if (this.closing || this.globalOwnership().length)
         return;
       const limit = Math.max(
         1,
@@ -885,6 +905,7 @@ export class Scheduler extends EventEmitter {
           break;
         if (
           this.familyActive(job.id) ||
+          this.ownershipBlockers(job).length>0 ||
           dispatchHeld(this.store.data, job, process.platform) ||
           !projectHasCapacity(this.store.data, job, [...this.active.values()].map(r => r.job), process.platform) ||
           this.dependenciesBlocked(job) ||
@@ -986,6 +1007,7 @@ export class Scheduler extends EventEmitter {
     let outcome: Outcome | undefined;
     try {
       job.state = "preparing";
+      if(this.domains)job.runtimeDomain=undefined;
       if(job.delivery) {job.delivery.blockedCompletion=false;job.delivery.pendingCompletion=false;}
       job.waitingFor = undefined;
       this.syncAgentRoot(job, { status: "pendingInit" });
@@ -1014,6 +1036,8 @@ export class Scheduler extends EventEmitter {
         )
           throw new ModelRoutingError("优先使用目录中列有所选模型的账户");
         await this.beforeStart(job);
+        await this.refreshRecoveryDomains();
+        if(this.ownershipBlockers(job).length||this.domains?.blockedAccounts([...this.recoveryTasks.keys()]).has(account.id))throw new RecoveryError("相关资源正在恢复，等待归属核查后继续");
         if (active.reason || this.closing) {
           throw Error("任务准备已取消");
         }
@@ -1059,6 +1083,7 @@ export class Scheduler extends EventEmitter {
         active.worker = this.factories[job.mode]({
           job,
           home,
+          domain:this.domains?owner=>captureWindowsDomain(this.store,job,owner):undefined,
           cli: this.store.data.settings.cliPath,
           resumePrompt: this.store.data.settings.resumePrompt,
           checkpoint: async (threadId, turnId, submitted = true) => {

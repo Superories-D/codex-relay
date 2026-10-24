@@ -1,8 +1,10 @@
 import { build } from "esbuild";
 import { mkdir, copyFile, rm } from "node:fs/promises";
+import { buildWindowsNative } from "./build-windows-native.mjs";
 await rm("dist", { recursive: true, force: true });
 await mkdir("dist/renderer", { recursive: true });
 await mkdir("dist/main", { recursive: true });
+await buildWindowsNative();
 await build({
   entryPoints: ["src/main/main.ts"],
   outfile: "dist/main/main.cjs",

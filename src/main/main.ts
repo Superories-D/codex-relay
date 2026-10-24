@@ -8,6 +8,7 @@ import { DeliveryPlans } from "./delivery-plans";
 import { DeliveryBatches } from "./delivery-batches";
 import { Vaults } from "./vault";
 import { OperationsHistory } from "./operations-history";
+import {RecoveryDomains} from "../core/recovery-domains";
 import { WindowPlacement } from "./window-placement";
 import { serviceHealth } from "../core/service-health";
 import { respondApproval } from "../core/approval-command";
@@ -232,6 +233,7 @@ async function boot() {
         await rebaseNativeHome(home);
       }
     },
+    process.platform==="win32"?new RecoveryDomains(store):undefined,
   );
   const workflowReports = new WorkflowReports(scheduler.chats, () => store.data.jobs);
   const telegram = new WindowsTelegram({
@@ -365,6 +367,8 @@ async function boot() {
       case "delivery.batch.export": return deliveryBatches.export(idSchema.parse(args));
       case "vault.list": return vaults.list();
       case "operations.read": return {...scheduler.operations(),recording:operationsHistory.view()};
+      case "recovery.plan":return scheduler.recoveryPlan();
+      case "recovery.inspect":return scheduler.inspectRecovery(z.object({id:z.string().regex(/^[a-f0-9]{64}$/)}).strict().parse(args).id);
       case "operations.history": return operationsHistory.page(args);
       case "operations.request": {
         const a=z.object({jobId:idSchema,id:z.string().min(1).max(200),reviewId:z.string().uuid()}).strict().parse(args);

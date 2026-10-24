@@ -20,6 +20,7 @@ export interface OperationsRuntime {
   home:(id:string)=>string;
   selectable:(job:Job)=>boolean;
   accountReasons?:(job:Job)=>Partial<Record<AccountGateCode,number>>;
+  ownership?:(job:Job)=>string[];
   index?:{jobs:ReadonlyMap<string,Job>;approvals:ReadonlyMap<string,Approval[]>;owners:string[];handoffs:string[];activeJobs:Job[]};
 }
 export function indexOperations(snapshot:Snapshot,runtime:OperationsRuntime):OperationsRuntime {
@@ -62,7 +63,7 @@ export function operationCard(snapshot:Snapshot, job:Job, runtime:OperationsRunt
     if(runtime.closing)add("closing");
     if(runtime.maintaining)add("maintenance");
     if(runtime.priming)add("warmupRecovery",[],runtime.primeBlocking===false?"review":"admission");
-    const owners=runtime.index?.owners||[...new Set([...runtime.recovering,...snapshot.jobs.filter(j=>j.recoveryRequired).map(j=>j.id)])];
+    const owners=runtime.ownership?runtime.ownership(job):runtime.index?.owners||[...new Set([...runtime.recovering,...snapshot.jobs.filter(j=>j.recoveryRequired).map(j=>j.id)])];
     if(owners.length)add("ownership",owners);
     const external=runtime.index?.handoffs||snapshot.jobs.filter(j=>j.existing&&j.existing.phase!=="managed"&&!["cancelled","completed"].includes(j.state)).map(j=>j.id);
     if(external.length)add("handoff",external);

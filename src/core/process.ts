@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import {spawnWindowsDomain,stopWindowsDomain,type DomainChild} from "./windows-domain";
 export async function resolveCli(
   configured: string,
 ): Promise<{ executable: string; prefix: string[] }> {
@@ -43,6 +44,7 @@ export async function spawnCodex(
   cli: string,
   args: string[],
   home: string,
+  nonce?:string,
 ): Promise<ChildProcessWithoutNullStreams> {
   await fs.mkdir(home, { recursive: true, mode: 0o700 });
   const resolved = await resolveCli(cli);
@@ -54,6 +56,10 @@ export async function spawnCodex(
   env.CODEX_HOME = home;
   // Subscription tasks must not silently switch to inherited API-key billing.
   delete env.OPENAI_API_KEY;
+  if(process.platform==="win32"){
+    const native=path.isAbsolute(resolved.executable)?resolved:await resolveCli(resolved.executable);
+    return spawnWindowsDomain(native.executable,[...resolved.prefix,...args],home,env,nonce);
+  }
   return spawn(resolved.executable, [...resolved.prefix, ...args], {
     env,
     cwd: home,
@@ -65,6 +71,14 @@ export async function spawnCodex(
 export async function terminateTree(
   proc: ChildProcessWithoutNullStreams,
 ): Promise<void> {
+  const domain=(proc as DomainChild).relayDomain;
+  if(domain){
+    const end=Date.now()+5000;
+    for(;;){
+      try{const view=await stopWindowsDomain(domain.owner.home,domain.owner.nonce);if(view.active!==0)throw Error("受管进程域仍在停止");return;}
+      catch(error){if(Date.now()>=end)throw error;await new Promise(resolve=>setTimeout(resolve,50));}
+    }
+  }
   if (proc.exitCode !== null || proc.signalCode != null || !proc.pid) return;
   if (process.platform === "win32") {
     await new Promise<void>((resolve, reject) => {

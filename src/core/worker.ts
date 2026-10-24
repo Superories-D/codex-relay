@@ -38,6 +38,7 @@ export interface Worker extends EventEmitter {
   ): Promise<unknown>;
 }
 export interface WorkerContext {
+  domain?(owner?:import("./windows-domain").WindowsDomainOwner):Promise<void>;
   job: Job;
   home: string;
   cli: string;

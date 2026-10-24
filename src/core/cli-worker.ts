@@ -3,6 +3,7 @@ import { taskPrompt, completionOutcome } from "./completion";
 import { prepareThread } from "./thread";
 import { isModelRejection } from "./model-error";
 import { Rpc, type RpcMessage } from "./rpc";
+import type {DomainChild} from "./windows-domain";
 import {
   errorKind,
   hasQuotaEvidence,
@@ -96,6 +97,7 @@ export class CliWorker extends EventEmitter implements Worker {
   }) {
     this.emit("stage", "连接 Codex CLI");
     this.rpc = await Rpc.open(this.ctx.cli, this.ctx.home);
+    await this.ctx.domain?.((this.rpc.child as DomainChild).relayDomain?.owner);
     this.rpc.on(
       "notification",
       (msg) =>
@@ -922,6 +924,9 @@ export class CliWorker extends EventEmitter implements Worker {
         msg.method!,
         msg.params,
       );
+      // A reviewed command, permission grant or external tool can widen the
+      // original workspace boundary. Withdraw scoped recovery BEFORE review.
+      if(["command","file","permissions","elicitation"].includes(approval.kind))await this.ctx.domain?.();
       if (approval.kind === "unsupported") {
         this.rpc!.reject(msg.id!, `Unsupported server request: ${msg.method}`);
         this.requests.delete(id);

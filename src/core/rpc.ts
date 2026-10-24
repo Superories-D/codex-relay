@@ -9,6 +9,7 @@ import { randomUUID } from "node:crypto";
 import { atomicWrite } from "./store";
 import { ProcessSafetyError } from "./process-safety-error";
 import { RecoveryError } from "./auto-recovery";
+import {inspectWindowsDomain,releaseWindowsDomain,type DomainChild} from "./windows-domain";
 export interface RpcMessage {
   id?: number | string;
   method?: string;
@@ -126,12 +127,13 @@ export class Rpc extends EventEmitter {
           "app-server",
         ],
         home,
+        nonce,
       ),
       home,
       nonce,
     );
     try {
-      if (rpc.child.pid)
+      if (rpc.child.pid&&!(rpc.child as DomainChild).relayDomain)
         await atomicWrite(
           path.join(home, "relay-owner.json"),
           JSON.stringify({ pid: rpc.child.pid, nonce }),
@@ -171,6 +173,12 @@ export class Rpc extends EventEmitter {
     } catch (error: any) {
       if (error.code === "ENOENT") return;
       throw new Error("受管进程记录损坏，请核查该目录后再继续");
+    }
+    if(owner.kind==="windows-job"){
+      if(process.platform!=="win32")throw Error("请在 Windows 上核实受管进程域");
+      const view=await inspectWindowsDomain(home,owner.nonce);
+      if(view.active)throw Error("受管进程域仍在使用，保留原任务等待恢复");
+      await releaseWindowsDomain(home,owner.nonce);return;
     }
     if (!Number.isInteger(owner.pid) || owner.pid < 1)
       throw new Error("无效的受管进程记录");
@@ -231,7 +239,10 @@ export class Rpc extends EventEmitter {
   private async closeOnce() {
     this.closing = true;
     await terminateTree(this.child);
+    const domain=(this.child as DomainChild).relayDomain;
+    if(domain)await releaseWindowsDomain(domain.owner.home,domain.owner.nonce);
     this.fail(new Error("RPC closed"));
+    if(domain)return;
     try {
       const file = path.join(this.home, "relay-owner.json");
       const owner = JSON.parse(await fs.readFile(file, "utf8"));

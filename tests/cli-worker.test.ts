@@ -3,6 +3,7 @@ import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { Rpc } from "../src/core/rpc";
 import { CliWorker } from "../src/core/cli-worker";
 import type { Job } from "../src/shared/types";
+import type {WorkerContext} from "../src/core/worker";
 import { ProcessSafetyError } from "../src/core/process-safety-error";
 import { RecoveryError } from "../src/core/auto-recovery";
 vi.mock("../src/core/rpc", () => ({ Rpc: { open: vi.fn() } }));
@@ -78,8 +79,9 @@ const auth = {
   chatgptAccountId: "account",
   chatgptPlanType: "plus",
 };
-function worker(refresh = async () => auth) {
+function worker(refresh = async () => auth,domain?:WorkerContext["domain"]) {
   return new CliWorker({
+    domain,
     job,
     home: "/tmp/never-used",
     cli: "never-launched",
@@ -100,6 +102,18 @@ function worker(refresh = async () => auth) {
     refresh,
   });
 }
+it("withdraws scoped ownership durably before exposing a request that can widen permissions",async()=>{
+  (rpc as any).child={relayDomain:{owner:{nonce:"native-proof"}}};let saved!:()=>void;
+  const domain=vi.fn().mockResolvedValueOnce(undefined).mockImplementationOnce(()=>new Promise<void>(resolve=>{saved=resolve;}));
+  const w=worker(undefined,domain),review=vi.fn();w.on("approval",review);await w.start(auth);
+  rpc.emit("request",{id:"permission",method:"item/permissions/requestApproval",params:{}});
+  expect(domain).toHaveBeenCalledTimes(2);expect(domain.mock.calls[1]).toEqual([]);expect(review).not.toHaveBeenCalled();
+  saved();await vi.advanceTimersByTimeAsync(0);expect(review).toHaveBeenCalledOnce();await w.close();
+});
+it("does not start a thread when its runtime ownership evidence cannot be persisted",async()=>{
+  (rpc as any).child={};const w=worker(undefined,async()=>{throw Error("evidence write denied");});
+  await expect(w.start(auth)).rejects.toThrow("evidence write denied");expect(rpc.calls).not.toContain("thread/start");await w.close();
+});
 it("propagates an unsafe external refresh process into the scheduler recovery gate", async () => {
   const failure = new ProcessSafetyError(
     "refresh process still alive",

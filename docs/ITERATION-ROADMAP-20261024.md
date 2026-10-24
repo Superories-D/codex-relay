@@ -55,7 +55,7 @@ checks now run the four Windows layouts only.
    download/SHA passed after a ranged resume; public Portable/ZIP sizes passed.
    Source/tag/main: `043f036457ef9281f6835814a52ce81800017178`.
    See `DELIVERY-VAULT-20261025.md`.
-5. **Windows operations cockpit (v0.6.26 release gate).** Bring task-family
+5. **Windows operations cockpit (published v0.6.26).** Bring task-family
    activity, approvals, recovery, quota waiting, accepted artifacts and notification
    outcomes into one actionable timeline. Build on existing scheduler evidence;
    do not invent success from UI state or silently resume paused work. Include
@@ -69,15 +69,34 @@ checks now run the four Windows layouts only.
    history checks passed. Complete packaged acceptance passed: operations,
    two CLI startups, vault crash recovery, Telegram emulator, delivery center,
    portable and Setup wizard. Ten ASAR bundles and all 88 ZIP files match.
-   Complete attachment upload/readback is the remaining publication gate. See
+   All five full attachments passed LAN download/SHA readback; anonymous full
+   Setup download/SHA and public binary sizes passed. Source/main/tag:
+   `ae405bb8c772aa5c9d9fbf6d35a4c91932d1d611`. See
    `OPERATIONS-COCKPIT-20261025.md`.
-6. **Windows recovery domains (next substantial goal).** Investigate separating
+6. **Windows recovery domains (v0.6.27 publication gate).** Investigate separating
    unrelated-project recovery from task admission while retaining strict shared
    account, session-family and process ownership. Build a reviewable recovery
    plan with explicit user intent, durable evidence and restart behavior. First
    establish which barriers are genuinely global; do not merely remove a safety
    wait or claim isolation from a UI explanation. Include actual concurrent
    runtime fixtures, failure paths and complete Windows release acceptance.
+   Native creation-time job assignment, per-run receipts, process creation
+   identities, canonical-home ownership, scoped admission and the recovery-plan
+   interface are implemented. Current-source regression: 672 passed / 43 skips.
+   Fourteen actual native ownership/scheduler checks, restart/save failure,
+   legacy fallback, Cancel persistence and four native UI locales pass. Full
+   packaged acceptance passed, including the packaged native host, eight QA
+   flows, Setup wizard, ten ASAR bundles and all 89 ZIP files. Full attachment
+   upload/readback remains the publication gate. See
+   `RECOVERY-DOMAINS-20261025.md`.
+7. **Windows recoverable workspace checkpoints and task branches (next goal).**
+   Preserve a reviewable source/index/worktree state before isolated task
+   branches, carry intended uncommitted changes without overwriting the original,
+   and restore a checkpoint into a new worktree after interruption. Connect the
+   snapshot, task context and delivery provenance. Preserve ignored-file choices,
+   actual Windows path/byte semantics and stale-state guards. Verify restoration
+   using real Git repositories, changed and untracked files, index differences,
+   large data and restart before publishing a complete Windows release.
 
 Every milestone includes complete Windows Setup, Portable and ZIP artifacts,
 instructions and SHA256 checksums. Upload through the authorized LAN Gitea API

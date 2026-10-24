@@ -9,6 +9,7 @@ import { DeliveryDialog } from "./DeliveryDialog";
 import { DeliveryVault } from "./DeliveryVault";
 import { TelegramSettings } from "./TelegramSettings";
 import { WorkflowReport } from "./WorkflowReport";
+import {RecoveryPanel} from "./RecoveryPanel";
 import { Dialog } from "./Dialog";
 import { t,useI18n,errorText,formatDate } from "./i18n";
 import "./operations.css";
@@ -35,6 +36,7 @@ export function OperationsCenter({snapshot,call,open,back,approval,manage}:{snap
   const [error,setError]=useState(""),[busy,setBusy]=useState(false),[review,setReview]=useState<Approval>();
   const [delivery,setDelivery]=useState<Job>(),[vault,setVault]=useState<{id?:string}>(),[telegram,setTelegram]=useState(false);
   const [workflowReport,setWorkflowReport]=useState<string>();
+  const [recovery,setRecovery]=useState(false);
   const [references,setReferences]=useState<VaultReferences>(),[notices,setNotices]=useState<TelegramReceipt[]>(),[linksBusy,setLinksBusy]=useState(false),[linksError,setLinksError]=useState("");
   const alive=useRef(true),pending=useRef(false),polling=useRef(false),reads=useRef(0),historyReads=useRef(0),linkReads=useRef(0),callRef=useRef(call);callRef.current=call;
   const cards=view?.cards||[],chosen=cards.find(c=>c.id===selected),current=snapshot.jobs.find(j=>j.id===selected),detail=chosen||last;
@@ -82,6 +84,7 @@ export function OperationsCenter({snapshot,call,open,back,approval,manage}:{snap
     {e.current?.requests.length? <details><summary>{t("待处理请求：{count}",{count:e.current.requests.length})}</summary>{e.current.requests.map(r=><p key={`${r.id}:${r.reviewId}`}>{t(requestKinds[r.kind])} · <code>{r.reviewId||r.historyId||r.id}</code></p>)}</details>:null}<small>{t("记录序号")} {e.seq}</small></div></article>;
   return <main className="operations-center">
     <header className="ops-header"><div><p className="ops-eyebrow">{t("WINDOWS 运行现场")}</p><h1><Activity size={25}/>{t("任务运行台")}</h1><p>{t("看清任务为何等待，把需要你的处理与真实证据连接起来。")}</p></div><div className="ops-buttons"><button onClick={()=>void run(async()=>{await load();await loadHistory();})} disabled={busy}><RefreshCw size={15}/>{t("刷新")}</button><button onClick={back}><ArrowLeft size={15}/>{t("返回任务中心")}</button></div></header>
+    <div className="ops-buttons"><button onClick={()=>setRecovery(true)}><ShieldAlert size={16}/>{t("查看恢复计划")}</button><span className="ops-caption">{t("核查恢复占用，查看哪些任务可以独立继续。")}</span></div>
     {error&&<p role="alert" className="ops-error">{error}</p>}
     <section className="ops-metrics">{[["all","所有任务",cards.length],["review","需要你处理",cards.filter(attention).length],["blocked","队列有阻塞",cards.filter(c=>c.dispatchable&&!c.ready).length],["working","正在工作",cards.filter(c=>["preparing","running","pausing","rotating"].includes(c.state)).length],["finished","已结束的轮次",cards.filter(c=>["completed","cancelled"].includes(c.state)).length]].map(([key,label,n])=><button key={key} aria-pressed={filter===key} onClick={()=>{setFilter(String(key));setPage(0);}}><strong>{n}</strong><span>{t(String(label))}</span></button>)}</section>
     <div className="ops-layout"><section className="ops-queue"><div className="ops-queue-heading"><h2>{t("当前现场")}</h2><span>{t("按真实调度条件观察")}</span></div><input aria-label={t("搜索运行任务")} placeholder={t("搜索任务或项目")} value={query} onChange={e=>{setQuery(e.target.value);setPage(0);}}/><label className="ops-archive-toggle"><input type="checkbox" checked={archived} onChange={e=>setArchived(e.target.checked)}/>{t("包含归档任务")}</label>
@@ -118,5 +121,6 @@ export function OperationsCenter({snapshot,call,open,back,approval,manage}:{snap
     {vault&&<DeliveryVault call={call} selected={[]} previewOnOpen={false} initialId={vault.id} close={()=>{setVault(undefined);void loadLinks();}}/>}
     {telegram&&<Dialog title={t("Telegram 通知记录")} onClose={()=>{setTelegram(false);void loadLinks();}}><TelegramSettings call={call}/></Dialog>}
     {workflowReport&&<WorkflowReport id={workflowReport} call={call} close={()=>setWorkflowReport(undefined)}/>}
+    {recovery&&<Dialog title={t("Windows 恢复计划")} onClose={()=>setRecovery(false)}><RecoveryPanel call={call} snapshot={snapshot} open={job=>{setRecovery(false);open(job);}}/></Dialog>}
   </main>;
 }
