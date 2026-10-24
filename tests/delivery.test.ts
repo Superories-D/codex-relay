@@ -17,6 +17,16 @@ afterEach(async () => {
 });
 const run = (checks: DeliveryCheck[], signal?: AbortSignal) =>
   verifyDelivery(root, checks, { revision: 1, source: "manual", signal });
+it("stops a continuously growing file at its original length rather than chasing its writer", async () => {
+  const file=path.join(root,"growing");await fs.writeFile(file,"a");const open=fs.open.bind(fs);let reads=0;
+  const interception=vi.spyOn(fs,"open").mockImplementation(async(...args)=>{
+    const handle=await open(...args),read=handle.read.bind(handle);
+    handle.read=(async(...values:any[])=>{const result=await (read as any)(...values);reads++;await fs.appendFile(file,"a");return result;}) as typeof handle.read;return handle;
+  });
+  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),1500);
+  try{const result=await run([{kind:"file",path:"growing",label:"Growing source",minBytes:1}],controller.signal);expect(result.findings[0]).toMatchObject({status:"unverified",code:"changedDuringRead"});expect(reads).toBeLessThanOrEqual(2);}
+  finally{clearTimeout(timer);interception.mockRestore();}
+});
 it("rejects a composite pass when one file is replaced between its individual acceptance checks", async () => {
   const target=path.join(root,"coherent.txt");await fs.writeFile(target,"original");
   const originalOpen=fs.open.bind(fs);let reads=0;

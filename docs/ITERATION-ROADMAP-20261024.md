@@ -27,7 +27,7 @@ checks now run the four Windows layouts only.
    sent until the user explicitly configures and enables the connection.
    Windows native/UI verification, complete packaging/readback and anonymous
    full installer download passed. See `TELEGRAM-WINDOWS-20261025.md`.
-3. **Windows workflow delivery center (v0.6.24 release gate).** Build on the
+3. **Windows workflow delivery center (published v0.6.24).** Build on the
    accepted per-task contracts and notification outbox: reusable acceptance
    plans, cross-task artifact inspection, stale-evidence detection, batch
    verification and workflow-level evidence export. Preserve failure/repair paths
@@ -36,8 +36,8 @@ checks now run the four Windows layouts only.
    changes. Reuse existing templates and workflow reports where appropriate.
    Implementation, 599 Windows regression checks, native scheduler/filesystem/
    download/restart and four-language UI now pass. Complete packaged acceptance
-   and release readback remain required. See `DELIVERY-CENTER-20261025.md`.
-4. **Windows delivery vault and portable handoff bundles (next substantial goal).**
+   and release readback passed. See `DELIVERY-CENTER-20261025.md`.
+4. **Windows delivery vault and portable handoff bundles (v0.6.25 release gate).**
    Preserve actual verified artifact bytes in versioned local deliveries, with
    complete manifests, fingerprints and workflow provenance. Produce a portable
    handoff bundle that can be independently inspected without a model account.
@@ -45,6 +45,21 @@ checks now run the four Windows layouts only.
    explicit; never silently truncate artifacts to fit a limit. Reuse the current
    acceptance plans, evidence reports and private Telegram notices. Verify actual
    large files, tamper detection, export and restart before a complete release.
+   Independent versions, verified ZIP64 archives, offline inspection, restart
+   reconciliation and native four-language acceptance are implemented. Real
+   5 GiB source / >5 GB ZIP64 readback and independent extraction passed.
+   Current-source regression passed 641 checks with 43 platform skips. Packaged
+   native acceptance, forced-crash recovery, two CLI startups, Telegram emulator,
+   portable startup, Setup wizard and full ASAR/88-file ZIP validation passed.
+   Complete release readback remains the final publication gate.
+   See `DELIVERY-VAULT-20261025.md`.
+5. **Windows operations cockpit (next substantial goal).** Bring task-family
+   activity, approvals, recovery, quota waiting, accepted artifacts and notification
+   outcomes into one actionable timeline. Build on existing scheduler evidence;
+   do not invent success from UI state or silently resume paused work. Include
+   direct navigation to actual blockers, durable history and account-free native
+   verification before a complete release. Research current desktop workflows
+   and validate useful behavior beyond a visual dashboard.
 
 Every milestone includes complete Windows Setup, Portable and ZIP artifacts,
 instructions and SHA256 checksums. Upload through the authorized LAN Gitea API

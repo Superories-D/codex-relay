@@ -6,6 +6,7 @@ import { deliveryPlanContent, type DeliveryPlan, type DeliveryPlanState, type De
 import { DeliveryDialog } from "./DeliveryDialog";
 import { WorkflowReport } from "./WorkflowReport";
 import { Dialog } from "./Dialog";
+import { DeliveryVault } from "./DeliveryVault";
 import { t, useI18n, errorText, formatDate } from "./i18n";
 import "./delivery-center.css";
 
@@ -35,6 +36,7 @@ export function DeliveryCenter({snapshot, call, open, back}: {snapshot: Snapshot
   const [frozen, setFrozen] = useState<{targets: {id: string; title: string; revision: number}[]; plan?: DeliveryPlan; planRevision: number}>({targets: [], planRevision: 0});
   const [busy, setBusy] = useState(false), [error, setError] = useState(""), [notice, setNotice] = useState("");
   const [application, setApplication] = useState<{id: string; applied: boolean; issue?: string}[]>();
+  const [vault, setVault] = useState<{preview: boolean; selected: string[]}>();
   const live = useRef(true), pending = useRef(false), callRef = useRef(call); callRef.current = call;
   const jobs = snapshot.jobs.filter(j => !j.archived);
   const filtered = jobs.filter(j => (!project || (j.projectCwd || j.cwd) === project) && (!workflow || j.workflow?.id === workflow) &&
@@ -82,7 +84,7 @@ export function DeliveryCenter({snapshot, call, open, back}: {snapshot: Snapshot
     const link = document.createElement("a"); link.href = url; link.download = `delivery-batch-${batch!.id}.json`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 5000);
   });
   return <main className="delivery-center">
-    <header><div><h1><FileCheck2 size={24}/>{t("交付中心")}</h1><p>{t("复用验收方案，检查产物变化，集中核对工作流证据。")}</p></div><button onClick={back}><ArrowLeft size={16}/>{t("返回任务中心")}</button></header>
+    <header><div><h1><FileCheck2 size={24}/>{t("交付中心")}</h1><p>{t("复用验收方案，检查产物变化，集中核对工作流证据。")}</p></div><div className="dc-toolbar"><button onClick={() => setVault({preview:false,selected:[]})}>{t("交付保险库")}</button><button onClick={back}><ArrowLeft size={16}/>{t("返回任务中心")}</button></div></header>
     <p className="dc-note">{t("通过记录证明验收当时的文件。检测证据会重新读取完整文件；发现变化或无法确认时，使旧证据失效并阻止新的依赖任务启动。")}</p>
     {error && <p role="alert" className="dc-error">{error}</p>}{history?.issue && <p role="alert" className="dc-error">{t(history.issue)}</p>}{notice && <p role="status">{notice}</p>}
     <section className="dc-filters">
@@ -96,6 +98,7 @@ export function DeliveryCenter({snapshot, call, open, back}: {snapshot: Snapshot
       <button disabled={busy || !shown.some(j => !unavailable(j))} onClick={() => setSelected(old => [...new Set([...old, ...shown.filter(j => !unavailable(j)).map(j => j.id)])])}>{t("选择本页")}</button><button onClick={() => setSelected([])} disabled={busy}>{t("清空选择")}</button>
       <button disabled={busy || !!active || !configured.length || configured.length > 100 || !!history?.issue} onClick={() => void begin("inspect")}>{t("检测交付证据")}</button>
       <button disabled={busy || !!active || !configured.length || configured.length > 100 || !!history?.issue} onClick={() => ask("verify")}>{t("批量重新验收")}</button>
+      <button disabled={busy || !targets.length || targets.length > 100 || targets.some(j => unavailable(j) || !j.delivery?.checks.length || !deliveryAccepted(j.delivery))} onClick={() => setVault({preview:true,selected:targets.map(j=>j.id)})}>{t("保存交付版本")}</button>
     </section>
     <div className="dc-task-list">{shown.map(job => <article key={job.id}>
       <label><input type="checkbox" aria-label={job.title} disabled={busy || unavailable(job)} checked={selected.includes(job.id)} onChange={e => setSelected(old => e.target.checked ? [...new Set([...old, job.id])] : old.filter(id => id !== job.id))}/><button onClick={() => open(job)}>{job.title}</button></label>
@@ -148,5 +151,6 @@ export function DeliveryCenter({snapshot, call, open, back}: {snapshot: Snapshot
     {draft && editingChecks && <DeliveryDialog purpose="plan" initial={draft.checks} call={call} saveDraft={checks => setDraft({...draft, checks})} close={() => setEditingChecks(false)}/>}
     {jobEditor && <DeliveryDialog job={snapshot.jobs.find(j => j.id === jobEditor.id) || jobEditor} call={call} close={() => setJobEditor(undefined)}/>}
     {workflowReport && <WorkflowReport id={workflowReport} call={call} close={() => setWorkflowReport(undefined)}/>}
+    {vault && <DeliveryVault call={call} selected={vault.selected} previewOnOpen={vault.preview} close={() => setVault(undefined)}/>}
   </main>;
 }

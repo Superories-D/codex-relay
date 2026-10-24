@@ -80,6 +80,7 @@ async function inspect(
       const chunk = buffer.subarray(0, result.bytesRead);
       hash.update(chunk);
       bytes += chunk.length;
+      if (bytes > opened.size) throw new EvidenceError("changedDuringRead");
       if (check.kind === "json" && bytes <= JSON_MAX_BYTES)
         json.push(Buffer.from(chunk));
       if (decoder && check.kind === "contains" && !invalidText) {
@@ -192,9 +193,10 @@ export async function verifyDelivery(
 ): Promise<DeliveryReport> {
   const checks = deliveryChecksSchema.parse(input),
     startedAt = Date.now();
-  const signal = options.signal
-    ? AbortSignal.any([options.signal, AbortSignal.timeout(120000)])
-    : AbortSignal.timeout(120000);
+  // A valid large artifact may take more than two minutes on a slow disk.
+  // Read every byte until completion or explicit owner cancellation. Growth
+  // beyond the opened size is rejected inside the read loop.
+  const signal = options.signal ?? new AbortController().signal;
   const findings: DeliveryFinding[] = [];
   let root: string;
   try {

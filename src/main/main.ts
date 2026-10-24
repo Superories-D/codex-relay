@@ -6,6 +6,7 @@ import { NotificationState } from "../core/notification-state";
 import { WindowsTelegram, createTelegramTransport } from "./telegram-notifications";
 import { DeliveryPlans } from "./delivery-plans";
 import { DeliveryBatches } from "./delivery-batches";
+import { Vaults } from "./vault";
 import { WindowPlacement } from "./window-placement";
 import { serviceHealth } from "../core/service-health";
 import { respondApproval } from "../core/approval-command";
@@ -245,6 +246,10 @@ async function boot() {
     verify: (id, signal, expected) => scheduler.checkDelivery(id, "manual", signal, expected),
     invalidate: (id, revision, reportId, reason) => scheduler.flagDeliveryEvidence(id, revision, reportId, reason),
   });
+  const vaults = new Vaults({root: dataRoot, scripts, target: id => scheduler.deliveryTarget(id),
+    invalidate: (id, revision, reportId, reason) => scheduler.flagDeliveryEvidence(id, revision, reportId, reason),
+    protect: directory => protectDataDirectory(path.join(scripts, "protect-directory.ps1"), directory), text: nativeText,
+    report:error=>scheduler.log(error,"warning")});
   scheduler.runtimeReady = () => cliSetup.state.phase === "ready";
   const schedules = new Schedules(desktop, scheduler, () =>
     scheduler.changed(),
@@ -351,6 +356,29 @@ async function boot() {
       case "delivery.batch.start": return deliveryBatches.start(args);
       case "delivery.batch.cancel": return deliveryBatches.cancel(idSchema.parse(args));
       case "delivery.batch.export": return deliveryBatches.export(idSchema.parse(args));
+      case "vault.list": return vaults.list();
+      case "vault.preview": return vaults.preview(args);
+      case "vault.capture": return vaults.capture(args);
+      case "vault.detail": return vaults.detail(idSchema.parse(args));
+      case "vault.verify": return vaults.verify(idSchema.parse(args));
+      case "vault.cancel": return vaults.cancel(idSchema.parse(args));
+      case "vault.export.recover": return vaults.recoverExport(idSchema.parse(args));
+      case "vault.remove": return vaults.remove(idSchema.parse(args));
+      case "vault.open": {
+        const directory = await vaults.openDirectory(idSchema.parse(args)), issue = await shell.openPath(directory);
+        if (issue) throw Error(issue); return true;
+      }
+      case "vault.storage": {
+        if (process.platform !== "win32") throw Error("交付保险库目前仅支持 Windows");
+        const result = await dialog.showOpenDialog(window!, {title: nativeText("选择交付保险库存储位置"), properties: ["openDirectory", "createDirectory"]});
+        return result.canceled || !result.filePaths[0] ? vaults.list() : vaults.setStorage(result.filePaths[0]);
+      }
+      case "vault.export": {
+        const id = idSchema.parse(args), detail = await vaults.detail(id);
+        const name = detail.entry.title.replace(/[<>:"/\\|?*\x00-\x1f]/g, "_").slice(0, 80);
+        const result = await dialog.showSaveDialog(window!, {title: nativeText("导出完整交付包"), defaultPath: `${name}-${id.slice(0, 8)}.zip`, filters: [{name: "ZIP / ZIP64", extensions: ["zip"]}]});
+        return result.canceled || !result.filePath ? vaults.list() : vaults.export(id, result.filePath);
+      }
       case "telegram.read": return telegram.view();
       case "telegram.save": return telegram.save(args);
       case "telegram.discover": {
@@ -1525,6 +1553,7 @@ async function boot() {
             telegram.shutdown(),
             deliveryPlans.drain(),
             deliveryBatches.shutdown(),
+            vaults.shutdown(),
             importer.drain(),
             backgroundHistory.shutdown(),
             scheduler.shutdown(),
@@ -1541,6 +1570,7 @@ async function boot() {
           quitting = false;
           telegram.resume();
           deliveryBatches.resume();
+          vaults.resume();
           existing.start();
           schedules.start();
           catalog.resume();
