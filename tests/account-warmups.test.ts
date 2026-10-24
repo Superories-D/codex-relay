@@ -371,6 +371,9 @@ it("retains an unsafe account after failed process verification, then recovers i
     expect(account.warmups?.codex.status).toBe("uncertain"),
   );
   expect(eligible(account, "codex", Date.now())).toBe(false);
+  // The public status is set before the final state write releases ownership.
+  // Join that lifecycle before asking recovery to verify an idle home.
+  await manager.yieldToTask();
   await manager.recover();
   expect(account.warmups?.codex.processSafe).toBe(true);
   expect(eligible(account, "codex", Date.now())).toBe(true);
