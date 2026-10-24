@@ -1,6 +1,6 @@
 import { t, useI18n, errorText } from "./i18n";
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { gitHunks } from "../shared/git-hunks";
+import { DiffReview } from "./DiffReview";
 import {
   ArrowLeft,
   Check,
@@ -17,6 +17,8 @@ import {
   LoaderCircle,
   MessageSquare,
   MessageCircleQuestion,
+  Maximize2,
+  Minimize2,
   Network,
   Pencil,
   Plus,
@@ -24,6 +26,7 @@ import {
   RefreshCw,
   RotateCcw,
   Save,
+  Search,
   Square,
   Upload,
   X,
@@ -205,6 +208,7 @@ export function Workbench({
   onOpenConversation?: (job: Job) => void;
 }) {
   const { language } = useI18n();
+  const [wide, setWide] = useState(false);
   const [gitPreview, setGitPreview] = useState<{
     cwd: string;
     root: string;
@@ -247,6 +251,7 @@ export function Workbench({
   return (
     <aside
       className={`workbench ${file ? "with-preview" : ""}`}
+      data-wide={wide}
       aria-label={t("工作面板")}
     >
       <header className="workbench-tabs">
@@ -284,6 +289,15 @@ export function Workbench({
             </button>
           ))}
         </div>
+        <button
+          className="workbench-size"
+          aria-label={wide ? t("收窄工作面板") : t("扩大工作面板")}
+          title={wide ? t("收窄工作面板") : t("扩大工作面板")}
+          aria-pressed={wide}
+          onClick={() => setWide(!wide)}
+        >
+          {wide ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+        </button>
         <button
           className="workbench-close"
           aria-label={t("关闭工作面板")}
@@ -776,7 +790,8 @@ function Changes({
     [commit, setCommit] = useState(false),
     [message, setMessage] = useState(""),
     [branches, setBranches] = useState(false),
-    [confirmRestore, setConfirmRestore] = useState(false);
+    [confirmRestore, setConfirmRestore] = useState(false),
+    [fileFilter, setFileFilter] = useState("");
   const revision = useRef(0),
     mutating = useRef(false),
     refreshing = useRef(false);
@@ -805,9 +820,10 @@ function Changes({
   const hasStaged = !!entry && gitStaged(entry),
     hasUnstaged = !!entry && gitUnstaged(entry);
   const showingStaged = hasStaged && (!hasUnstaged || staged);
-  const hunkAtLine = useMemo(() => new Map(
-    gitHunks(diff).map((hunk, index) => [hunk.line, index]),
-  ), [diff]);
+  const filteredFiles = useMemo(() => {
+    const query = fileFilter.toLocaleLowerCase();
+    return state?.files.filter(file => file.path.toLocaleLowerCase().includes(query)) ?? [];
+  }, [state?.files, fileFilter]);
   const diffReady = !!diffSnapshot &&
     diffSnapshot.revision === state?.revision &&
     diffSnapshot.path === selected && diffSnapshot.staged === showingStaged;
@@ -997,8 +1013,21 @@ function Changes({
               </div>
             </div>
           )}
+          {!!state?.files.length && (
+            <div className="review-file-filter">
+              <Search size={13} aria-hidden="true" />
+              <input
+                type="search"
+                aria-label={t("筛选更改文件")}
+                placeholder={t("筛选更改文件")}
+                value={fileFilter}
+                onChange={(e) => setFileFilter(e.target.value)}
+              />
+              <span>{filteredFiles.length} / {state.files.length}</span>
+            </div>
+          )}
           <div className="changed-files">
-            {state?.files.map((f) => (
+            {filteredFiles.map((f) => (
               <button
                 key={f.path}
                 className={selected === f.path ? "selected" : ""}
@@ -1039,6 +1068,9 @@ function Changes({
             ))}
             {state && !state.files.length && (
               <PanelEmpty text={t("工作区没有未提交的更改")} />
+            )}
+            {!!state?.files.length && !filteredFiles.length && (
+              <p className="diff-note" role="status">{t("没有匹配的更改文件")}</p>
             )}
           </div>
           {entry && (
@@ -1109,53 +1141,17 @@ function Changes({
                   </button>
                 </div>
               )}
-              {diffReady && !!diff && !hunkAtLine.size && (
-                <p className="diff-note">{t("此差异仅支持整文件操作")}</p>
-              )}
-              <div className="diff-lines">
-                {diff.split("\n").map((line, index) => (
-                  <div
-                    key={index}
-                    className={
-                      line.startsWith("+")
-                        ? "added"
-                        : line.startsWith("-")
-                          ? "removed"
-                          : line.startsWith("@@")
-                            ? "hunk"
-                            : ""
-                    }
-                  >
-                    <button
-                      title={t("把这一行加入审查意见")}
-                      onClick={() =>
-                        comment(
-                          t(
-                            "请检查 {p0} 的以下变更，并根据我的意见修改：\n\n```diff\n{p1}\n```\n\n意见：",
-                            { p0: selected, p1: line },
-                          ),
-                        )
-                      }
-                    >
-                      <Plus size={10} />
-                    </button>
-                    {hunkAtLine.has(index) && !gitConflict(entry) && (
-                      <button
-                        className="hunk-control"
-                        disabled={busy || !diffReady}
-                        aria-label={t(showingStaged ? "取消暂存第 {p0} 块" : "暂存第 {p0} 块", {
-                          p0: hunkAtLine.get(index)! + 1,
-                        })}
-                        onClick={() => void action("hunk", undefined, hunkAtLine.get(index))}
-                      >
-                        {showingStaged ? <Minus size={12} /> : <Plus size={12} />}
-                        {showingStaged ? t("取消暂存此块") : t("暂存此块")}
-                      </button>
-                    )}
-                    <code>{line || " "}</code>
-                  </div>
-                ))}
-              </div>
+              <DiffReview
+                key={`${selected}:${showingStaged}`}
+                diff={diff}
+                path={selected}
+                staged={showingStaged}
+                ready={diffReady}
+                busy={busy}
+                conflict={gitConflict(entry)}
+                comment={comment}
+                stageHunk={(index) => void action("hunk", undefined, index)}
+              />
             </>
           )}
           {!selected && !!state?.files.length && (

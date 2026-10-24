@@ -2102,7 +2102,11 @@ export function AgentApp({
                   file={previewFile}
                   setFile={setPreviewFile}
                   setDraft={(text) => {
-                    setDrafts((d) => ({ ...d, [key]: text }));
+                    setDrafts((d) => ({
+                      ...d,
+                      [key]: d[key]?.trim() ? `${d[key]}\n\n${text}` : text,
+                    }));
+                    messageInput.current?.focus();
                   }}
                   draftAttachments={attachments}
                   questions={chatQuestions}
