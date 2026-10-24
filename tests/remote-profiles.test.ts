@@ -61,7 +61,9 @@ it("stores private profiles and binds immutable requests to server identity", as
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }
-});
+// Windows launches real PowerShell ACL checks for each private read and root.
+// Keep every permission/identity assertion; allow bounded native-process overhead.
+}, process.platform === "win32" ? 20000 : 5000);
 it.skipIf(process.platform !== "linux")(
   "recovers an accepted request after the client is killed and rejects a different installation behind the same tunnel",
   async () => {

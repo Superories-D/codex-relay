@@ -1,5 +1,20 @@
 import { expect, it } from "vitest";
-import { redact } from "../src/core/redact";
+import { redact, redactValue } from "../src/core/redact";
+
+it("masks bare dotted refresh tokens in text and escaped JSON without corrupting boundaries", () => {
+  const token = "rt.1." + "Synthetic_0123456789-".repeat(4);
+  for (const text of [token, `failure: ${token}. retry`, `first\n${token}\nlast`]) {
+    expect(redact(text)).not.toContain(token);
+    expect(redact(redact(text))).toBe(redact(text));
+  }
+  const source = { message: `first\n${token}\tlast`, nested: [token] };
+  for (const result of [JSON.parse(redact(JSON.stringify(source))), redactValue(source)]) {
+    expect(result.message).toBe("first\n[REDACTED TOKEN]\tlast");
+    expect(result.nested).toEqual(["[REDACTED TOKEN]"]);
+  }
+  expect(redact("rt.1. notes rt.1.short start.1.example"))
+    .toBe("rt.1. notes rt.1.short start.1.example");
+});
 
 it("removes complete authentication header values, not only their scheme", () => {
   for (const scheme of ["Bearer", "Basic", "token"]) {

@@ -28,7 +28,8 @@ it.skipIf(process.platform !== "linux")(
         image = path.join(work, "result.png"),
         escape = path.join(work, "escape.txt"),
         unrecorded = path.join(work, "unrecorded.txt");
-      await fs.writeFile(text, "result api_key: private-credential");
+      const dottedToken = "rt.1." + "Synthetic_0123456789-".repeat(4);
+      await fs.writeFile(text, "result api_key: private-credential\n" + dottedToken);
       await fs.writeFile(image, Buffer.from([137, 80, 78, 71, 0, 0]));
       await fs.writeFile(unrecorded, "not registered");
       await fs.symlink(path.join(runtime.store.root, "state.json"), escape);
@@ -58,6 +59,8 @@ it.skipIf(process.platform !== "linux")(
         list.files.find((f) => f.name === "result.txt")!.id,
       );
       expect(result.preview).toContain("[REDACTED]");
+      expect(result.preview).not.toContain(dottedToken);
+      expect(Buffer.from(result.data, "base64").toString()).not.toContain(dottedToken);
       expect(Buffer.from(result.data, "base64").toString()).not.toContain(
         "private-credential",
       );

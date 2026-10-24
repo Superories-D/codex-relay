@@ -16,6 +16,8 @@ export function redact(value: unknown, limit = 16000): string {
     )
     .replace(/\bBearer[ \t]+[A-Za-z0-9._~+\/-]+=*/gi, "Bearer [REDACTED]")
     .replace(/\b(sk-|rt-)[A-Za-z0-9_-]{12,}/g, "[REDACTED TOKEN]")
+    // Preserve preceding separators, including serialized JSON newline/tab escapes.
+    .replace(/(^|[^A-Za-z0-9_]|\\[nrt])rt\.1\.[A-Za-z0-9_-]{12,}/g, "$1[REDACTED TOKEN]")
     .slice(0, limit);
 }
 

@@ -87,7 +87,7 @@ export async function terminateTree(
       });
       killer.once("close", (code) => {
         clearTimeout(timeout);
-        return code === 0 || proc.exitCode !== null
+        return code === 0 || proc.exitCode !== null || proc.signalCode != null
           ? resolve()
           : reject(new Error("无法确认受管 Codex 进程树已停止"));
       });

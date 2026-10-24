@@ -45,7 +45,7 @@ it("explains recovery, stop and approval gates without exporting conversation or
       jobId: "job",
       level: "warning",
       at: 0,
-      message: "Authorization: Bearer secret-example-123456789",
+      message: "Authorization: Bearer secret-example-123456789\nrt.1.Synthetic_0123456789-0123456789",
     },
     { jobId: "job", level: "output", at: 0, message: "PRIVATE OUTPUT" },
   ];
@@ -58,7 +58,7 @@ it("explains recovery, stop and approval gates without exporting conversation or
     "authentication",
   ]);
   expect(JSON.stringify(report)).not.toMatch(
-    /PRIVATE|private@example|secret-example/,
+    /PRIVATE|private@example|secret-example|Synthetic_0123456789/,
   );
   expect(report.logs).toHaveLength(1);
 });

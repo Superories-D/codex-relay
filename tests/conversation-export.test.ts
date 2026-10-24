@@ -1,5 +1,12 @@
 import {it,expect} from "vitest";
 import {conversationExport} from "../src/core/conversation-export";
+it("removes bare dotted refresh tokens from both conversation export formats", async () => {
+ const token = "rt.1." + "Synthetic_0123456789-".repeat(4);
+ const result = await conversationExport({read:async()=>({items:[{id:"a",role:"tool",at:1,text:`failure\n${token}`} ]})} as any,{id:"a",title:"Title"} as any);
+ expect(result.markdown).not.toContain(token);
+ expect(JSON.stringify(result.document)).not.toContain(token);
+ expect(result.markdown).toContain("[REDACTED TOKEN]");
+});
 it("exports paged history chronologically with credential redaction and safe fences",async()=>{
  const chats:any={read:async(_id:string,before?:number)=>before===undefined?{items:[{id:"b",role:"assistant",at:2,text:"```\nBearer abcdefghijklmnopqrstuvwxyz123456"}],before:1}:{items:[{id:"a",role:"user",at:1,text:"first"}]}};
  const result=await conversationExport(chats,{id:"task",title:"Title"} as any);

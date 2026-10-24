@@ -72,6 +72,10 @@
         "to": "remote.cjs"
       },
       {
+        "from": "scripts/remote-store.cjs",
+        "to": "remote-store.cjs"
+      },
+      {
         "from": "scripts/remote-tunnel.cjs",
         "to": "remote-tunnel.cjs"
       },
