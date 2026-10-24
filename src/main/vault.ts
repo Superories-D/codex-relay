@@ -3,7 +3,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { Job } from "../shared/types";
-import { vaultManifestSchema, type VaultEntry, type VaultManifest, type VaultProgress } from "../shared/vault";
+import { vaultManifestSchema, type VaultEntry, type VaultManifest, type VaultProgress,type VaultReferences } from "../shared/vault";
 import { VaultStore } from "./vault-store";
 import { prepareVault, assertVaultSource, type PreparedVault } from "./vault-preview";
 import { copyVerifiedArtifact, verifyVaultFile, VaultFileError, VaultIntegrityError } from "./vault-file";
@@ -142,6 +142,16 @@ export class Vaults {
   async detail(id: string) {
     const entry = await this.store.entry(id); const data = await this.manifest(entry, entry.status === "interrupted");
     return {entry, manifest: data.manifest};
+  }
+  async references(id:string):Promise<VaultReferences>{
+    z.string().uuid().parse(id);const catalog=await this.store.list(),result:VaultReferences={matches:[],unreadable:[]};
+    for(const entry of catalog.entries){
+      if(!entry.manifestSha256||entry.status==="deleting")continue;
+      try{
+        const data=await this.manifest(entry,entry.status==="interrupted"),task=data.manifest.tasks.find(t=>t.id===id);
+        if(task)result.matches.push({id:entry.id,title:entry.title,manifestSha256:entry.manifestSha256,reportId:task.report.id,revision:task.revision,stateAtCapture:task.stateAtCapture,verification:entry.verification});
+      }catch{result.unreadable.push({id:entry.id,title:entry.title});}
+    }return result;
   }
   verify(id: string) {
     return this.queue(async () => {

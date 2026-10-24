@@ -8,6 +8,20 @@ import { Store, atomicWrite } from "../src/core/store";
 import { redact } from "../src/core/redact";
 import { newJobSchema, settingsSchema } from "../src/main/validation";
 describe("credential and transcript boundaries", () => {
+  it.skipIf(process.platform!=="win32")("retries transient Windows sharing locks while keeping the previous state intact until atomic publication",async()=>{
+    const parent=path.resolve("qa-output"),root=await fs.mkdtemp(path.join(parent,"atomic-sharing-")),file=path.join(root,"state.json");await fs.writeFile(file,"old");
+    const rename=fs.rename.bind(fs);let attempts=0;const spy=vi.spyOn(fs,"rename").mockImplementation(async(source,target)=>{
+      if(attempts++<2){expect(await fs.readFile(file,"utf8")).toBe("old");throw Object.assign(Error("sharing lock"),{code:"EPERM"});}return rename(source,target);
+    });
+    try{await atomicWrite(file,"complete new state");expect(attempts).toBe(3);expect(await fs.readFile(file,"utf8")).toBe("complete new state");expect(await fs.readdir(root)).toEqual(["state.json"]);}
+    finally{spy.mockRestore();expect(path.dirname(await fs.realpath(root))).toBe(await fs.realpath(parent));await fs.rm(root,{recursive:true,force:true});}
+  });
+  it.skipIf(process.platform!=="win32")("refuses to publish or delete a replaced temporary file during a sharing retry",async()=>{
+    const parent=path.resolve("qa-output"),root=await fs.mkdtemp(path.join(parent,"atomic-replaced-")),file=path.join(root,"state.json");await fs.writeFile(file,"old");
+    let temporary="";const spy=vi.spyOn(fs,"rename").mockImplementation(async source=>{temporary=String(source);await fs.unlink(source);await fs.writeFile(source,"unrelated replacement");throw Object.assign(Error("sharing lock"),{code:"EPERM"});});
+    try{await expect(atomicWrite(file,"new")).rejects.toThrow("临时文件已变化");expect(await fs.readFile(file,"utf8")).toBe("old");expect(await fs.readFile(temporary,"utf8")).toBe("unrelated replacement");}
+    finally{spy.mockRestore();expect(path.dirname(await fs.realpath(root))).toBe(await fs.realpath(parent));await fs.rm(root,{recursive:true,force:true});}
+  });
   it("keeps atomic replacement on the actual new file's volume when AppData redirects only newly created files", async () => {
     const parent = path.resolve("qa-output");
     await fs.mkdir(parent, { recursive: true });

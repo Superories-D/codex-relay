@@ -89,6 +89,7 @@ export function QuestionRequest({
         id: a.id,
         jobId: a.jobId,
         historyId: a.historyId,
+        reviewId:a.reviewId,
         value,
       });
     } catch (e) {

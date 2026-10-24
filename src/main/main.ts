@@ -7,6 +7,7 @@ import { WindowsTelegram, createTelegramTransport } from "./telegram-notificatio
 import { DeliveryPlans } from "./delivery-plans";
 import { DeliveryBatches } from "./delivery-batches";
 import { Vaults } from "./vault";
+import { OperationsHistory } from "./operations-history";
 import { WindowPlacement } from "./window-placement";
 import { serviceHealth } from "../core/service-health";
 import { respondApproval } from "../core/approval-command";
@@ -251,6 +252,12 @@ async function boot() {
     protect: directory => protectDataDirectory(path.join(scripts, "protect-directory.ps1"), directory), text: nativeText,
     report:error=>scheduler.log(error,"warning")});
   scheduler.runtimeReady = () => cliSetup.state.phase === "ready";
+  const operationsHistory=new OperationsHistory({root:dataRoot,worker:path.join(__dirname,"operations-worker.cjs"),report:issue=>scheduler.log(issue,"warning")});
+  try{await operationsHistory.start(scheduler.operationsObservation());}catch(error){operationsHistory.pause(error);}
+  scheduler.on("operationsObserved",()=>{
+    if(operationsHistory.view().phase==="failed")return;
+    try{operationsHistory.observe(scheduler.operationsObservation());}catch(error){operationsHistory.pause(error);}
+  });
   const schedules = new Schedules(desktop, scheduler, () =>
     scheduler.changed(),
   );
@@ -357,9 +364,19 @@ async function boot() {
       case "delivery.batch.cancel": return deliveryBatches.cancel(idSchema.parse(args));
       case "delivery.batch.export": return deliveryBatches.export(idSchema.parse(args));
       case "vault.list": return vaults.list();
+      case "operations.read": return {...scheduler.operations(),recording:operationsHistory.view()};
+      case "operations.history": return operationsHistory.page(args);
+      case "operations.request": {
+        const a=z.object({jobId:idSchema,id:z.string().min(1).max(200),reviewId:z.string().uuid()}).strict().parse(args);
+        return scheduler.reviewApproval(a.jobId,a.id,a.reviewId);
+      }
+      case "operations.recording.retry": {
+        try{await operationsHistory.start(scheduler.operationsObservation());operationsHistory.observe(scheduler.operationsObservation());}catch(error){operationsHistory.pause(error);}return operationsHistory.view();
+      }
       case "vault.preview": return vaults.preview(args);
       case "vault.capture": return vaults.capture(args);
       case "vault.detail": return vaults.detail(idSchema.parse(args));
+      case "vault.references": return vaults.references(idSchema.parse(args));
       case "vault.verify": return vaults.verify(idSchema.parse(args));
       case "vault.cancel": return vaults.cancel(idSchema.parse(args));
       case "vault.export.recover": return vaults.recoverExport(idSchema.parse(args));
@@ -1561,6 +1578,9 @@ async function boot() {
             catalog.shutdown(),
           ]),
         )
+        .then(() => {
+          return operationsHistory.shutdown();
+        })
         .then(() => {
           server.close();
           quitReady = true;

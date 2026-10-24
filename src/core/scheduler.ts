@@ -1,4 +1,6 @@
 import { dispatchHeld, projectKey, projectHasCapacity } from "../shared/dispatch";
+import { operationCard, accountGateReasons,indexOperations, type AccountGateCode } from "./operations";
+import { operationObservation } from "./operations-observation";
 import { verifyDelivery } from "./delivery";
 import { deliveryChecksSchema, deliveryRepairPrompt, type DeliveryCheck, type DeliveryReport } from "../shared/delivery";
 import { dependencyBlockers, validateDependencies } from "../shared/task-dependencies";
@@ -100,9 +102,10 @@ export class Scheduler extends EventEmitter {
     const dependencies = [this.controls, this.jobControls.get(key)];
     const task = Promise.allSettled(dependencies).then(fn);
     this.jobControls.set(key, task);
+    this.changed();
     void task
       .finally(() => {
-        if (this.jobControls.get(key) === task) this.jobControls.delete(key);
+        if (this.jobControls.get(key) === task) {this.jobControls.delete(key);this.changed();}
       })
       .catch(() => {});
     return task;
@@ -118,10 +121,10 @@ export class Scheduler extends EventEmitter {
   private dependenciesBlocked(job: Job) {
     return dependencyBlockers(job, this.store.data.jobs).length > 0 || (job.dependsOn || []).some(id => this.active.has(id) || this.jobControls.has(this.store.jobHome(id)));
   }
-  private selectAccount(job: Job) {
+  private selectionPool(job: Job) {
     // Keep array indexes stable for round-robin cursors. CLI runtimes share only
     // access tokens; a Desktop runtime must exclusively own its account profile.
-    const pool = this.store.data.accounts.map((account) => {
+    return this.store.data.accounts.map((account) => {
       const conflict =
         this.accounts.busy.has(account.id) ||
         [...this.active.values()].some(
@@ -132,8 +135,10 @@ export class Scheduler extends EventEmitter {
         );
       return conflict ? { ...account, enabled: false } : account;
     });
+  }
+  private selectAccount(job: Job) {
     return pickAccount(
-      pool,
+      this.selectionPool(job),
       this.store.data.cursor,
       job.bucket,
       Date.now(),
@@ -145,6 +150,8 @@ export class Scheduler extends EventEmitter {
   private publishTimer?: NodeJS.Timeout;
   readonly warmups: AccountWarmups;
   private warmupRecovery: Promise<void>;
+  private warmupRecoveryCount = 0;
+  private awaitingWarmups = false;
   private backgroundProbe?: Promise<void>;
   private lastWarmupRecovery = 0;
   private questionReplies = new Map<string, QuestionRecord["answers"]>();
@@ -228,9 +235,7 @@ export class Scheduler extends EventEmitter {
       },
       (account) => accounts.busy.delete(account.id),
     );
-    this.warmupRecovery = this.warmups
-      .recover()
-      .catch((error) => this.log(error, "warning"));
+    this.warmupRecovery = this.recoverWarmups();
     accounts.quotaObserved = (account, previous, fresh) =>
       this.warmups.observe(
         account,
@@ -249,7 +254,36 @@ export class Scheduler extends EventEmitter {
       platform: process.platform,
     });
   }
+  private recoverWarmups() {
+    this.warmupRecoveryCount++;
+    return this.warmups.recover().catch(error=>this.log(error,"warning")).finally(()=>{
+      this.warmupRecoveryCount--;this.changed();
+    });
+  }
+  operations() {
+    // Read only the fields used by the inspector; do not clone prompts, large
+    // transcripts or account login payloads for a periodic operations refresh.
+    const snapshot:Snapshot={...this.store.data,approvals:this.approvals,platform:process.platform},now=Date.now();
+    const jobs=new Map(snapshot.jobs.map(job=>[job.id,job])),homes=new Map<string,string>();
+    const runtime=indexOperations(snapshot,{cliReady:this.runtimeReady(),closing:this.closing,maintaining:this.maintaining,priming:this.warmupRecoveryCount>0,primeBlocking:!this.ticking||this.awaitingWarmups,
+      active:[...this.active.keys()],controls:[...this.jobControls.keys()],recovering:[...this.recoveryTasks.keys()],
+      home:(id:string)=>{let home=homes.get(id);if(!home){home=this.store.jobHome(id,jobs);homes.set(id,home);}return home;},selectable:(job:Job)=>!!this.selectAccount(job),
+      accountReasons:(job:Job)=>{
+        const counts:Partial<Record<AccountGateCode,number>>={},pool=this.selectionPool(job);
+        this.store.data.accounts.forEach((account,i)=>{
+          for(const reason of accountGateReasons(account,job,account.enabled&&!pool[i].enabled,now))counts[reason]=(counts[reason]||0)+1;
+        });return counts;
+      }});
+    return {at:now,cards:snapshot.jobs.map(job=>operationCard(snapshot,job,runtime))};
+  }
+  operationsObservation() {
+    const jobs=new Map(this.store.data.jobs.map(job=>[job.id,job]));
+    return operationObservation(this.store.data,this.approvals,{active:new Set(this.active.keys()),controls:new Set(this.jobControls.keys()),home:id=>this.store.jobHome(id,jobs)},process.platform);
+  }
   changed() {
+    // Separate from the coalesced renderer snapshots: observers can retain
+    // distinct scheduler facts even when several changes occur within100ms.
+    if(this.listenerCount("operationsObserved"))this.emit("operationsObserved");
     if (this.publishTimer) return;
     this.publishTimer = setTimeout(() => {
       this.publishTimer = undefined;
@@ -778,7 +812,7 @@ export class Scheduler extends EventEmitter {
       void task
         .catch((error) => this.log(error, "error", job.id))
         .finally(() => {
-          this.recoveryTasks.delete(job.id);
+          this.recoveryTasks.delete(job.id);this.changed();
         });
     }
   }
@@ -786,7 +820,8 @@ export class Scheduler extends EventEmitter {
     if (!this.runtimeReady() || this.ticking || this.closing || this.maintaining) return;
     this.ticking = true;
     try {
-      await this.warmupRecovery;
+      this.awaitingWarmups=true;
+      try{await this.warmupRecovery;}finally{this.awaitingWarmups=false;}
       const now = Date.now();
       if (this.closing || this.maintaining) return;
       this.pumpRecovery(now);
@@ -836,9 +871,7 @@ export class Scheduler extends EventEmitter {
       }
       if (now - this.lastWarmupRecovery > 30000) {
         this.lastWarmupRecovery = now;
-        this.warmupRecovery = this.warmups
-          .recover()
-          .catch((error) => this.log(error, "warning"));
+        this.warmupRecovery = this.recoverWarmups();
       }
       this.warmups.pump();
       if (this.closing || this.store.data.jobs.some((j) => j.recoveryRequired))
@@ -914,6 +947,7 @@ export class Scheduler extends EventEmitter {
         this.store.data.cursor = selection.cursor;
         const active: ActiveRun = { job };
         this.active.set(job.id, active);
+        this.changed();
         active.done = this.run(job, selection.account).catch((error) => {
           job.state = "needs_attention";
           job.recoveryRequired = true;
@@ -1125,6 +1159,7 @@ export class Scheduler extends EventEmitter {
         });
         worker.on("log", (text) => this.log(text, "info", job.id));
         worker.on("approval", (approval) => {
+          approval.reviewId=randomUUID();
           if (approval.kind === "input")
             void this.recordQuestion(approval, "pending").catch((e) =>
               this.log(e, "error", job.id),
@@ -2478,6 +2513,13 @@ export class Scheduler extends EventEmitter {
     active.worker.respond(id, value);
     this.approvals = this.approvals.filter((a) => a !== approval);
     this.changed();
+  }
+  reviewApproval(jobId:string,id:string,reviewId:string) {
+    const matches=this.approvals.filter(a=>a.jobId===jobId&&a.id===id);
+    const approval=matches[0],active=this.active.get(jobId);
+    if(matches.length!==1||!approval||approval.reviewId!==reviewId||!active?.worker)throw Error("审批请求已更新，请重新查看");
+    if(active.reason||active.failedStop||this.closing)throw Error("会话正在停止，请等待停止确认后继续");
+    return structuredClone(approval);
   }
   async shutdown() {
     this.closing = true;

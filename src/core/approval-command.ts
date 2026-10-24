@@ -7,6 +7,7 @@ export function respondApproval(scheduler: Scheduler, args: unknown) {
       id: z.string().max(100),
       jobId: idSchema.optional(),
       historyId: z.string().max(100).optional(),
+      reviewId:z.string().uuid().optional(),
       value: z.unknown(),
     })
     .strict()
@@ -17,6 +18,7 @@ export function respondApproval(scheduler: Scheduler, args: unknown) {
   if (matches.length > 1) throw new Error("请选择要回复的会话");
   const approval = matches[0];
   if (!approval) throw new Error("请求已经结束");
+  if(r.reviewId!==undefined)scheduler.reviewApproval(approval.jobId,approval.id,r.reviewId);
   if (approval.kind === "input" && r.historyId !== approval.historyId)
     throw new Error("问题已更新，请重新查看后回答");
   if (approval.kind === "permissions") {

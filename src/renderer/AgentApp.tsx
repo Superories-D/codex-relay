@@ -1174,7 +1174,7 @@ export function AgentApp({
             advanced={(tab) => setManage(`advanced:${tab}`)}
           />
         ) : screen === "tasks" && snapshot ? (
-          <TaskCenter snapshot={snapshot} call={call} open={select} close={() => setScreen("chat")} />
+          <TaskCenter snapshot={snapshot} call={call} open={select} close={() => setScreen("chat")} approval={approval} manage={setManage}/>
         ) : screen === "plugins" || screen === "skills" || screen === "mcp" ? (
           <ExtensionsPage
             initial={screen}
@@ -1450,12 +1450,13 @@ export function AgentApp({
                     {snapshot?.approvals
                       .filter((a) => a.jobId === selected && a.kind !== "input")
                       .map((a) => (
-                        <React.Fragment key={a.id}>
+                        <React.Fragment key={`${a.id}:${a.reviewId||""}`}>
                           {approval(a, (value) =>
                             action(() =>
                               call("approval.respond", {
                                 id: a.id,
                                 jobId: a.jobId,
+                                reviewId:a.reviewId,
                                 value,
                               }),
                             ),

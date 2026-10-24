@@ -108,3 +108,7 @@ export interface VaultView {
   active?: {id: string; entryId: string; kind: "capture" | "verify" | "export"; publishing: boolean};
   progress?: VaultProgress;
 }
+export interface VaultReferences {
+  matches:{id:string;title:string;manifestSha256:string;reportId:string;revision:number;stateAtCapture:string;verification?:VaultEntry["verification"]}[];
+  unreadable:{id:string;title:string}[];
+}

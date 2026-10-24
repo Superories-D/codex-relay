@@ -2,7 +2,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { scheduleRecovery } from "./auto-recovery";
 import { randomUUID } from "node:crypto";
-import type { AppState } from "../shared/types";
+import type { AppState,Job } from "../shared/types";
 export const defaults: AppState = {
   version: 1,
   accounts: [],
@@ -43,9 +43,11 @@ export async function atomicWrite(
   );
   const tmp = `${target}.${randomUUID()}.tmp`;
   let actualTmp = tmp;
+  let created:import("node:fs").BigIntStats|undefined;
   try {
     const handle = await fs.open(tmp, "wx", 0o600);
     try {
+      created=await handle.stat({bigint:true});
       await handle.writeFile(value);
       await handle.sync();
     } finally {
@@ -55,12 +57,24 @@ export async function atomicWrite(
     // global/MSIX AppData view. Rename within that directory, never copy over
     // or truncate the existing destination as an EXDEV workaround.
     actualTmp = await fs.realpath(tmp);
-    await fs.rename(
-      actualTmp,
-      path.join(path.dirname(actualTmp), path.basename(target)),
-    );
+    const sealed=await fs.lstat(actualTmp,{bigint:true}),destination=path.join(path.dirname(actualTmp),path.basename(target));
+    if(!sealed.isFile()||sealed.dev!==created.dev||sealed.ino!==created.ino)throw Error("原子写入临时文件已变化");
+    const waits=process.platform==="win32"?[50,100,200,400]:[];
+    for(let attempt=0;;attempt++){
+      try{await fs.rename(actualTmp,destination);break;}
+      catch(error){
+        if(!["EPERM","EACCES","EBUSY"].includes((error as NodeJS.ErrnoException).code||"")||attempt>=waits.length)throw error;
+        await new Promise(resolve=>setTimeout(resolve,waits[attempt]));
+        const current=await fs.lstat(actualTmp,{bigint:true});
+        if(!current.isFile()||current.dev!==sealed.dev||current.ino!==sealed.ino||current.size!==sealed.size||current.mtimeNs!==sealed.mtimeNs)throw Error("原子写入临时文件已变化");
+      }
+    }
   } catch (error) {
-    await fs.rm(actualTmp, { force: true }).catch(() => {});
+    if(created){
+      actualTmp=await fs.realpath(actualTmp).catch(()=>actualTmp);
+      const remaining=await fs.lstat(actualTmp,{bigint:true}).catch(()=>undefined);
+      if(remaining?.isFile()&&remaining.dev===created.dev&&remaining.ino===created.ino)await fs.rm(actualTmp,{force:true}).catch(()=>{});
+    }
     throw error;
   }
 }
@@ -155,8 +169,8 @@ export class Store {
       this.writing = false;
     }
   }
-  jobHome(id: string) {
-    const homeId = this.data.jobs.find((job) => job.id === id)?.runtimeHomeId;
+  jobHome(id: string,index?:ReadonlyMap<string,Job>) {
+    const homeId = (index?index.get(id):this.data.jobs.find((job) => job.id === id))?.runtimeHomeId;
     if (homeId && !/^[a-f0-9-]{36}$/i.test(homeId))
       throw new Error("会话运行目录标识无效");
     return path.join(this.root, "runtime", "jobs", homeId || id);

@@ -238,6 +238,7 @@ export interface ExistingInspection {
   issue?: string;
 }
 export interface Approval {
+  reviewId?: string;
   historyId?: string;
   createdAt?: number;
   responsePending?: boolean;

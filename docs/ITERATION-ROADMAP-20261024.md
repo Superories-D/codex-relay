@@ -37,7 +37,7 @@ checks now run the four Windows layouts only.
    Implementation, 599 Windows regression checks, native scheduler/filesystem/
    download/restart and four-language UI now pass. Complete packaged acceptance
    and release readback passed. See `DELIVERY-CENTER-20261025.md`.
-4. **Windows delivery vault and portable handoff bundles (v0.6.25 release gate).**
+4. **Windows delivery vault and portable handoff bundles (published v0.6.25).**
    Preserve actual verified artifact bytes in versioned local deliveries, with
    complete manifests, fingerprints and workflow provenance. Produce a portable
    handoff bundle that can be independently inspected without a model account.
@@ -51,15 +51,33 @@ checks now run the four Windows layouts only.
    Current-source regression passed 641 checks with 43 platform skips. Packaged
    native acceptance, forced-crash recovery, two CLI startups, Telegram emulator,
    portable startup, Setup wizard and full ASAR/88-file ZIP validation passed.
-   Complete release readback remains the final publication gate.
+   All five complete attachments passed LAN readback/SHA. Anonymous full Setup
+   download/SHA passed after a ranged resume; public Portable/ZIP sizes passed.
+   Source/tag/main: `043f036457ef9281f6835814a52ce81800017178`.
    See `DELIVERY-VAULT-20261025.md`.
-5. **Windows operations cockpit (next substantial goal).** Bring task-family
+5. **Windows operations cockpit (v0.6.26 release gate).** Bring task-family
    activity, approvals, recovery, quota waiting, accepted artifacts and notification
    outcomes into one actionable timeline. Build on existing scheduler evidence;
    do not invent success from UI state or silently resume paused work. Include
    direct navigation to actual blockers, durable history and account-free native
    verification before a complete release. Research current desktop workflows
-   and validate useful behavior beyond a visual dashboard.
+   and validate useful behavior beyond a visual dashboard. Functional scheduler
+   explanations, exact review identities, durable SQLite observations, stable
+   pagination and real evidence navigation are implemented. Current-source
+   checks: 664 passed / 43 platform skips. Actual native four-language flows,
+   recording failure/retry, restart, synthetic review UI and 100,000-event
+   history checks passed. Complete packaged acceptance passed: operations,
+   two CLI startups, vault crash recovery, Telegram emulator, delivery center,
+   portable and Setup wizard. Ten ASAR bundles and all 88 ZIP files match.
+   Complete attachment upload/readback is the remaining publication gate. See
+   `OPERATIONS-COCKPIT-20261025.md`.
+6. **Windows recovery domains (next substantial goal).** Investigate separating
+   unrelated-project recovery from task admission while retaining strict shared
+   account, session-family and process ownership. Build a reviewable recovery
+   plan with explicit user intent, durable evidence and restart behavior. First
+   establish which barriers are genuinely global; do not merely remove a safety
+   wait or claim isolation from a UI explanation. Include actual concurrent
+   runtime fixtures, failure paths and complete Windows release acceptance.
 
 Every milestone includes complete Windows Setup, Portable and ZIP artifacts,
 instructions and SHA256 checksums. Upload through the authorized LAN Gitea API

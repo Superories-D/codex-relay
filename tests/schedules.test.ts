@@ -342,10 +342,12 @@ it("preserves a pending occurrence across time-zone changes and rolls back faile
 
 function failDesktopWrite() {
   const rename = fs.rename.bind(fs);
-  let failed = false;
+  let failedTemporary:string|undefined;
   return vi.spyOn(fs, "rename").mockImplementation(async (from, to) => {
-    if (!failed && path.basename(String(to)) === "desktop.json") {
-      failed = true;
+    // Deny the entire first atomic write, including Windows sharing retries.
+    // A later user retry uses a different owned temporary file and may succeed.
+    if (path.basename(String(to)) === "desktop.json"&&(!failedTemporary||failedTemporary===String(from))) {
+      failedTemporary=String(from);
       throw Object.assign(Error("schedule disk denied"), { code: "EPERM" });
     }
     return rename(from, to);

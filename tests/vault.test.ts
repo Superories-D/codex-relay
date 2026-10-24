@@ -67,6 +67,10 @@ it("keeps existing snapshots accessible when the default storage changes",async(
   expect(first.root).not.toBe(second.root);await vault.verify(first.id);await vault.drain();expect((await vault.detail(first.id)).entry.verification?.status).toBe("passed");
   await vault.remove(second.id);expect((await vault.list()).entries.map(e=>e.id)).toEqual([first.id]);
 });
+it("links a task to its exact saved report without claiming unreadable manifests or current artifact integrity",async()=>{
+  const entry=await capture(),found=await vault.references(source.id);expect(found.matches[0]).toMatchObject({id:entry.id,reportId:source.delivery!.reports[0].id,revision:1,stateAtCapture:"paused"});expect(found.unreadable).toEqual([]);
+  const directory=await vault.openDirectory(entry.id);await fs.appendFile(path.join(directory,"manifest.json")," ");const changed=await vault.references(source.id);expect(changed.matches).toEqual([]);expect(changed.unreadable).toEqual([{id:entry.id,title:entry.title}]);
+});
 it.skipIf(process.platform!=="win32")("exports independent complete bytes and preserves a prior export after vault tampering",async()=>{
   const entry=await capture(),detail=await vault.detail(entry.id),destination=path.join(root,"complete.zip");await fs.unlink(path.join(source.cwd,"产物.txt"));
   await vault.export(entry.id,destination);await vault.drain();expect(failures).toEqual([]);const before=await fs.readFile(destination),receipt=(await vault.list()).entries[0].lastExport;

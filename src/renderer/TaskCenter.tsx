@@ -1,11 +1,12 @@
 import { WorkflowReport } from "./WorkflowReport";
 import { DeliveryCenter } from "./DeliveryCenter";
+import { OperationsCenter } from "./OperationsCenter";
 import { WorkflowBuilder } from "./WorkflowBuilder";
 import { dispatchHeld, projectKey, projectLimit } from "../shared/dispatch";
 import { dependencyBlockers } from "../shared/task-dependencies";
 import { TaskDependencies } from "./TaskDependencies";
 import React, { useState } from "react";
-import type { Job, Snapshot } from "../shared/types";
+import type { Job, Snapshot,Approval } from "../shared/types";
 import { orderTasks } from "../shared/task-order";
 import { t, useI18n, errorText } from "./i18n";
 import { RecoveryNotice } from "./RecoveryNotice";
@@ -29,15 +30,20 @@ export function TaskCenter({
   call,
   open,
   close,
+  approval,
+  manage,
 }: {
   snapshot: Snapshot;
   call: (name: string, args?: unknown) => Promise<any>;
   open: (job: Job) => void;
   close: () => void;
+  approval?:(a:Approval,respond:(v:unknown)=>void)=>React.ReactNode;
+  manage?:(section:string)=>void;
 }) {
   useI18n();
   const [workflowReport, setWorkflowReport] = useState<string>();
   const [deliveryCenter, setDeliveryCenter] = useState(false);
+  const [cockpit,setCockpit]=useState(false);
   const [building, setBuilding] = useState(false);
   const [editing, setEditing] = useState<Job>();
   const [filter, setFilter] = useState("active");
@@ -117,6 +123,7 @@ export function TaskCenter({
     }
   };
   if (deliveryCenter) return <DeliveryCenter snapshot={snapshot} call={call} open={open} back={() => setDeliveryCenter(false)}/>;
+  if(cockpit)return <OperationsCenter snapshot={snapshot} call={call} open={open} back={()=>setCockpit(false)} approval={approval} manage={manage}/>;
   return (
     <main className="task-center">
       <header>
@@ -128,6 +135,7 @@ export function TaskCenter({
           {t("新建工作流")}
         </button>
         <button onClick={() => setDeliveryCenter(true)}>{t("交付中心")}</button>
+        <button onClick={()=>setCockpit(true)}>{t("任务运行台")}</button>
         <button onClick={close}>{t("返回聊天")}</button>
       </header>
       <section className="dispatch-controls">

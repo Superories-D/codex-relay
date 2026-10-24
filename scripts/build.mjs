@@ -30,6 +30,7 @@ await build({
   target: "node22",
   format: "cjs",
 });
+await build({entryPoints:["src/core/operations-worker.ts"],outfile:"dist/main/operations-worker.cjs",bundle:true,platform:"node",target:"node22",format:"cjs"});
 await build({
   entryPoints: ["src/renderer/App.tsx"],
   outfile: "dist/renderer/app.js",

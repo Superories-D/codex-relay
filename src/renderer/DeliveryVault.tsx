@@ -9,7 +9,7 @@ const status = {copying:"正在保存",ready:"版本已保存",failed:"保存未
 const phase = {copying:"正在复制实际文件",verifying:"正在重新读取校验",sealing:"正在封存版本",packing:"正在创建完整交付包",checkingArchive:"正在复核交付包"};
 const taskState = {completed:"已完成",paused:"已暂停",cancelled:"已取消",needs_attention:"需要处理"};
 type Call = (name: string, args?: unknown) => Promise<any>;
-export function DeliveryVault({call, selected, previewOnOpen, close}: {call:Call; selected:string[]; previewOnOpen:boolean; close:()=>void}) {
+export function DeliveryVault({call, selected, previewOnOpen, initialId,close}: {call:Call; selected:string[]; previewOnOpen:boolean;initialId?:string; close:()=>void}) {
   useI18n();
   const [view,setView]=useState<VaultView>(),[preview,setPreview]=useState<VaultPreview>(),[title,setTitle]=useState("");
   const [detail,setDetail]=useState<{entry:VaultEntry;manifest:VaultManifest}>(),[remove,setRemove]=useState<VaultEntry>();
@@ -20,10 +20,11 @@ export function DeliveryVault({call, selected, previewOnOpen, close}: {call:Call
   const run=async(action:()=>Promise<void>)=>{if(pending.current)return;pending.current=true;epoch.current++;setBusy(true);setError("");try{await action();}catch(e){if(alive.current)setError(errorText(e));}finally{pending.current=false;if(alive.current)setBusy(false);}};
   useEffect(()=>{
     alive.current=true;
-    void run(async()=>{apply(await callRef.current("vault.list"));if(previewOnOpen){const p=await callRef.current("vault.preview",selected);if(alive.current){setPreview(p);setTitle(p.title);}}});
+    void run(async()=>{apply(await callRef.current("vault.list"));if(initialId)setDetail(await callRef.current("vault.detail",initialId));if(previewOnOpen){const p=await callRef.current("vault.preview",selected);if(alive.current){setPreview(p);setTitle(p.title);}}});
     const timer=setInterval(()=>{if(polling.current||pending.current)return;polling.current=true;const generation=epoch.current;void callRef.current("vault.list").then(v=>{if(alive.current&&epoch.current===generation)apply(v);}).catch(e=>{if(alive.current&&epoch.current===generation)setError(errorText(e));}).finally(()=>{polling.current=false;});},750);
     return()=>{alive.current=false;clearInterval(timer);};
   },[]);
+  useEffect(()=>{if(initialId&&detail?.entry.id===initialId)document.querySelector(".delivery-vault .vault-detail")?.scrollIntoView({block:"start"});},[detail?.entry.id]);
   const active=view?.active,progress=view?.progress,blocked=busy||!!active||!!view?.issue;
   const entries=view?.entries.slice().reverse().filter(e=>e.title.toLowerCase().includes(filter.toLowerCase())) || [];
   const current=detail&&view?.entries.find(e=>e.id===detail.entry.id);

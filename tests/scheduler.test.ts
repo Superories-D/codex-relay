@@ -11,6 +11,7 @@ import type { Account, NewJob } from "../src/shared/types";
 import { taskPrompt } from "../src/core/completion";
 import { Rpc } from "../src/core/rpc";
 import { deliveryAccepted } from "../src/shared/delivery";
+import { respondApproval } from "../src/core/approval-command";
 class FakeWorker extends EventEmitter implements Worker {
   submitted = "";
   steer = vi.fn(async () => {});
@@ -55,6 +56,31 @@ class FakeWorker extends EventEmitter implements Worker {
   }
   respond() {}
 }
+it("reports real scheduler ownership and captures distinct changes before renderer snapshot coalescing",async()=>{
+  scheduler.runtimeReady=()=>false;const job=await scheduler.add({...input,cwd:root,interactive:true});
+  expect(scheduler.operations().cards.find(c=>c.id===job.id)?.gates.map(g=>g.code)).toContain("cli");
+  const seen:string[]=[];scheduler.on("operationsObserved",()=>{seen.push(scheduler.operationsObservation().facts.find(f=>f.id===job.id)!.state);});
+  job.state="preparing";scheduler.changed();job.state="running";scheduler.changed();expect(seen).toEqual(["preparing","running"]);job.state="paused";
+  const controls:boolean[]=[];scheduler.on("operationsObserved",()=>controls.push(scheduler.operationsObservation().facts.find(f=>f.id===job.id)!.controlling));
+  let release!:()=>void;(scheduler as any).controls=new Promise<void>(resolve=>{release=resolve;});
+  try{const pause=scheduler.control(job.id,"pause");expect(controls).toEqual([true]);release();await pause;expect(controls.at(-1)).toBe(false);}finally{release();}
+});
+it("never reads task prompts or exposes absolute runtime paths in operational projections",async()=>{
+  scheduler.runtimeReady=()=>false;const job=await scheduler.add({...input,cwd:root,interactive:true}),original=job.prompt;
+  Object.defineProperty(job,"prompt",{configurable:true,get(){throw Error("Operational projection must not clone prompts");}});
+  try{const current=scheduler.operations(),observation=scheduler.operationsObservation();expect(current.cards[0].familyId).toBe(job.id);expect(observation.facts[0].familyId).toBe(job.id);expect(JSON.stringify(current)).not.toContain(root);expect(JSON.stringify(observation)).not.toContain(root);}
+  finally{Object.defineProperty(job,"prompt",{configurable:true,writable:true,enumerable:true,value:original});}
+});
+it("guards every approval kind with a fresh review identity when the protocol reuses a request ID",async()=>{
+  const job=await scheduler.add({...input,cwd:root,interactive:true});await until(()=>workers[0]?.started);
+  workers[0].emit("approval",{id:"77",jobId:job.id,kind:"command",method:"approval",params:{command:"first"}});
+  const old=scheduler.approvals[0];expect(old.reviewId).toBeTruthy();workers[0].emit("approvalResolved","77");
+  workers[0].emit("approval",{id:"77",jobId:job.id,kind:"command",method:"approval",params:{command:"different"}});
+  const fresh=scheduler.approvals[0],respond=vi.spyOn(workers[0],"respond");expect(fresh.reviewId).not.toBe(old.reviewId);
+  expect(()=>respondApproval(scheduler,{id:old.id,jobId:job.id,reviewId:old.reviewId,value:{decision:"accept"}})).toThrow("请求已更新");expect(respond).not.toHaveBeenCalled();
+  expect(()=>scheduler.reviewApproval(job.id,old.id,old.reviewId!)).toThrow("请求已更新");
+  respondApproval(scheduler,{id:fresh.id,jobId:job.id,reviewId:fresh.reviewId,value:{decision:"decline"}});expect(respond).toHaveBeenCalledOnce();
+});
 it("invalidates stale delivery evidence durably, holds dependents and releases them only after explicit reacceptance", async () => {
   await fs.writeFile(path.join(root,"result.txt"),"original");
   const parent=await scheduler.add({...input,cwd:root,interactive:true,deliveryChecks:[{kind:"file",path:"result.txt",label:"Artifact",minBytes:1}]});

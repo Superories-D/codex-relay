@@ -596,10 +596,10 @@ function App({ initialTab = "dashboard" }: { initialTab?: string }) {
           )}
           {snapshot.approvals.map((a) => (
             <ApprovalCard
-              key={`${a.jobId}:${a.id}`}
+              key={`${a.jobId}:${a.id}:${a.reviewId||""}`}
               approval={a}
               respond={(value) =>
-                act("approval.respond", { id: a.id, jobId: a.jobId, value })
+                act("approval.respond", { id: a.id, jobId: a.jobId, reviewId:a.reviewId, value })
               }
             />
           ))}

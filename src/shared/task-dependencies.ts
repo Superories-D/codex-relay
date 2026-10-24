@@ -1,8 +1,8 @@
 import type { Job } from "./types";
 import { deliveryAccepted } from "./delivery";
-export function dependencyBlockers(job: Job, jobs: Job[]) {
+export function dependencyBlockers(job: Job, jobs: Job[],index?:ReadonlyMap<string,Job>) {
   return (job.dependsOn || []).filter(
-    (id) => { const parent = jobs.find(j => j.id === id); return parent?.state !== "completed" || !deliveryAccepted(parent.delivery); },
+    (id) => { const parent = index?index.get(id):jobs.find(j => j.id === id); return parent?.state !== "completed" || !deliveryAccepted(parent.delivery); },
   );
 }
 export function validateDependencies(jobs: Job[], id: string, ids: string[]) {
