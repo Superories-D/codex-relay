@@ -31,7 +31,25 @@ import {
 } from "../main/validation";
 import { ServerCipher } from "./vault";
 import { acquireOwner } from "./owner";
+import { CliSetup } from "../core/cli-setup";
 export class ServerRuntime {
+  private cliSetup?: CliSetup;
+  enableCliSetup() {
+    if (this.cliSetup) return this.cliSetup;
+    const setup = new CliSetup({
+      root: this.store.root,
+      configured: () => this.store.data.settings.cliPath,
+      select: async (cli, previous) => {
+        if (this.closing || this.store.data.settings.cliPath !== previous) throw Error("CLI path changed during installation");
+        this.store.data.settings.cliPath = cli;
+        try { await this.store.save(); } catch (error) { this.store.data.settings.cliPath = previous; throw error; }
+        this.scheduler.changed();
+      },
+    });
+    this.cliSetup = setup;
+    this.scheduler.runtimeReady = () => setup.state.phase === "ready";
+    return setup;
+  }
   get uploads() { return this.uploadStore ||= new ServerUploads(this.store.root); }
   private uploadStore?: ServerUploads;
   private remoteActions?: RemoteActions;
@@ -120,6 +138,9 @@ export class ServerRuntime {
     }
   }
   start(onFailure: (error: unknown) => void) {
+    if (this.cliSetup) void this.cliSetup.ensure().then(state => {
+      if (state.phase === "error") onFailure(Error(state.error || "Codex CLI installation failed"));
+    });
     this.owner.onLost(() => {
       void this.close().catch(onFailure);
       onFailure(Error("Server ownership lock was lost"));
@@ -139,6 +160,10 @@ export class ServerRuntime {
   }
   private async execute(name: string, args?: unknown): Promise<unknown> {
     switch (name) {
+      case "cli.status":
+        return structuredClone(this.cliSetup?.state || { phase: "checking" });
+      case "cli.ensure":
+        return this.enableCliSetup().ensure();
       case "workflow.previewRetry": {
         const a=z.object({id:idSchema,fromStep:z.number().int().min(1).max(12)}).strict().parse(args);
         return new ServerWorkflows(this,this.workspaceRoots).preview(a.id,a.fromStep);
@@ -204,8 +229,13 @@ export class ServerRuntime {
         if (name === "templates.list") return this.templates.list();
         return name === "templates.save" ? this.templates.save(args) : this.templates.remove(args);
       }
-      case "settings.save":
-        return this.scheduler.configure(settingsSchema.parse(args));
+      case "settings.save": {
+        const input = settingsSchema.parse(args);
+        const changed = input.cliPath !== undefined && input.cliPath !== this.store.data.settings.cliPath;
+        const result = await this.scheduler.configure(input);
+        if (changed && this.cliSetup) void this.cliSetup.ensure();
+        return result;
+      }
       case "environment.check":
         return checkEnvironment(this.store.data.settings.cliPath);
       case "health":
@@ -360,6 +390,7 @@ export class ServerRuntime {
   }
   private async closeOnce() {
     this.closing = true;
+    await this.cliSetup?.shutdown();
     await Promise.allSettled([...this.inFlight]);
     await this.schedules.shutdown();
     const resume = new Set(

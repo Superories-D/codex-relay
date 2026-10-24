@@ -54,6 +54,17 @@ class FakeWorker extends EventEmitter implements Worker {
   }
   respond() {}
 }
+it("keeps queued work intact until startup CLI preparation is ready", async () => {
+  scheduler.runtimeReady = () => false;
+  const job = await scheduler.add({ ...input, cwd: root, interactive: true });
+  await (scheduler as any).tick();
+  expect(workers).toHaveLength(0);
+  expect(job.state).toBe("queued");
+  scheduler.runtimeReady = () => true;
+  await (scheduler as any).tick();
+  await until(() => workers[0]?.started);
+  expect(job.state).toBe("running");
+});
 it("keeps question answers pending until the native request is resolved, then records the acknowledged answer", async () => {
   const job = await scheduler.add({ ...input, cwd: root, interactive: true });
   await until(() => workers[0]?.started);

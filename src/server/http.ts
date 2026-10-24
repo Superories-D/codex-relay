@@ -9,6 +9,7 @@ import { z } from "zod";
 import { redact, redactValue } from "../core/redact";
 import type { ServerRuntime } from "./runtime";
 const allowed = new Set([
+  "cli.status", "cli.ensure",
   "workflow.previewRetry", "workflow.retry", "workflow.control",
   "schedule.list", "schedule.create", "schedule.save", "schedule.run", "schedule.remove",
   "goal.read", "goal.update",

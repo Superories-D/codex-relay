@@ -1,0 +1,57 @@
+.cli-setup-notice {
+  position: fixed;
+  z-index: 90;
+  top: 52px;
+  right: 20px;
+  width: min(440px, calc(100vw - 40px));
+  display: flex;
+  align-items: start;
+  gap: 12px;
+  padding: 16px;
+  background: var(--surface, #182234);
+  color: var(--text, #e7edf5);
+  border: 1px solid var(--strong-line, #45536c);
+  box-shadow: 0 12px 32px #0003;
+  border-radius: 12px;
+  font-size: 12px;
+}
+.cli-setup-notice > svg {
+  flex: none;
+  margin-top: 3px;
+  color: var(--accent, #92b8ed);
+}
+.cli-setup-notice > div {
+  flex: 1;
+  min-width: 0;
+}
+.cli-setup-notice strong {
+  font-size: 13px;
+}
+.cli-setup-notice p {
+  margin: 5px 0 0;
+  color: var(--subtle, #9caac0);
+}
+.cli-setup-notice details {
+  margin-top: 8px;
+}
+.cli-setup-notice summary {
+  cursor: pointer;
+  color: var(--subtle, #9caac0);
+}
+.cli-setup-notice pre {
+  max-height: 180px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+}
+.desktop-shell .cli-setup-notice button {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px;
+  font-size: 11px;
+  color: var(--text);
+  background: var(--selection);
+  border-radius: 5px;
+}

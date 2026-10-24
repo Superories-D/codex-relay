@@ -77,12 +77,13 @@ async function main() {
     return;
   }
   let server;
+  runtime.enableCliSetup();
   try {
     server = await startCommandServer(
       root,
       runtime.scheduler,
       (name, args) => runtime.command(name, args),
-      ["account.importText", "account.list", "approval.list", "chat.send"],
+      ["account.importText", "account.list", "approval.list", "chat.send", "cli.status", "cli.ensure"],
       ipcPort,
     );
   } catch (error) {

@@ -29,6 +29,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { taskReport } from "../core/task-report";
 import { Store, atomicWrite } from "../core/store";
+import { CliSetup } from "../core/cli-setup";
 import { checkEnvironment } from "../core/diagnostics";
 import { windowsPowerShellEnv, protectDataDirectory } from "../core/powershell";
 import { AccountImport } from "../core/account-import";
@@ -125,6 +126,16 @@ async function boot() {
   const store = new Store(dataRoot);
   startupTrace("load application state");
   await store.load();
+  const cliSetup = new CliSetup({
+    root: dataRoot,
+    configured: () => store.data.settings.cliPath,
+    changed: () => scheduler?.changed(),
+    select: async (cli, previous) => {
+      if (store.data.settings.cliPath !== previous) throw Error("CLI 路径在安装期间已更改，请重新检测");
+      store.data.settings.cliPath = cli;
+      try { await store.save(); } catch (error) { store.data.settings.cliPath = previous; throw error; }
+    },
+  });
   const desktop = new Desktop(dataRoot);
   const templates = new Templates(dataRoot);
   await desktop.load();
@@ -216,6 +227,7 @@ async function boot() {
     },
   );
   const workflowReports = new WorkflowReports(scheduler.chats, () => store.data.jobs);
+  scheduler.runtimeReady = () => cliSetup.state.phase === "ready";
   const schedules = new Schedules(desktop, scheduler, () =>
     scheduler.changed(),
   );
@@ -294,7 +306,16 @@ async function boot() {
   );
   const command = async (name: string, args?: unknown): Promise<unknown> => {
     if (quitting) throw new Error("正在保存并退出");
+    if (cliSetup.state.phase !== "ready" && [
+      "account.login", "account.refresh", "account.models", "catalog.operation",
+      "terminal.open", "chat.goal.create", "chat.goal.read", "chat.goal.update",
+      "chat.fork", "chat.branchAt", "chat.agent.open",
+    ].includes(name)) throw Error("Codex CLI 正在准备，请稍后重试");
     switch (name) {
+      case "cli.status":
+        return structuredClone(cliSetup.state);
+      case "cli.ensure":
+        return cliSetup.ensure();
       case "clipboard.writeText":
         await clipboard.writeText(
           z
@@ -1288,7 +1309,13 @@ async function boot() {
         return;
       }
       case "settings.save":
-        return scheduler.configure(settingsSchema.parse(args));
+      {
+        const input = settingsSchema.parse(args);
+        const changed = input.cliPath !== undefined && input.cliPath !== store.data.settings.cliPath;
+        const result = await scheduler.configure(input);
+        if (changed) void cliSetup.ensure();
+        return result;
+      }
       case "choose.directory": {
         const r = await dialog.showOpenDialog(window!, {
           properties: ["openDirectory"],
@@ -1333,7 +1360,7 @@ async function boot() {
         throw new Error("未知命令");
     }
   };
-  const server = await startCommandServer(dataRoot, scheduler, command);
+  const server = await startCommandServer(dataRoot, scheduler, command, ["cli.status", "cli.ensure"]);
   startupTrace("create window");
   const rendererPath = path.join(__dirname, "..", "renderer", "index.html");
   const available = screen.getPrimaryDisplay().workAreaSize;
@@ -1431,6 +1458,7 @@ async function boot() {
         .then(() => schedules.shutdown())
         .then(() =>
           Promise.all([
+            cliSetup.shutdown(),
             importer.drain(),
             backgroundHistory.shutdown(),
             scheduler.shutdown(),
@@ -1464,6 +1492,7 @@ async function boot() {
   scheduler.start();
   schedules.start();
   existing.start();
+  void cliSetup.ensure();
 }
 async function openAuth(value: string) {
   const url = new URL(value);

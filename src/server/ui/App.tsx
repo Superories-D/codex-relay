@@ -6,6 +6,7 @@ import {RemoteArtifacts} from "./Artifacts";
 import { RemoteAttachments,readAttachments,saveAttachments } from "./Attachments";
 import type {ChatAttachment} from "../../shared/types";
 import { TaskCenter } from "../../renderer/TaskCenter";
+import { CliSetupNotice } from "../../renderer/CliSetupNotice";
 import { RuntimeSettings } from "./RuntimeSettings";
 import { TaskTemplates } from "../../renderer/TaskTemplates";
 import { ChatSearch } from "../../renderer/ChatSearch";
@@ -415,6 +416,7 @@ function App() {
   }
   return (
     <div className="remote-shell">
+      {token && snapshot && <CliSetupNotice call={call} />}
       <header className="remote-header">
         <div>
           <strong>Codex Relay</strong>

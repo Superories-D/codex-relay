@@ -61,6 +61,7 @@ interface ActiveRun {
   done?: Promise<void>;
 }
 export class Scheduler extends EventEmitter {
+  runtimeReady: () => boolean = () => true;
   readonly chats: Chats;
   approvals: Approval[] = [];
   private active = new Map<string, ActiveRun>();
@@ -192,7 +193,7 @@ export class Scheduler extends EventEmitter {
         ),
       (account) => {
         if (
-          this.closing ||
+          !this.runtimeReady() || this.closing ||
           this.maintaining ||
           this.recoveryTasks.size > 0 ||
           accounts.busy.has(account.id) ||
@@ -628,7 +629,7 @@ export class Scheduler extends EventEmitter {
     }
   }
   private async tickOnce() {
-    if (this.ticking || this.closing || this.maintaining) return;
+    if (!this.runtimeReady() || this.ticking || this.closing || this.maintaining) return;
     this.ticking = true;
     try {
       await this.warmupRecovery;

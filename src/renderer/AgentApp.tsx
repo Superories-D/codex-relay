@@ -6,6 +6,7 @@ import { TaskCenter } from "./TaskCenter";
 import { TaskTemplates } from "./TaskTemplates";
 import { TaskReport } from "./TaskReport";
 import { CopyButton } from "./CopyButton";
+import { CliSetupNotice } from "./CliSetupNotice";
 import { RecoveryNotice, RecoveryHistory } from "./RecoveryNotice";
 import React, {
   useEffect,
@@ -829,6 +830,7 @@ export function AgentApp({
       }
     >
       {chrome}
+      <CliSetupNotice call={call} />
       <div className="agent-shell">
         <nav className="agent-rail" aria-label={t("主导航")}>
           <button

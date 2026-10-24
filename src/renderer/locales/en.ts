@@ -1,6 +1,17 @@
 import {  legacyEnglish } from "./legacy-en";
 import { nativeEnglish } from "./native-en";
 export const english: Record<string, string> = {
+"Codex CLI 尚未就绪": "Codex CLI is not ready",
+"正在准备 Codex CLI": "Preparing Codex CLI",
+"正在检查已有安装…": "Checking existing installations…",
+"未找到可用 CLI，正在下载官方安装器…": "No usable CLI found. Downloading the official installer…",
+"正在自动安装，完成后即可开始任务。": "Installing automatically. Tasks will start when installation is verified.",
+"正在验证 CLI 安装…": "Verifying the CLI installation…",
+"安装未完成。请检查网络后重试，或在设置中指定已有 CLI。": "Installation did not finish. Check your connection and retry, or select an existing CLI in Settings.",
+"查看详细错误": "Show error details",
+"重新检测并安装": "Check again and install",
+"Codex CLI 正在准备，请稍后重试": "Codex CLI is being prepared. Please try again shortly.",
+"CLI 路径在安装期间已更改，请重新检测": "The CLI path changed during installation. Check again.",
 "差异审阅": "Diff review",
 "扩大工作面板": "Expand work panel",
 "收窄工作面板": "Narrow work panel",
