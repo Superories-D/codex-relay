@@ -61,43 +61,30 @@ export const deliveryCheckSchema = z.discriminatedUnion("kind", [
 ]);
 export const deliveryChecksSchema = z.array(deliveryCheckSchema).max(30);
 export type DeliveryCheck = z.infer<typeof deliveryCheckSchema>;
-export type DeliveryFinding = {
-  check: DeliveryCheck;
-  status: "passed" | "failed" | "unverified";
-  code:
-    | "verified"
-    | "missing"
-    | "tooSmall"
-    | "textMissing"
-    | "hashMismatch"
-    | "jsonMismatch"
-    | "invalidText"
-    | "jsonTooLarge"
-    | "notFile"
-    | "outsideWorkspace"
-    | "changedDuringRead"
-    | "ioError"
-    | "cancelled";
-  bytes?: number;
-  sha256?: string;
-  modifiedAt?: number;
-};
-export type DeliveryReport = {
-  id: string;
-  revision: number;
-  startedAt: number;
-  finishedAt: number;
-  turnId?: string;
-  source: "automatic" | "manual" | "recovery";
-  status: "passed" | "failed" | "unverified";
-  findings: DeliveryFinding[];
-};
+export const deliveryFindingSchema = z.object({
+  check: deliveryCheckSchema,
+  status: z.enum(["passed", "failed", "unverified"]),
+  code: z.enum(["verified", "missing", "tooSmall", "textMissing", "hashMismatch", "jsonMismatch",
+    "invalidText", "jsonTooLarge", "notFile", "outsideWorkspace", "changedDuringRead", "ioError", "cancelled"]),
+  bytes: z.number().finite().nonnegative().optional(),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  modifiedAt: z.number().finite().optional(),
+}).strict();
+export type DeliveryFinding = z.infer<typeof deliveryFindingSchema>;
+export const deliveryReportSchema = z.object({
+  id: z.string().uuid(), revision: z.number().int().nonnegative(),
+  startedAt: z.number().finite(), finishedAt: z.number().finite(),
+  turnId: z.string().optional(), source: z.enum(["automatic", "manual", "recovery"]),
+  status: z.enum(["passed", "failed", "unverified"]), findings: z.array(deliveryFindingSchema).max(30),
+}).strict();
+export type DeliveryReport = z.infer<typeof deliveryReportSchema>;
 export type DeliveryState = {
   revision: number;
   checks: DeliveryCheck[];
   reports: DeliveryReport[];
   pendingCompletion?: boolean;
   blockedCompletion?: boolean;
+  staleEvidence?: {reportId: string; at: number; reason: "changed" | "unverified"};
 };
 export function deliveryAccepted(delivery?: DeliveryState) {
   if (!delivery?.checks.length) return true;
@@ -105,6 +92,7 @@ export function deliveryAccepted(delivery?: DeliveryState) {
   return (
     !delivery.pendingCompletion &&
     !delivery.blockedCompletion &&
+    !(delivery.staleEvidence && delivery.staleEvidence.reportId === latest?.id) &&
     latest?.revision === delivery.revision &&
     latest.status === "passed"
   );

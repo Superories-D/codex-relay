@@ -335,6 +335,12 @@ export class Scheduler extends EventEmitter {
     if (!job) throw Error("任务不存在");
     return structuredClone(job.delivery || {revision: 0, checks: [], reports: []});
   }
+  deliveryTarget(id: string) {
+    const job = this.store.data.jobs.find(j => j.id === id);
+    if (!job) throw Error("任务不存在");
+    if (this.closing || this.familyActive(id) || job.recoveryRequired) throw Error("任务正在运行或恢复，无法更新交付证据");
+    return structuredClone(job);
+  }
   deliveryPrompt(id: string) {
     const delivery = this.readDelivery(id), report = delivery.reports.at(-1);
     if (!report || report.revision !== delivery.revision || report.status === "passed") throw Error("没有当前版本的失败验收结果");
@@ -344,17 +350,43 @@ export class Scheduler extends EventEmitter {
     if(!this.store.data.jobs.some(job=>job.id===id))throw Error("任务不存在");
     const controller=this.deliveryControllers.get(id);controller?.abort();return {cancelled:!!controller};
   }
-  checkDelivery(id: string, source: "manual" | "recovery" = "manual") {
+  flagDeliveryEvidence(id: string, revision: number, reportId: string, reason: "changed" | "unverified") {
     return this.queueControl(id, async () => {
       const job = this.store.data.jobs.find(j => j.id === id);
       if (!job) throw Error("任务不存在");
+      if (this.closing || this.familyActive(id) || job.recoveryRequired) throw Error("任务正在运行或恢复，无法更新交付证据");
+      const delivery = job.delivery;
+      if (!delivery || delivery.revision !== revision || delivery.reports.at(-1)?.id !== reportId)
+        throw Error("交付证据已更新，请重新检查");
+      const before = structuredClone(job);
+      delivery.staleEvidence = {reportId, at: Date.now(), reason};
+      job.stage = "交付证据已失效";
+      if (job.state === "completed") {
+        job.state = "needs_attention"; delivery.blockedCompletion = true;
+        job.lastError = "交付证据已失效，请重新验收产物";
+      }
+      try {await this.store.save();}
+      catch (error) {
+        for (const key of Object.keys(job)) if (!Object.hasOwn(before, key)) delete (job as any)[key];
+        Object.assign(job, before); throw error;
+      }
+      this.changed(); return structuredClone(job.delivery);
+    });
+  }
+  checkDelivery(id: string, source: "manual" | "recovery" = "manual", signal?: AbortSignal, expected?: {revision: number; reportId?: string}) {
+    return this.queueControl(id, async () => {
+      const job = this.store.data.jobs.find(j => j.id === id);
+      if (!job) throw Error("任务不存在");
+      signal?.throwIfAborted();
       if (this.closing || this.familyActive(id) || job.recoveryRequired) throw Error("请先暂停任务，再检查交付产物");
       const delivery = job.delivery;
       if (!delivery?.checks.length) throw Error("请先设置交付验收条件");
+      if (expected && (delivery.revision !== expected.revision || delivery.reports.at(-1)?.id !== expected.reportId))
+        throw Error("交付证据已更新，请重新检查");
       const previous = structuredClone(job);
       try {
       const wasBlocked = delivery.blockedCompletion || delivery.pendingCompletion;
-      const report = await this.recordDelivery(job, source);
+      const report = await this.recordDelivery(job, source, signal);
       if (report.status !== "passed" && job.state === "completed") {
         job.state = "needs_attention"; delivery.blockedCompletion = true;
         job.lastError = "交付验收未通过，请检查结果并修正产物";
@@ -364,7 +396,7 @@ export class Scheduler extends EventEmitter {
         await this.advanceDeliveryQueue(job);
       }
       await this.store.save(); this.changed();
-      return structuredClone(job.delivery);
+      return structuredClone(delivery);
       } catch (error) {
         for (const key of Object.keys(job)) if (!Object.hasOwn(previous, key)) delete (job as any)[key];
         Object.assign(job, previous);
@@ -373,15 +405,16 @@ export class Scheduler extends EventEmitter {
       }
     });
   }
-  private async recordDelivery(job: Job, source: DeliveryReport["source"]) {
+  private async recordDelivery(job: Job, source: DeliveryReport["source"], signal?: AbortSignal) {
     const delivery = job.delivery!;
     const controller=new AbortController();this.deliveryControllers.set(job.id,controller);
     try {
     if (source !== "manual") {delivery.pendingCompletion = true; await this.store.save();}
     job.stage = "正在验收交付产物"; this.changed();
-    const report = await verifyDelivery(job.cwd, delivery.checks, {revision: delivery.revision, source, turnId: job.turnId, signal: AbortSignal.any([this.verification.signal,controller.signal])});
+    const report = await verifyDelivery(job.cwd, delivery.checks, {revision: delivery.revision, source, turnId: job.turnId, signal: AbortSignal.any([this.verification.signal,controller.signal,...(signal ? [signal] : [])])});
     delivery.reports = [...delivery.reports, report].slice(-10);
     delivery.pendingCompletion = false;
+    delete delivery.staleEvidence;
     if (source !== "manual") delivery.blockedCompletion = report.status !== "passed";
     job.stage = report.status === "passed" ? "交付验收通过" : "交付验收未通过";
     return report;

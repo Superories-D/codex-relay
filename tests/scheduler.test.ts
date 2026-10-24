@@ -10,6 +10,7 @@ import type { Worker, WorkerContext, Outcome } from "../src/core/worker";
 import type { Account, NewJob } from "../src/shared/types";
 import { taskPrompt } from "../src/core/completion";
 import { Rpc } from "../src/core/rpc";
+import { deliveryAccepted } from "../src/shared/delivery";
 class FakeWorker extends EventEmitter implements Worker {
   submitted = "";
   steer = vi.fn(async () => {});
@@ -54,6 +55,42 @@ class FakeWorker extends EventEmitter implements Worker {
   }
   respond() {}
 }
+it("invalidates stale delivery evidence durably, holds dependents and releases them only after explicit reacceptance", async () => {
+  await fs.writeFile(path.join(root,"result.txt"),"original");
+  const parent=await scheduler.add({...input,cwd:root,interactive:true,deliveryChecks:[{kind:"file",path:"result.txt",label:"Artifact",minBytes:1}]});
+  await until(()=>workers[0]?.started);workers[0].settle({kind:"completed"});await (scheduler as any).currentRun;
+  const baseline=parent.delivery!.reports.at(-1)!;
+  await fs.writeFile(path.join(root,"result.txt"),"modified");
+  await scheduler.flagDeliveryEvidence(parent.id,1,baseline.id,"changed");
+  expect(parent.state).toBe("needs_attention");expect(deliveryAccepted(parent.delivery)).toBe(false);
+  const disk=new Store(root);await disk.load();expect(disk.data.jobs[0].delivery?.staleEvidence?.reportId).toBe(baseline.id);
+  await scheduler.dispatch(true);
+  const dependent=await scheduler.add({...input,cwd:root,interactive:true});await scheduler.dependencies(dependent.id,[parent.id]);
+  await scheduler.dispatch(false);await (scheduler as any).tick();expect(workers).toHaveLength(1);
+  await scheduler.checkDelivery(parent.id);expect(parent.delivery?.staleEvidence).toBeUndefined();expect(deliveryAccepted(parent.delivery)).toBe(true);
+  await (scheduler as any).tick();await until(()=>workers[1]?.started);
+});
+it("rejects an old evidence invalidation and restores the full completed job after a hold cannot be saved", async () => {
+  await fs.writeFile(path.join(root,"result.txt"),"original");
+  const job=await scheduler.add({...input,cwd:root,interactive:true,deliveryChecks:[{kind:"file",path:"result.txt",label:"Artifact",minBytes:1}]});
+  await until(()=>workers[0]?.started);workers[0].settle({kind:"completed"});await (scheduler as any).currentRun;
+  const old=job.delivery!.reports.at(-1)!;await scheduler.checkDelivery(job.id);
+  await expect(scheduler.flagDeliveryEvidence(job.id,1,old.id,"changed")).rejects.toThrow("已更新");
+  const before=structuredClone(job);const fail=vi.spyOn(store,"save").mockRejectedValueOnce(Error("disk full"));
+  await expect(scheduler.flagDeliveryEvidence(job.id,1,job.delivery!.reports.at(-1)!.id,"unverified")).rejects.toThrow("disk full");
+  fail.mockRestore();expect(job).toEqual(before);expect(deliveryAccepted(job.delivery)).toBe(true);
+});
+it("guards batch verification by contract/report identity and does not record a pre-aborted check", async () => {
+  await fs.writeFile(path.join(root,"result.txt"),"original");
+  const job=await scheduler.add({...input,cwd:root,interactive:true,deliveryChecks:[{kind:"file",path:"result.txt",label:"Artifact",minBytes:1}]});
+  await until(()=>workers[0]?.started);expect(()=>scheduler.deliveryTarget(job.id)).toThrow("正在运行");
+  workers[0].settle({kind:"completed"});await (scheduler as any).currentRun;
+  const report=job.delivery!.reports.at(-1)!,before=structuredClone(job);
+  const controller=new AbortController();controller.abort();
+  await expect(scheduler.checkDelivery(job.id,"manual",controller.signal)).rejects.toThrow();expect(job).toEqual(before);
+  await expect(scheduler.checkDelivery(job.id,"manual",undefined,{revision:0,reportId:report.id})).rejects.toThrow("已更新");
+  expect(job).toEqual(before);
+});
 it("verifies delivery only after the worker closes and includes the contract in the prompt", async () => {
   const job = await scheduler.add({...input,cwd:root,interactive:true,deliveryChecks:[{kind:"contains",path:"result.txt",label:"Result",text:"verified"}]});
   await until(()=>workers[0]?.started);

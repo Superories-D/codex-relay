@@ -216,6 +216,20 @@ export async function verifyDelivery(
     };
   }
   for (const check of checks) findings.push(await inspect(root, check, signal));
+  const fingerprints = new Map<string, Set<string>>();
+  const key = (finding: DeliveryFinding) => {
+    const value = path.resolve(root, finding.check.path.replaceAll("\\", "/"));
+    return process.platform === "win32" ? value.toLowerCase() : value;
+  };
+  for (const finding of findings) if (finding.sha256) {
+    const name = key(finding), hashes = fingerprints.get(name) ?? new Set<string>();
+    hashes.add(finding.sha256); fingerprints.set(name, hashes);
+  }
+  // Multiple conditions for one artifact must describe the same observed bytes,
+  // even when it is replaced between otherwise successful individual reads.
+  for (const finding of findings) if ((fingerprints.get(key(finding))?.size ?? 0) > 1) {
+    finding.status = "unverified"; finding.code = "changedDuringRead";
+  }
   if ((await fs.realpath(cwd).catch(() => "")) !== root)
     for (const finding of findings) {
       finding.status = "unverified";

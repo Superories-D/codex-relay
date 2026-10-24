@@ -20,6 +20,8 @@ export function DeliverySummary({ job, open }: { job: Job; open: () => void }) {
   const latest = job.delivery.reports.at(-1);
   const label = job.delivery.pendingCompletion
     ? "正在验收交付产物"
+    : job.delivery.staleEvidence && job.delivery.staleEvidence.reportId === latest?.id && latest
+      ? "交付证据已失效"
     : latest?.revision === job.delivery.revision
       ? statusLabels[latest.status]
       : "等待交付验收";
@@ -50,6 +52,7 @@ export function DeliveryDialog({
   initial = [],
   call,
   saveDraft,
+  purpose = "task",
   repair,
   close,
 }: {
@@ -57,7 +60,8 @@ export function DeliveryDialog({
   initial?: DeliveryCheck[];
   call: (name: string, args?: unknown) => Promise<any>;
   saveDraft?: (checks: DeliveryCheck[]) => void;
-  repair: (text: string) => void;
+  purpose?: "task" | "plan";
+  repair?: (text: string) => void;
   close: () => void;
 }) {
   useI18n();
@@ -134,7 +138,7 @@ export function DeliveryDialog({
     }
   }
   const report = state.reports.at(-1),
-    current = report?.revision === state.revision;
+    current = report?.revision === state.revision && !(state.staleEvidence && state.staleEvidence.reportId === report?.id);
   return (
     <Dialog title={t("交付验收")} busy={busy} onClose={close}>
       <div className="delivery-dialog">
@@ -155,6 +159,7 @@ export function DeliveryDialog({
           <p role="status">{t("请先暂停任务，再修改或运行验收。")}</p>
         )}
         {loading && <p role="status">{t("正在读取验收条件…")}</p>}
+        {state.staleEvidence && <p role="status">{t("产物已变化或当前证据无法确认。历史通过记录保留，请重新验收后继续。")}</p>}
         <fieldset disabled={busy || blocked || loading}>
           <legend>{t("验收条件")}</legend>
           {!!state.checks.length && (
@@ -364,7 +369,7 @@ export function DeliveryDialog({
                 {t("取消验收")}
               </button>
             )}
-            <button
+            {repair && <button
               disabled={
                 busy ||
                 dirty ||
@@ -380,7 +385,7 @@ export function DeliveryDialog({
               }
             >
               {t("将修正要求加入草稿")}
-            </button>
+            </button>}
             <button
               disabled={busy}
               onClick={() =>
@@ -444,7 +449,7 @@ export function DeliveryDialog({
             )}
           </section>
         )}
-        {!job && <p>{t("保存后随新任务提交，任务结束时自动验收。")}</p>}
+        {!job && <p>{t(purpose === "plan" ? "保存后写入当前验收方案；不会创建或发送任务。" : "保存后随新任务提交，任务结束时自动验收。")}</p>}
       </div>
     </Dialog>
   );

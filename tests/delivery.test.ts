@@ -17,6 +17,24 @@ afterEach(async () => {
 });
 const run = (checks: DeliveryCheck[], signal?: AbortSignal) =>
   verifyDelivery(root, checks, { revision: 1, source: "manual", signal });
+it("rejects a composite pass when one file is replaced between its individual acceptance checks", async () => {
+  const target=path.join(root,"coherent.txt");await fs.writeFile(target,"original");
+  const originalOpen=fs.open.bind(fs);let reads=0;
+  const open=vi.spyOn(fs,"open").mockImplementation(async (...args) => {
+    const handle=await originalOpen(...args);
+    if(String(args[0]).endsWith(path.sep+"coherent.txt")&&++reads===1){
+      const close=handle.close.bind(handle);
+      handle.close=async()=>{await close();await fs.writeFile(target,"modified");};
+    }
+    return handle;
+  });
+  try{
+    const report=await run([{kind:"file",path:"coherent.txt",label:"Exists",minBytes:1},
+      {kind:"contains",path:"coherent.txt",label:"New content",text:"modified"}]);
+    expect(report.status).toBe("unverified");expect(report.findings.every(f=>f.code==="changedDuringRead")).toBe(true);
+    expect(new Set(report.findings.map(f=>f.sha256)).size).toBe(2);
+  }finally{open.mockRestore();}
+});
 it("records byte count and SHA256 from actual files, including empty-file policies", async () => {
   await fs.writeFile(path.join(root, "产物.txt"), "completed\n");
   await fs.writeFile(path.join(root, "empty"), "");

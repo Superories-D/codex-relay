@@ -1,4 +1,5 @@
 import { WorkflowReport } from "./WorkflowReport";
+import { DeliveryCenter } from "./DeliveryCenter";
 import { WorkflowBuilder } from "./WorkflowBuilder";
 import { dispatchHeld, projectKey, projectLimit } from "../shared/dispatch";
 import { dependencyBlockers } from "../shared/task-dependencies";
@@ -36,6 +37,7 @@ export function TaskCenter({
 }) {
   useI18n();
   const [workflowReport, setWorkflowReport] = useState<string>();
+  const [deliveryCenter, setDeliveryCenter] = useState(false);
   const [building, setBuilding] = useState(false);
   const [editing, setEditing] = useState<Job>();
   const [filter, setFilter] = useState("active");
@@ -114,6 +116,7 @@ export function TaskCenter({
       setBusy(false);
     }
   };
+  if (deliveryCenter) return <DeliveryCenter snapshot={snapshot} call={call} open={open} back={() => setDeliveryCenter(false)}/>;
   return (
     <main className="task-center">
       <header>
@@ -124,6 +127,7 @@ export function TaskCenter({
         <button className="workflow-trigger" onClick={() => setBuilding(true)}>
           {t("新建工作流")}
         </button>
+        <button onClick={() => setDeliveryCenter(true)}>{t("交付中心")}</button>
         <button onClick={close}>{t("返回聊天")}</button>
       </header>
       <section className="dispatch-controls">

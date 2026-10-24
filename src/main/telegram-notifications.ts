@@ -239,7 +239,7 @@ export class WindowsTelegram {
             if (next.includeTitles) lines.push(redact(job.title.replaceAll(next.token, "[REDACTED]"), 160).replace(/[\r\n\u0000-\u001f]/g, " "));
             const report = job.delivery?.reports.at(-1);
             if (job.delivery?.checks.length && report?.revision === job.delivery.revision)
-              lines.push(this.text(report.status === "passed" ? "交付验收通过" : "交付验收未通过"));
+              lines.push(this.text(job.delivery?.staleEvidence && job.delivery.staleEvidence.reportId === report.id ? "交付证据已失效" : report.status === "passed" ? "交付验收通过" : "交付验收未通过"));
             this.append(next, event, lines.join("\n"), id);
           }
         }

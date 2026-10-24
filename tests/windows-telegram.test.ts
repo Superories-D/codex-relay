@@ -84,6 +84,12 @@ it("deduplicates events, includes acceptance outcome, filters events and default
   expect(m.view().receipts).toHaveLength(3);
 });
 
+it("describes stale evidence as needing revalidation even when the historical report passed", async () => {
+  const {m}=await fixture();await m.save(setup());
+  m.observe(snap("needs_attention",{delivery:{revision:1,checks:[{kind:"file",path:"artifact",label:"Artifact"}],
+    reports:[{id:"baseline",revision:1,status:"passed"}],staleEvidence:{reportId:"baseline",at:Date.now(),reason:"changed"}}}));
+  await m.drain();expect(m.view().receipts[0].text).toContain("交付证据已失效");expect(m.view().receipts[0].text).not.toContain("交付验收通过");
+});
 it("preserves fast completion transitions while a network send holds the serialized outbox", async () => {
   let release!: () => void, started!: () => void;
   const sending = new Promise<void>(r => started = r), blocked = new Promise<void>(r => release = r);

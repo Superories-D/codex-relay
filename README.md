@@ -1,5 +1,7 @@
 # Codex Relay
 
+**Windows 工作流交付中心：[0.6.24 使用说明](docs/DELIVERY-CENTER-20261025.md)。** 可复用验收方案、跨任务批量检查、真实文件指纹比对、旧证据失效保护、明确重新验收与工作流证据导出已贯通。历史通过不再等于当前文件未变；发现变更会阻止新的依赖任务启动。
+
 **Windows 自有 Telegram Bot 通知已接入：[0.6.23 使用说明](docs/TELEGRAM-WINDOWS-20261025.md)。** 在设置 → 通知中接入 Bot、选择私人接收人和事件，支持交付验收失败提醒、Windows 加密存储、限流重试、重启保留记录与未知结果确认。默认隐藏任务名称。按最新要求暂停 Linux 专项开发，后续大目标继续集中在 Windows。
 
 **2026-10-25 Windows 大节点：[可验证交付闭环](docs/DELIVERY-ACCEPTANCE-20261025.md)。** 任务开始前定义文件、内容、完整 SHA256 或 JSON 字段条件；结束后读取实际产物，未通过时保留追问并阻止依赖任务。支持证据导出、修正草稿、单独取消、重启恢复和工作流交付报告。大差异按块加载、超大块分页，全文和完整块暂存保留。[0.6.22 发布记录](docs/RELEASE-0622.md)。Linux 专项开发按用户要求暂停，下一大节点为 Windows Telegram Bot 通知；[迭代清单](docs/ITERATION-ROADMAP-20261024.md)。
@@ -8,7 +10,7 @@
 
 正在持续打磨 Codex Desktop 的功能、界面和顺滑体验，已验证工作流和待补项目见 [桌面功能对齐记录](docs/DESKTOP-PARITY.md)。每个验证节点执行 commit + push + 完整 Release，安装包不分卷。
 
-**Windows Agent 客户端：[v0.6.23](https://code.taiko.im/Superories/codex-go/releases/tag/v0.6.23)。** 每个完整节点提供安装版、便携版、ZIP 和 SHA256 校验。本版贯通 Windows Telegram 通知；此前 [可验证交付](docs/RELEASE-0622.md)、[紧凑模型面板](docs/RELEASE-0620.md)、[模型搜索](docs/RELEASE-0621.md)、[缺失 CLI 自动安装与 Git 审阅](docs/RELEASE-0619.md) 已包含。基于官方 Codex CLI，提供项目与对话侧栏、多轮聊天、执行记录、审批、附件、排队发送和自动账户接力。额度不足时确认原进程停止，再使用可用账户继续原会话；全部账户受限时等待并复查服务器额度。
+**Windows Agent 客户端：[v0.6.24](https://code.taiko.im/Superories/codex-go/releases/tag/v0.6.24)。** 每个完整节点提供安装版、便携版、ZIP 和 SHA256 校验。本版贯通 Windows 工作流交付中心；此前 [Telegram Bot 通知](docs/RELEASE-0623.md)、[可验证交付](docs/RELEASE-0622.md)、[紧凑模型面板](docs/RELEASE-0620.md)、[模型搜索](docs/RELEASE-0621.md)、[缺失 CLI 自动安装与 Git 审阅](docs/RELEASE-0619.md) 已包含。基于官方 Codex CLI，提供项目与对话侧栏、多轮聊天、执行记录、审批、附件、排队发送和自动账户接力。额度不足时确认原进程停止，再使用可用账户继续原会话；全部账户受限时等待并复查服务器额度。
 
 **2026-10-22 源码迭代（现已包含在 v0.6.19 及后续版本）：** 新增任务中心与批量控制、任务优先级、可编辑待发送队列、文字与附件草稿恢复、会话全文检索、任务模板和诊断报告。自动恢复有持久化时间线；CLI 监控断线后自动重连，支持 `status --json`、`watch --json` 和 `report --id`。新增持久化任务依赖、2–12 阶段工作流、全局／项目调度开关、项目并发上限和可预览的工作流交付报告。[逐轮实现与验证记录](docs/ITERATIONS-20261022.md)。
 

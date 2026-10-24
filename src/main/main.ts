@@ -4,6 +4,8 @@ import {updateGoal} from "../core/goal-command";
 import { conversationExport } from "../core/conversation-export";
 import { NotificationState } from "../core/notification-state";
 import { WindowsTelegram, createTelegramTransport } from "./telegram-notifications";
+import { DeliveryPlans } from "./delivery-plans";
+import { DeliveryBatches } from "./delivery-batches";
 import { WindowPlacement } from "./window-placement";
 import { serviceHealth } from "../core/service-health";
 import { respondApproval } from "../core/approval-command";
@@ -237,6 +239,12 @@ async function boot() {
     text: nativeText,
   });
   await telegram.load(scheduler.snapshot());
+  const deliveryPlans = new DeliveryPlans(dataRoot);
+  const deliveryBatches = new DeliveryBatches({
+    root: dataRoot, target: id => scheduler.deliveryTarget(id),
+    verify: (id, signal, expected) => scheduler.checkDelivery(id, "manual", signal, expected),
+    invalidate: (id, revision, reportId, reason) => scheduler.flagDeliveryEvidence(id, revision, reportId, reason),
+  });
   scheduler.runtimeReady = () => cliSetup.state.phase === "ready";
   const schedules = new Schedules(desktop, scheduler, () =>
     scheduler.changed(),
@@ -323,6 +331,26 @@ async function boot() {
       "chat.fork", "chat.branchAt", "chat.agent.open",
     ].includes(name)) throw Error("Codex CLI 正在准备，请稍后重试");
     switch (name) {
+      case "delivery.plans": return deliveryPlans.list();
+      case "delivery.plan.save": return deliveryPlans.save(args);
+      case "delivery.plan.remove": return deliveryPlans.remove(args);
+      case "delivery.plan.apply": {
+        const a = z.object({planId: z.string().uuid(), planRevision: z.number().int().nonnegative(),
+          targets: z.array(z.object({id: z.string().uuid(), revision: z.number().int().nonnegative()}).strict()).min(1).max(100)
+            .refine(v => new Set(v.map(t => t.id)).size === v.length)}).strict().parse(args);
+        const plans = await deliveryPlans.list(), plan = plans.items.find(p => p.id === a.planId);
+        if (plans.revision !== a.planRevision || !plan) throw Error("验收方案已更改，请刷新后重试。");
+        const results = [];
+        for (const target of a.targets) {
+          try {await scheduler.saveDelivery(target.id, target.revision, plan.checks); results.push({id: target.id, applied: true});}
+          catch (error) {results.push({id: target.id, applied: false, issue: redact(error instanceof Error ? error.message : error)});}
+        }
+        return {results};
+      }
+      case "delivery.batches": return deliveryBatches.list();
+      case "delivery.batch.start": return deliveryBatches.start(args);
+      case "delivery.batch.cancel": return deliveryBatches.cancel(idSchema.parse(args));
+      case "delivery.batch.export": return deliveryBatches.export(idSchema.parse(args));
       case "telegram.read": return telegram.view();
       case "telegram.save": return telegram.save(args);
       case "telegram.discover": {
@@ -1495,6 +1523,8 @@ async function boot() {
           Promise.all([
             cliSetup.shutdown(),
             telegram.shutdown(),
+            deliveryPlans.drain(),
+            deliveryBatches.shutdown(),
             importer.drain(),
             backgroundHistory.shutdown(),
             scheduler.shutdown(),
@@ -1510,6 +1540,7 @@ async function boot() {
         .catch((error) => {
           quitting = false;
           telegram.resume();
+          deliveryBatches.resume();
           existing.start();
           schedules.start();
           catalog.resume();

@@ -97,6 +97,8 @@ it("holds handoff completion until the current delivery contract has passed", as
     const reports=new WorkflowReports(new Chats(root),()=>[job]);
     const stale=await reports.preview("w");expect(stale.report.complete).toBe(false);expect(stale.markdown).toContain("not accepted");
     job.delivery.reports[0].revision=2;const accepted=await reports.preview("w");expect(accepted.report.complete).toBe(true);expect(accepted.report.stages[0].delivery?.latest?.findings[0].sha256).toBe("a".repeat(64));
-    job.delivery.blockedCompletion=true;expect((await reports.preview("w")).report.complete).toBe(false);
+    job.delivery.staleEvidence={reportId:"r",at:Date.now(),reason:"changed"};const changed=await reports.preview("w");
+    expect(changed.report.complete).toBe(false);expect(changed.report.stages[0].delivery?.staleEvidence?.reason).toBe("changed");
+    delete job.delivery.staleEvidence;job.delivery.blockedCompletion=true;expect((await reports.preview("w")).report.complete).toBe(false);
   }finally{await fs.rm(root,{recursive:true,force:true});}
 });

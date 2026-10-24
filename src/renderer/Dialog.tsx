@@ -22,12 +22,36 @@ export function Dialog({
     const previous = document.activeElement as HTMLElement | null;
     const element = dialog.current!;
     element.showModal();
+    // CSS viewport units do not shrink with an ancestor's CSS zoom. Fit the
+    // top-layer dialog in logical pixels while retaining the enlarged text.
+    const fit = () => {
+      let zoom = 1;
+      for (let node: HTMLElement | null = element; node; node = node.parentElement)
+        zoom *= Number.parseFloat(getComputedStyle(node).zoom) || 1;
+      const width = window.innerWidth / zoom, height = window.innerHeight / zoom;
+      element.style.width = `${width}px`;
+      element.style.height = `${height}px`;
+      if (content.current) {
+        const style = getComputedStyle(element);
+        content.current.style.maxWidth = `${Math.max(1, width - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight))}px`;
+        content.current.style.maxHeight = `${Math.max(1, Math.min(height * .9, height - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom)))}px`;
+      }
+    };
+    fit();
+    window.addEventListener("resize", fit);
+    window.visualViewport?.addEventListener("resize", fit);
+    const observer = new MutationObserver(fit);
+    for (let node = element.parentElement; node; node = node.parentElement)
+      observer.observe(node, {attributes: true, attributeFilter: ["style", "class"]});
     (
       content.current?.querySelector<HTMLElement>(
         "input:not([disabled]),textarea:not([disabled]),select:not([disabled])",
       ) || content.current
     )?.focus();
     return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", fit);
+      window.visualViewport?.removeEventListener("resize", fit);
       element.close();
       if (previous?.isConnected) previous.focus({ preventScroll: true });
     };

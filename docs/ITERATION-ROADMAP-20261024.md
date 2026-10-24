@@ -18,22 +18,33 @@ checks now run the four Windows layouts only.
    an explicit repair follow-up. Include Windows desktop interfaces, restart
    durability, exportable evidence and native/local acceptance. Fold large-diff
    review performance into this milestone rather than releasing it alone.
-2. **User-owned Telegram Bot notifications on Windows (v0.6.23 release gate).** Audit
+2. **User-owned Telegram Bot notifications on Windows (published v0.6.23).** Audit
    reusable existing Telegram transport code. Add an understandable Bot connection
    setup, recipient binding, notification choices and an explicit test action.
    Cover completion, failed delivery acceptance, approval/input waiting, quota
    waiting and recovery. Verify retries, deduplication, restart durability and
    privacy controls. Keep Bot secrets in encrypted storage; no notifications are
    sent until the user explicitly configures and enables the connection.
-   Windows implementation and account-free native/UI verification now pass;
-   release packaging/readback is required. See `TELEGRAM-WINDOWS-20261025.md`.
-3. **Windows workflow delivery center (next substantial goal).** Build on the
+   Windows native/UI verification, complete packaging/readback and anonymous
+   full installer download passed. See `TELEGRAM-WINDOWS-20261025.md`.
+3. **Windows workflow delivery center (v0.6.24 release gate).** Build on the
    accepted per-task contracts and notification outbox: reusable acceptance
    plans, cross-task artifact inspection, stale-evidence detection, batch
    verification and workflow-level evidence export. Preserve failure/repair paths
    and downstream admission through restart/account recovery. This must include
    functional scheduling/evidence behavior, not only a dashboard or smaller UI
    changes. Reuse existing templates and workflow reports where appropriate.
+   Implementation, 599 Windows regression checks, native scheduler/filesystem/
+   download/restart and four-language UI now pass. Complete packaged acceptance
+   and release readback remain required. See `DELIVERY-CENTER-20261025.md`.
+4. **Windows delivery vault and portable handoff bundles (next substantial goal).**
+   Preserve actual verified artifact bytes in versioned local deliveries, with
+   complete manifests, fingerprints and workflow provenance. Produce a portable
+   handoff bundle that can be independently inspected without a model account.
+   Make copying, interrupted recovery, changed-file rejection and disk failure
+   explicit; never silently truncate artifacts to fit a limit. Reuse the current
+   acceptance plans, evidence reports and private Telegram notices. Verify actual
+   large files, tamper detection, export and restart before a complete release.
 
 Every milestone includes complete Windows Setup, Portable and ZIP artifacts,
 instructions and SHA256 checksums. Upload through the authorized LAN Gitea API
