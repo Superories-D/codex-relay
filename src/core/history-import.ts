@@ -235,6 +235,15 @@ export class BackgroundHistoryImport {
     }
     return this.progress;
   }
+  // A terminal progress message can precede worker exit and its final disk write.
+  // Callers preparing another import must wait for actual idle ownership.
+  async drain() {
+    const worker = this.worker;
+    if (worker && worker.threadId !== -1)
+      await new Promise<void>(resolve => worker.once("exit", () => resolve()));
+    await this.processing;
+    await this.reportWrites;
+  }
   async shutdown() {
     this.closing = true;
     this.cancel();

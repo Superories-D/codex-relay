@@ -35,6 +35,7 @@ import { fiveHour, timerEvidence } from "../shared/reset-window";
 import type { ImportPreview } from "../core/account-import";
 import { AccountSelection, AccountValueControl } from "./AccountValue";
 import { ImportAllControl } from "./ImportAllControl";
+import { TelegramSettings } from "./TelegramSettings";
 type Call = (name: string, args?: unknown) => Promise<any>;
 export function SettingsPage({
   initial,
@@ -444,6 +445,7 @@ export function SettingsPage({
                   )}
                 </p>
               </div>
+              <TelegramSettings call={call} />
             </>
           )}
           {tab === "personalization" && (

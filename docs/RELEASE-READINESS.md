@@ -1,12 +1,15 @@
 # Release readiness — active iteration, 2026-10-24
 
-2026-10-25 Windows scope: the user paused Linux-specific development. The current
-substantial milestone is `RELEASE-0622.md`: verifiable delivery contracts,
-post-close checks, durable evidence/recovery, dependent-task admission and repair
-drafts, plus large-diff rendering. Windows build, 566 passed / 43 platform skips,
-four-language UI and real Electron file evidence/restart passed. Linux adapters
-are preserved separately and are not in this release. Next: Windows Telegram Bot
-notifications under `ITERATION-ROADMAP-20261024.md`.
+2026-10-25 Windows scope: the user paused Linux-specific development. v0.6.22
+published verifiable delivery and large-diff review with complete artifacts.
+The next substantial milestone is `RELEASE-0623.md`: user-owned Telegram Bot
+notifications, system-encrypted durable outbox, rate limits, uncertain effects,
+recipient isolation and Windows system networking. Windows build, 584 passed /
+43 platform skips, four-language UI and real Electron system encryption,
+transport, scheduler notice and restart against a local Bot emulator passed.
+No external Bot message or inference was sent. Complete packaging/readback
+remains a release gate. Linux adapters remain separately preserved. Next:
+Windows workflow delivery center under `ITERATION-ROADMAP-20261024.md`.
 
 User goal: 持续迭代该项目，让各项功能达到可正式发布的水平。
 The goal was explicitly reactivated after v0.6.15 delivery. Preserve the original

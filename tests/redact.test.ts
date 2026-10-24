@@ -71,3 +71,11 @@ it("remains bounded, idempotent, and retains existing JWT and token masking", ()
   expect(redact(source, 12).length).toBeLessThanOrEqual(12);
   expect(redact(undefined)).toBe("");
 });
+
+it("masks Telegram Bot tokens in URLs, JSON and task titles without consuming ordinary timestamps", () => {
+  const secret = "123456789:abcdefghijklmnopqrstuvwxyz_ABCDEF";
+  const output = redact(JSON.stringify({url: `https://api.telegram.org/bot${secret}/sendMessage`, title: `Bot ${secret}`}));
+  expect(output).not.toContain(secret);
+  expect(JSON.parse(output).url).toContain("[REDACTED BOT TOKEN]/sendMessage");
+  expect(redact("12:34:56 and http://host:12345")).toBe("12:34:56 and http://host:12345");
+});

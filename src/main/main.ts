@@ -3,6 +3,7 @@ import { deliverySaveSchema } from "./validation";
 import {updateGoal} from "../core/goal-command";
 import { conversationExport } from "../core/conversation-export";
 import { NotificationState } from "../core/notification-state";
+import { WindowsTelegram, createTelegramTransport } from "./telegram-notifications";
 import { WindowPlacement } from "./window-placement";
 import { serviceHealth } from "../core/service-health";
 import { respondApproval } from "../core/approval-command";
@@ -15,6 +16,7 @@ import {
   dialog,
   shell,
   safeStorage,
+  net,
   powerMonitor,
   Tray,
   Menu,
@@ -228,6 +230,13 @@ async function boot() {
     },
   );
   const workflowReports = new WorkflowReports(scheduler.chats, () => store.data.jobs);
+  const telegram = new WindowsTelegram({
+    root: dataRoot,
+    transport: createTelegramTransport((url, init) => net.fetch(url, init)),
+    cipher: { encrypt: value => safeStorage.encryptString(value), decrypt: value => safeStorage.decryptString(value) },
+    text: nativeText,
+  });
+  await telegram.load(scheduler.snapshot());
   scheduler.runtimeReady = () => cliSetup.state.phase === "ready";
   const schedules = new Schedules(desktop, scheduler, () =>
     scheduler.changed(),
@@ -273,6 +282,7 @@ async function boot() {
       accounts.busy.add(j.accountId);
   let sleepBlocker: number | undefined;
   scheduler.on("snapshot", (snapshot) => {
+    telegram.observe(snapshot);
     if (window && !window.isDestroyed())
       window.webContents.send("relay:snapshot", snapshot);
     const notices = notifications.update(snapshot.jobs,snapshot.approvals);
@@ -313,6 +323,18 @@ async function boot() {
       "chat.fork", "chat.branchAt", "chat.agent.open",
     ].includes(name)) throw Error("Codex CLI 正在准备，请稍后重试");
     switch (name) {
+      case "telegram.read": return telegram.view();
+      case "telegram.save": return telegram.save(args);
+      case "telegram.discover": {
+        const a = z.object({token: z.string().max(150).optional()}).strict().parse(args);
+        return telegram.discover(a.token);
+      }
+      case "telegram.test": return telegram.test(z.object({revision: z.number().int().nonnegative()}).strict().parse(args).revision);
+      case "telegram.forget": return telegram.forget(z.object({revision: z.number().int().nonnegative()}).strict().parse(args).revision);
+      case "telegram.receipt": {
+        const a = z.object({id: z.string().uuid(), action: z.enum(["retry", "cancel"])}).strict().parse(args);
+        return telegram.action(a.id, a.action);
+      }
       case "cli.status":
         return structuredClone(cliSetup.state);
       case "cli.ensure":
@@ -1472,6 +1494,7 @@ async function boot() {
         .then(() =>
           Promise.all([
             cliSetup.shutdown(),
+            telegram.shutdown(),
             importer.drain(),
             backgroundHistory.shutdown(),
             scheduler.shutdown(),
@@ -1486,6 +1509,7 @@ async function boot() {
         })
         .catch((error) => {
           quitting = false;
+          telegram.resume();
           existing.start();
           schedules.start();
           catalog.resume();

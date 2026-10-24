@@ -477,7 +477,7 @@ async function finished() {
   expect(importer.progress.phase, JSON.stringify(importer.progress)).toBe(
     "completed",
   );
-  await new Promise((resolve) => setTimeout(resolve, 30));
+  await importer.drain();
 }
 it("imports Desktop projects without chats, CLI/archived chats and bounded parent history in a worker; repeated clicks deduplicate", async () => {
   const parent = await fixture(1),
