@@ -3,6 +3,7 @@ import {checkpointDigest,checkpointOid,checkpointPath,checkpointStoredFile,check
 import {deliveryChecksSchema,deliveryReportSchema} from "./delivery";
 import {handoffAttachment,handoffReplica} from "./handoff-assembly";
 import {adoptionPreviewSummary} from "./handoff-adoption-preview";
+import {sourceApplication} from "./handoff-source-application";
 
 export const handoffObjectFormat=z.enum(["sha1","sha256"]);
 export type HandoffObjectFormat=z.infer<typeof handoffObjectFormat>;
@@ -145,12 +146,13 @@ export const handoffEntry=z.object({
   criteria:handoffCriteria.default({revision:1,checks:[]}),review:handoffReviewSummary.optional(),
   continuations:z.array(handoffContinuation).default([]),pendingAdmission:handoffPendingAdmission.optional(),
   adoptionPreviews:z.array(adoptionPreviewSummary).default([]),
+  sourceApplications:z.array(sourceApplication).default([]),
   verification:z.object({at:z.number().finite(),unchanged:z.boolean(),changes:z.number().int().nonnegative()}).strict().optional(),
 }).strict();
 export type HandoffEntry=z.infer<typeof handoffEntry>;
 export interface HandoffView {
   revision:number;storage:string;entries:HandoffEntry[];issue?:string;
-  active?:{id:string;entryId:string;kind:"build"|"resolve"|"verify"|"recover"|"inspect"|"review"|"admit"|"content"|"graphResolve"|"assemble"|"sourcePreview";publishing:boolean};
+  active?:{id:string;entryId:string;kind:"build"|"resolve"|"verify"|"recover"|"inspect"|"review"|"admit"|"content"|"graphResolve"|"assemble"|"sourcePreview"|"sourcePrepare"|"sourceApply"|"sourceInspect"|"sourceRecover";publishing:boolean};
   progress?:HandoffProgress;
   workingReview?:{entryId:string;workspaceId:string;nodeId?:string;graphSha256?:string;path:string;at:number;bytes:number;sha256:string};
   contentReview?:{entryId:string;requestId:string;workspaceId?:string;nodeId?:string;graphSha256?:string;at:number};

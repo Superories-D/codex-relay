@@ -3,8 +3,8 @@
 Status: Windows production source in development after complete v0.6.28.
 Linux-specific work is paused. No v0.6.29 release tag or formal release exists.
 The incomplete development snapshot is separate from the released main branch.
-The user requested stopping automatic iteration after this round. Preserve the
-development snapshot and findings; do not automatically start another milestone.
+The user resumed the persistent iteration goal after the prior round was paused.
+Continue the Windows milestone from its retained development snapshot and evidence.
 The milestone still requires complete topology choices, guarded original-source
 adoption, partial-phase reconciliation and a complete packaged Windows release.
 Compatible child-repository assembly is implemented. A helper-only release does
@@ -329,3 +329,41 @@ remain separate evidence. No new Electron source-preview pass is claimed.
 These checks do not establish packaged-release readiness or completion of source
 adoption. v0.6.28 remains the latest formal release; the incomplete development
 snapshot belongs on a separate development branch, without a v0.6.29 release tag.
+
+## Resumed source application work
+
+The original-project write and recovery service/IPC/UI are now connected. A user
+chooses a policy for new files and for ignored setup omitted from the candidate,
+prepares every complete replacement and independent original backup, reviews the
+actual file/permission plan, then explicitly confirms application. The service
+rechecks current candidate acceptance and source before starting, and holds
+repository/index/ref leases across all mutations. Original staging and branches
+are retained. Per-file recovery choices bind the complete freshly observed state;
+later user edits cannot be overwritten by an old restoration request. Recovery
+outcomes retain their own history, separate from the original transaction state.
+
+New regular files derive permissions from the target project's parent using
+[CreatePrivateObjectSecurityEx](https://learn.microsoft.com/en-us/windows/win32/api/securitybaseapi/nf-securitybaseapi-createprivateobjectsecurityex)
+with the current creation token and file generic mapping. The resulting descriptor,
+owner/group and parent ACL fingerprint bind the request. The helper uses
+[SetSecurityInfo](https://learn.microsoft.com/en-us/windows/win32/api/aclapi/nf-aclapi-setsecurityinfo)
+on the held staged handle, verifies inherited permissions after the exclusive move,
+and rejects parent ACL changes. It does not inherit the protected backup home's
+private ACL. Twelve direct native checks pass, including inheritance and stale
+parent refusal. The managed transaction/recovery suite passes six checks; the
+process-domain suite passes four when run without unrelated native tests that
+would invalidate its global temporary-directory census.
+
+The first product-service application run passes preparation, restart, full
+8MiB+47 binary application/addition/deletion, retained index/config/HEAD and user
+staging, explicit preservation of omitted ignored setup and mixed recovery that
+leaves a later user edit intact. An expanded run also checks untouched source files
+and fresh acceptance on the original project before sealing product success.
+Latest exact-build and runtime evidence is tracked in QA output.
+
+Remaining scope is substantial: actual application/recovery renderer acceptance,
+complete forced-crash lease reconciliation and catalog publication recovery,
+new-directory/link/structural operations, special-stream/hardlink/ownership policies,
+missing-role/format/topology choices, full regression and complete packaged Windows
+release acceptance. Regular-file service proof does not establish completion of
+these requirements or desktop-experience parity.

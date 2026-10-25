@@ -28,7 +28,8 @@ export async function prepareAdoptionNativeRequest(input:Omit<AdoptionNativeRequ
   const probe=await writeAdoptionNativeRequest({...input,id:randomUUID()}),view=adoptionNativeInspection.parse(await runAdoptionNative("inspect",probe,options));
   const matches=(actual:AdoptionFileProof|null,expected?:AdoptionFileProof)=>!actual&&!expected||!!actual&&!!expected&&actual.dev===expected.dev&&actual.ino===expected.ino&&actual.bytes===expected.bytes&&actual.sha256===expected.sha256;
   if(!matches(view.target,input.before)||!matches(view.stage,input.after)||input.before&&!view.targetMetadata||input.after&&!view.stageMetadata)throw Error("采用文件在核对权限前发生变化");
-  return writeAdoptionNativeRequest({...input,beforeMetadata:input.before?view.targetMetadata!:undefined,afterMetadata:input.after?view.stageMetadata!:undefined});
+  if(input.creationSecurity&&JSON.stringify(input.creationSecurity)!==JSON.stringify(view.creationSecurity))throw Error("新文件的目标目录权限已变化，请重新核对");
+  return writeAdoptionNativeRequest({...input,creationSecurity:view.creationSecurity,beforeMetadata:input.before?view.targetMetadata!:undefined,afterMetadata:input.after?view.stageMetadata!:undefined});
 }
 /** Runtime ownership is mandatory: helper processes terminate with their main
  * process or cancellation, leaving the transaction journal available to inspect. */

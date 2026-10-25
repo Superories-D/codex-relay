@@ -11,7 +11,9 @@ export function classifyAdoptionFile(request:AdoptionNativeRequest,view:Adoption
   const beforeCopy=bytes(view.beforeCopy,request.before),backup=exact(view.backup,request.before),stage=exact(view.stage,request.after);
   const retainedMetadata=request.metadataSource?.metadata||request.beforeMetadata;
   const expectedAfter=request.afterMetadata?{...request.afterMetadata,...(retainedMetadata?{securitySha256:retainedMetadata.securitySha256,attributes:retainedMetadata.attributes,created:retainedMetadata.created,...(request.restoreMetadata?{modified:retainedMetadata.modified}:{})}:{})}:undefined;
-  if(exact(view.target,request.after)&&metadata(view.targetMetadata,expectedAfter)&&backup&&!view.stage&&(!request.before||beforeCopy))return view.applied?"applied":"appliedUnsealed";
+  const createdMetadata=request.creationSecurity&&expectedAfter?{...expectedAfter,securitySha256:view.targetMetadata?.securitySha256||""}:expectedAfter;
+  const inherited=!request.creationSecurity||view.targetMetadata?.sddl===request.creationSecurity.sddl;
+  if(exact(view.target,request.after)&&inherited&&metadata(view.targetMetadata,createdMetadata)&&backup&&!view.stage&&(!request.before||beforeCopy))return view.applied?"applied":"appliedUnsealed";
   if(exact(view.target,request.before)&&metadata(view.targetMetadata,request.beforeMetadata)&&!view.backup&&stage){
     if(view.applied)return"inconsistent";
     if(!view.prepared)return view.beforeCopy?"partialBackup":"notStarted";

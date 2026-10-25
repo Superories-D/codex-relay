@@ -12,7 +12,7 @@ const bytes=z.object({bytes:count,sha256:checkpointDigest}).strict();
 export const adoptionPreviewFile=z.object({
   repository:z.string().refine(value=>!value||checkpointPath.safeParse(value).success),path:checkpointPath,
   action:z.enum(["unchanged","create","replace","delete","blocked"]),issue:adoptionPreviewIssue.optional(),
-  before:bytes.optional(),after:bytes.optional(),afterFile:z.string().optional(),
+  before:bytes.optional(),after:bytes.optional(),afterFile:z.string().optional(),ignored:z.boolean().optional(),
 }).strict();
 export type AdoptionPreviewFile=z.infer<typeof adoptionPreviewFile>;
 export interface AdoptionPreviewDetail {

@@ -11,6 +11,7 @@ using System.Runtime.Serialization;
 using System.Runtime.Serialization.Json;
 using System.Security.Cryptography;
 using System.Security.AccessControl;
+using System.Security.Principal;
 using Microsoft.Win32.SafeHandles;
 
 [DataContract] sealed class AdoptionFileProof {
@@ -20,6 +21,7 @@ using Microsoft.Win32.SafeHandles;
 [DataContract] sealed class AdoptionMetadata {
   [DataMember] public uint attributes,links;
   [DataMember] public string security,securitySha256,created,modified;
+  [DataMember(EmitDefaultValue=false)] public string sddl;
   [DataMember] public string[] streams;
 }
 [DataContract] sealed class AdoptionDirectoryProof {
@@ -29,6 +31,9 @@ using Microsoft.Win32.SafeHandles;
   [DataMember] public string path;
   [DataMember] public AdoptionFileProof proof;
   [DataMember] public AdoptionMetadata metadata;
+}
+[DataContract] sealed class AdoptionCreationSecurity {
+  [DataMember] public string parentSecuritySha256,security,securitySha256,sddl;
 }
 [DataContract] sealed class AdoptionOwner {
   [DataMember] public int version;
@@ -40,6 +45,7 @@ using Microsoft.Win32.SafeHandles;
   [DataMember] public AdoptionFileProof before,after;
   [DataMember] public AdoptionMetadata beforeMetadata,afterMetadata;
   [DataMember] public AdoptionMetadataSource metadataSource;
+  [DataMember(EmitDefaultValue=false)] public AdoptionCreationSecurity creationSecurity;
   [DataMember] public bool restoreMetadata;
   [DataMember] public AdoptionDirectoryProof[] directories;
 }
@@ -54,6 +60,7 @@ using Microsoft.Win32.SafeHandles;
   [DataMember] public bool prepared,applied;
   [DataMember] public AdoptionFileProof target,stage,backup,beforeCopy;
   [DataMember] public AdoptionMetadata targetMetadata,stageMetadata,backupMetadata;
+  [DataMember(EmitDefaultValue=false)] public AdoptionCreationSecurity creationSecurity;
 }
 static class RelayAdoptionHost {
   const uint Read=0x80000000,Delete=0x10000,ReadAttributes=0x80,ShareRead=1,ShareWrite=2,OpenExisting=3,BackupSemantics=0x02000000,OpenReparse=0x00200000;
@@ -75,6 +82,9 @@ static class RelayAdoptionHost {
   [DllImport("advapi32.dll",SetLastError=true)] static extern uint GetSecurityDescriptorLength(IntPtr descriptor);
   [DllImport("advapi32.dll",SetLastError=true)] static extern bool GetSecurityDescriptorControl(IntPtr descriptor,out ushort control,out uint revision);
   [DllImport("advapi32.dll")] static extern bool EqualSid(IntPtr left,IntPtr right);
+  [StructLayout(LayoutKind.Sequential)] struct GenericMapping {public uint Read,Write,Execute,All;}
+  [DllImport("advapi32.dll",SetLastError=true)] static extern bool CreatePrivateObjectSecurityEx(IntPtr parent,IntPtr creator,out IntPtr result,IntPtr type,bool container,uint flags,IntPtr token,ref GenericMapping mapping);
+  [DllImport("advapi32.dll",SetLastError=true)] static extern bool DestroyPrivateObjectSecurity(ref IntPtr descriptor);
   [DllImport("kernel32.dll")] static extern IntPtr LocalFree(IntPtr memory);
   static string Full(string path){var value=Path.GetFullPath(path);return value.Length>Path.GetPathRoot(value).Length?value.TrimEnd('\\'):value;}
   static string Native(string path){path=Full(path);return path.StartsWith("\\\\")?"\\\\?\\UNC\\"+path.Substring(2):"\\\\?\\"+path;}
@@ -89,7 +99,7 @@ static class RelayAdoptionHost {
   static string Inode(FileInfo info){return (((ulong)info.IndexHigh<<32)|info.IndexLow).ToString(System.Globalization.CultureInfo.InvariantCulture);}
   static string Final(SafeFileHandle handle){var buffer=new StringBuilder(32768);var length=GetFinalPathNameByHandleW(handle,buffer,(uint)buffer.Capacity,0);if(length==0||length>=buffer.Capacity)throw new Win32Exception();var result=buffer.ToString();if(result.StartsWith("\\\\?\\UNC\\"))return "\\\\"+result.Substring(8);return result.StartsWith("\\\\?\\")?result.Substring(4):result;}
   static SafeFileHandle Open(string file,bool directory,bool mutable,bool metadataWrite=false){
-    var handle=CreateFileW(Native(file),directory?ReadAttributes:Read|(mutable?Delete:0)|(metadataWrite?0x40100U:0),directory?ShareRead|ShareWrite:ShareRead,IntPtr.Zero,OpenExisting,OpenReparse|(directory?BackupSemantics:0),IntPtr.Zero);
+    var handle=CreateFileW(Native(file),directory?ReadAttributes|0x20000U:Read|(mutable?Delete:0)|(metadataWrite?0x40100U:0),directory?ShareRead|ShareWrite:ShareRead,IntPtr.Zero,OpenExisting,OpenReparse|(directory?BackupSemantics:0),IntPtr.Zero);
     if(handle.IsInvalid){handle.Dispose();throw new Win32Exception();}try{var info=Info(handle);if((info.Attributes&0x400)!=0||((info.Attributes&0x10)!=0)!=directory||!Same(Final(handle),file))throw new Exception("Adoption path identity or reparse state changed");return handle;}catch{handle.Dispose();throw;}
   }
   static string Hash(byte[] bytes){using(var hash=SHA256.Create())return BitConverter.ToString(hash.ComputeHash(bytes)).Replace("-","").ToLowerInvariant();}
@@ -110,7 +120,23 @@ static class RelayAdoptionHost {
     IntPtr owner,group,dacl,sacl,descriptor;var code=GetSecurityInfo(handle,1,7,out owner,out group,out dacl,out sacl,out descriptor);if(code!=0)throw new Win32Exception((int)code);
     byte[] security;try{security=new byte[GetSecurityDescriptorLength(descriptor)];Marshal.Copy(descriptor,security,0,security.Length);}finally{LocalFree(descriptor);}
     var info=Info(handle);var streams=new List<string>();StreamInfo stream;var search=FindFirstStreamW(Native(Final(handle)),0,out stream,0);if(search==new IntPtr(-1)){var error=Marshal.GetLastWin32Error();if(error!=38&&error!=87)throw new Win32Exception(error);}else try{do{streams.Add(stream.Name);}while(FindNextStreamW(search,out stream));var error=Marshal.GetLastWin32Error();if(error!=38)throw new Win32Exception(error);}finally{FindClose(search);}
-    return new AdoptionMetadata{attributes=info.Attributes,links=info.Links,security=Convert.ToBase64String(security),securitySha256=Hash(security),created=Time(info.Creation).ToString(),modified=Time(info.Write).ToString(),streams=streams.ToArray()};
+    return new AdoptionMetadata{attributes=info.Attributes,links=info.Links,security=Convert.ToBase64String(security),securitySha256=Hash(security),sddl=SecuritySddl(security),created=Time(info.Creation).ToString(),modified=Time(info.Write).ToString(),streams=streams.ToArray()};
+  }
+  static string SecuritySddl(byte[] value){return new RawSecurityDescriptor(value,0).GetSddlForm(AccessControlSections.Owner|AccessControlSections.Group|AccessControlSections.Access);}
+  static AdoptionCreationSecurity CreationSecurity(string parent){
+    using(var handle=Open(parent,true,false)){
+      IntPtr owner,group,dacl,sacl,descriptor,result;var code=GetSecurityInfo(handle,1,7,out owner,out group,out dacl,out sacl,out descriptor);if(code!=0)throw new Win32Exception((int)code);
+      try{var parentBytes=new byte[GetSecurityDescriptorLength(descriptor)];Marshal.Copy(descriptor,parentBytes,0,parentBytes.Length);var mapping=new GenericMapping{Read=0x120089,Write=0x120116,Execute=0x1200A0,All=0x1F01FF};using(var identity=WindowsIdentity.GetCurrent()){
+        if(!CreatePrivateObjectSecurityEx(descriptor,IntPtr.Zero,out result,IntPtr.Zero,false,1,identity.Token,ref mapping))throw new Win32Exception();
+        try{var bytes=new byte[GetSecurityDescriptorLength(result)];Marshal.Copy(result,bytes,0,bytes.Length);var parsed=new RawSecurityDescriptor(bytes,0);if(parsed.DiscretionaryAcl==null)throw new Exception("New file inheritance produced an unbounded null DACL");return new AdoptionCreationSecurity{parentSecuritySha256=Hash(parentBytes),security=Convert.ToBase64String(bytes),securitySha256=Hash(bytes),sddl=SecuritySddl(bytes)};}finally{DestroyPrivateObjectSecurity(ref result);}
+      }}finally{LocalFree(descriptor);}
+    }
+  }
+  static void MatchCreationSecurity(AdoptionCreationSecurity actual,AdoptionCreationSecurity expected){if(expected==null||actual.parentSecuritySha256!=expected.parentSecuritySha256||actual.securitySha256!=expected.securitySha256||actual.security!=expected.security||actual.sddl!=expected.sddl)throw new Exception("New file parent permissions changed after review");}
+  static void ApplyCreationSecurity(SafeFileHandle replacement,AdoptionCreationSecurity security,bool protect){
+    var bytes=Convert.FromBase64String(security.security);if(Hash(bytes)!=security.securitySha256||SecuritySddl(bytes)!=security.sddl)throw new Exception("Invalid reviewed new file security descriptor");
+    var wanted=new RawSecurityDescriptor(bytes,0);var actual=new RawSecurityDescriptor(Convert.FromBase64String(Metadata(replacement).security),0);if(!wanted.Owner.Equals(actual.Owner)||!wanted.Group.Equals(actual.Group))throw new Exception("New file owner/group differs from the reviewed creation token");
+    var acl=new byte[wanted.DiscretionaryAcl.BinaryLength];wanted.DiscretionaryAcl.GetBinaryForm(acl,0);var memory=Marshal.AllocHGlobal(acl.Length);try{Marshal.Copy(acl,0,memory,acl.Length);var code=SetSecurityInfo(replacement,1,4U|(protect?0x80000000U:0x20000000U),IntPtr.Zero,IntPtr.Zero,memory,IntPtr.Zero);if(code!=0)throw new Win32Exception((int)code);}finally{Marshal.FreeHGlobal(memory);}
   }
   static void OrdinaryMetadata(AdoptionMetadata metadata){
     if(metadata.links!=1||metadata.streams.Any(name=>name!="::$DATA")||(metadata.attributes&~0x21A7U)!=0)throw new Exception("Adoption requires an explicit plan for hardlinks, alternate streams or special storage attributes");
@@ -146,20 +172,24 @@ static class RelayAdoptionHost {
     var held=new List<SafeFileHandle>();try{
       foreach(var directory in directories.OrderBy(pair=>pair.Key.Length)){var handle=Open(directory.Key,true,false);held.Add(handle);var info=Info(handle);if(info.Volume.ToString(System.Globalization.CultureInfo.InvariantCulture)!=directory.Value.dev||Inode(info)!=directory.Value.ino)throw new Exception("Adoption ancestor identity changed");}
       var owner=Deserialize<AdoptionOwner>(ReadBytes(Path.Combine(request.home,".relay-adoption.json")));if(owner.version!=1||owner.id!=request.transactionId||owner.owner!=request.owner||!Same(owner.root,request.root))throw new Exception("Adoption home ownership changed");
-      if(command=="inspect"){var view=new AdoptionInspection{id=request.id,transactionId=request.transactionId,target=OptionalProof(target),stage=stage==null?null:OptionalProof(stage),backup=OptionalProof(backup),beforeCopy=OptionalProof(beforeCopy),targetMetadata=OptionalMetadata(target),stageMetadata=stage==null?null:OptionalMetadata(stage),backupMetadata=OptionalMetadata(backup),prepared=ReceiptExists(prepared,request,expectedSha,"prepared"),applied=ReceiptExists(applied,request,expectedSha,"applied")};using(var output=Console.OpenStandardOutput())new DataContractJsonSerializer(typeof(AdoptionInspection)).WriteObject(output,view);return 0;}
+      var creationSecurity=request.action=="create"&&request.metadataSource==null?CreationSecurity(Path.GetDirectoryName(target)):null;
+      if(command=="inspect"){var view=new AdoptionInspection{id=request.id,transactionId=request.transactionId,target=OptionalProof(target),stage=stage==null?null:OptionalProof(stage),backup=OptionalProof(backup),beforeCopy=OptionalProof(beforeCopy),targetMetadata=OptionalMetadata(target),stageMetadata=stage==null?null:OptionalMetadata(stage),backupMetadata=OptionalMetadata(backup),creationSecurity=creationSecurity,prepared=ReceiptExists(prepared,request,expectedSha,"prepared"),applied=ReceiptExists(applied,request,expectedSha,"applied")};using(var output=Console.OpenStandardOutput())new DataContractJsonSerializer(typeof(AdoptionInspection)).WriteObject(output,view);return 0;}
+      if(creationSecurity!=null)MatchCreationSecurity(creationSecurity,request.creationSecurity);else if(request.creationSecurity!=null)throw new Exception("Unexpected new-file security policy");
       if(command!="apply")throw new Exception("Unknown adoption operation");if(File.Exists(Native(prepared))||File.Exists(Native(applied))||File.Exists(Native(backup))||File.Exists(Native(beforeCopy)))throw new Exception("Adoption transition already started; inspect its durable state");
       SafeFileHandle original=null,replacement=null,metadataSource=null;try{
         if(request.before!=null){original=Open(target,false,true);Match(Proof(original),request.before);var metadata=Metadata(original);MatchMetadata(metadata,request.beforeMetadata);OrdinaryMetadata(metadata);Copy(original,beforeCopy);using(var proof=Open(beforeCopy,false,false)){var copied=Proof(proof);if(copied.sha256!=request.before.sha256||copied.bytes!=request.before.bytes)throw new Exception("Independent adoption backup failed complete verification");}}
         else if(OptionalProof(target)!=null)throw new Exception("Adoption destination already exists");
         if(metadataFile!=null){metadataSource=Open(metadataFile,false,false);Match(Proof(metadataSource),request.metadataSource.proof);MatchMetadata(Metadata(metadataSource),request.metadataSource.metadata);OrdinaryMetadata(request.metadataSource.metadata);}
         var metadataOriginal=metadataSource??original;
-        if(stage!=null){replacement=Open(stage,false,true,true);Match(Proof(replacement),request.after);var metadata=Metadata(replacement);MatchMetadata(metadata,request.afterMetadata);OrdinaryMetadata(metadata);if(metadataOriginal!=null){Security(metadataOriginal,replacement,true);Attributes(metadataOriginal,replacement,request.restoreMetadata);}}
+        if(stage!=null){replacement=Open(stage,false,true,true);Match(Proof(replacement),request.after);var metadata=Metadata(replacement);MatchMetadata(metadata,request.afterMetadata);OrdinaryMetadata(metadata);if(metadataOriginal!=null){Security(metadataOriginal,replacement,true);Attributes(metadataOriginal,replacement,request.restoreMetadata);}else if(creationSecurity!=null)ApplyCreationSecurity(replacement,creationSecurity,true);}
         Save(prepared,new AdoptionReceipt{id=request.id,transactionId=request.transactionId,requestSha256=expectedSha,phase="prepared",before=request.before,after=request.after});
-        if(original!=null)Move(original,backup);if(replacement!=null){Move(replacement,target);if(metadataOriginal!=null)Security(metadataOriginal,replacement,false);}
+        if(creationSecurity!=null)MatchCreationSecurity(CreationSecurity(Path.GetDirectoryName(target)),request.creationSecurity);
+        if(original!=null)Move(original,backup);if(replacement!=null){Move(replacement,target);if(metadataOriginal!=null)Security(metadataOriginal,replacement,false);else if(creationSecurity!=null)ApplyCreationSecurity(replacement,creationSecurity,false);}
         var before=original==null?null:Proof(original);var after=replacement==null?null:Proof(replacement);
         // A pre-existing writable mapping can bypass normal write-handle sharing.
         // Never seal success from the initial hash alone; partial state stays inspectable.
         if(before!=null){Match(before,request.before);MatchMetadata(Metadata(original),request.beforeMetadata);}if(after!=null){Match(after,request.after);var expected=request.metadataSource!=null?request.metadataSource.metadata:request.beforeMetadata;var actual=Metadata(replacement);if(expected!=null&&(actual.securitySha256!=expected.securitySha256||actual.attributes!=expected.attributes||actual.created!=expected.created||request.restoreMetadata&&actual.modified!=expected.modified))throw new Exception("Adopted permissions or attributes did not match the reviewed original");}
+        if(creationSecurity!=null){MatchCreationSecurity(CreationSecurity(Path.GetDirectoryName(target)),request.creationSecurity);if(Metadata(replacement).sddl!=creationSecurity.sddl)throw new Exception("New file did not retain the reviewed inherited project permissions");}
         var receipt=new AdoptionReceipt{id=request.id,transactionId=request.transactionId,requestSha256=expectedSha,phase="applied",before=before,after=after};Save(applied,receipt);using(var output=Console.OpenStandardOutput())new DataContractJsonSerializer(typeof(AdoptionReceipt)).WriteObject(output,receipt);return 0;
       }finally{if(replacement!=null)replacement.Dispose();if(original!=null)original.Dispose();if(metadataSource!=null)metadataSource.Dispose();}
     }finally{foreach(var handle in held)handle.Dispose();}

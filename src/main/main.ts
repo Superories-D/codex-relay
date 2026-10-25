@@ -389,6 +389,10 @@ async function boot() {
       case "handoffs.admit":return handoffs.admit(args);
       case "handoffs.sourcePreview":return handoffs.sourcePreview(args);
       case "handoffs.sourcePreviewDetail":return handoffs.sourcePreviewDetail(args);
+      case "handoffs.sourcePrepare":return handoffs.sourcePrepare(args);
+      case "handoffs.sourceApply":return handoffs.sourceApply(args);
+      case "handoffs.sourceApplicationDetail":return handoffs.sourceApplicationDetail(args);
+      case "handoffs.sourceRecover":return handoffs.sourceRecover(args);
       case "handoffs.task":return handoffs.task(idSchema.parse(args));
       case "handoffs.cancel":return handoffs.cancel(idSchema.parse(args));
       case "handoffs.resolve":return handoffs.resolve(args);

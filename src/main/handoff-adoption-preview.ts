@@ -6,10 +6,11 @@ import {checkpointDigest,checkpointManifest,type CheckpointRepo} from "../shared
 import {adoptionPreviewFile,adoptionPreviewSummary,type AdoptionPreviewFile,type AdoptionPreviewSummary,type AdoptionPreviewDetail} from "../shared/handoff-adoption-preview";
 import type {HandoffEntry,HandoffWorkspace} from "../shared/handoff";
 import type {HandoffRepository} from "./handoff-repository";
-import {prepareCheckpoint,captureCheckpointFiles,assertCheckpointSource} from "./checkpoint-capture";
+import {prepareCheckpoint,captureCheckpointFiles,assertCheckpointSource,type PreparedCheckpoint} from "./checkpoint-capture";
 import {checkpointFingerprint,checkpointSourcePath,sameCheckpointPath} from "./checkpoint-file";
 import {adoptionSourceSignature,adoptionRepositoryGuard,captureAdoptionRepositoryGuards,assertAdoptionRepositoryGuards} from "./handoff-adoption-guards";
 import {readHandoffGraph,graphReviewWorkspace} from "./handoff-graph";
+import {CheckpointGit} from "./checkpoint-git";
 const hash=(value:string|Buffer)=>createHash("sha256").update(value).digest("hex"),uuid=z.string().uuid();
 const previewPlan=z.object({version:z.literal(1),id:uuid,owner:uuid,entryId:uuid,workspaceId:uuid,reviewId:uuid,requestSha256:checkpointDigest,createdAt:z.number().finite(),expiresAt:z.number().finite(),source:z.string(),sourceSha256:checkpointDigest,preparedSha256:checkpointDigest,guards:z.array(adoptionRepositoryGuard),files:z.array(adoptionPreviewFile)}).strict();
 export type AdoptionPreviewPlan=z.infer<typeof previewPlan>;
@@ -42,7 +43,7 @@ export async function createAdoptionPreview(input:{id:string;owner:string;entry:
   async function inventory(node:CheckpointRepo,target:HandoffWorkspace,rows:AdoptionPreviewFile[]){
     const before=new Map(node.files.map(file=>[file.path,file])),after=new Map(target.files.map(file=>[file.path,file])),names=[...new Set([...before.keys(),...after.keys()])].sort(),folded=new Map<string,string>();
     for(const name of names){
-      options.signal.throwIfAborted();const source=before.get(name),result=after.get(name),row:AdoptionPreviewFile={repository:node.relative,path:name,action:"unchanged",before:bytes(source?.stored),after:bytes(result)};
+      options.signal.throwIfAborted();const source=before.get(name),result=after.get(name),row:AdoptionPreviewFile={repository:node.relative,path:name,action:"unchanged",before:bytes(source?.stored),after:bytes(result),ignored:source?.ignored||undefined};
       if(folded.has(name.toLowerCase())&&folded.get(name.toLowerCase())!==name){row.action="blocked";row.issue="structural";}else if(result?.disposition==="gitlink"||source?.kind==="directory"){
         const relative=node.relative?`${node.relative}/${name}`:name,child=prepared.manifest.repos.find(value=>value.relative===relative);
         if(source?.kind==="directory"&&result&&result.disposition!=="gitlink"){row.action="blocked";row.issue="structural";}else if(!child&&!(source?.kind==="directory"&&!result)){row.action="blocked";row.issue="topology";}
@@ -67,3 +68,16 @@ export async function readAdoptionPreview(folder:string,summary:AdoptionPreviewS
   const preparedFile=await checkpointSourcePath(folder,"prepared.json"),preparedProof=await checkpointFingerprint(preparedFile),preparedJson=await fs.readFile(preparedFile);if(preparedProof.sha256!==plan.preparedSha256||hash(preparedJson)!==plan.preparedSha256)throw Error("原项目采用预览完整性未通过");checkpointManifest.parse(JSON.parse(preparedJson.toString("utf8")).manifest);return plan;
 }
 export function adoptionPreviewPage(plan:AdoptionPreviewPlan,summary:AdoptionPreviewSummary,offset:number,limit:number):AdoptionPreviewDetail{return{summary,source:plan.source,offset,total:plan.files.length,files:plan.files.slice(offset,offset+limit).map(({afterFile,...file})=>file)};}
+export async function assertAdoptionPreviewSource(folder:string,plan:AdoptionPreviewPlan,options:{native?:boolean;signal?:AbortSignal}){
+  const file=await checkpointSourcePath(folder,"prepared.json"),bytes=await fs.readFile(file);if(hash(bytes)!==plan.preparedSha256)throw Error("原项目采用预览完整性未通过");const prepared=JSON.parse(bytes.toString("utf8"))as PreparedCheckpoint;checkpointManifest.parse(prepared.manifest);if(adoptionSourceSignature(prepared.manifest)!==plan.sourceSha256)throw Error("原项目采用预览完整性未通过");await assertCheckpointSource(prepared,{...options,root:path.join(folder,"source")},true);
+}
+export async function assertAdoptionUntouchedSource(folder:string,plan:AdoptionPreviewPlan,files:{path:string;after?:unknown}[],options:{native?:boolean;signal?:AbortSignal}){
+  const bytes=await fs.readFile(await checkpointSourcePath(folder,"prepared.json"));if(hash(bytes)!==plan.preparedSha256)throw Error("原项目采用预览完整性未通过");const prepared=JSON.parse(bytes.toString("utf8"))as PreparedCheckpoint,changed=new Set(files.map(file=>path.join(plan.source,...file.path.split("/")).toLowerCase())),git=new CheckpointGit(path.join(folder,"commands"),options);
+  prepared.guards=prepared.guards.filter(guard=>!changed.has(path.resolve(guard.path).toLowerCase()));
+  for(const listing of prepared.listings){
+    const node=prepared.manifest.repos.find(node=>sameCheckpointPath(node.source,listing.source))!;const local=files.filter(file=>!node.relative||file.path.startsWith(node.relative+"/")).map(file=>({...file,path:node.relative?file.path.slice(node.relative.length+1):file.path})).filter(file=>!prepared.manifest.repos.some(child=>child.relative!==node.relative&&child.relative.startsWith(node.relative?node.relative+"/":"")&&file.path.startsWith((node.relative?child.relative.slice(node.relative.length+1):child.relative)+"/")));
+    const names=new Set(local.map(file=>file.path)),expected=new Set(listing.others.filter(name=>!names.has(name))),additions=local.filter(file=>!!file.after&&!listing.cached.includes(file.path)).map(file=>file.path),ignored=new Set(additions.length?await git.records(listing.source,["check-ignore","--stdin","-z"],listing.env,{input:additions.join("\0")+"\0",allowCode:1}):[]);
+    for(const name of additions)if(!ignored.has(name))expected.add(name);listing.others=[...expected].sort();
+  }
+  await assertCheckpointSource(prepared,{...options,root:path.join(folder,"source")},true);
+}
