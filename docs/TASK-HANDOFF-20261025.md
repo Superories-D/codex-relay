@@ -361,6 +361,25 @@ leaves a later user edit intact. An expanded run also checks untouched source fi
 and fresh acceptance on the original project before sealing product success.
 Latest exact-build and runtime evidence is tracked in QA output.
 
+The exact isolated development build now passes five actual Electron application
+checks: prepared-plan/permission review and confirmation, full native source write
+with fresh source acceptance, refusal to overwrite later edits, mixed per-path
+recovery, and restart of the same verified history. A separate actual child-graph
+preview passes four checks, including exact mounted content and source integrity.
+Four synthetic application layouts pass across Chinese, Traditional Chinese,
+English and Japanese, including 150% zoom and 125 per-path recovery choices.
+The focused source-service/lease/state/locale regression passes all 28 checks.
+
+Recovery finish also retains a new file's originally reviewed parent ACL policy;
+it cannot silently recalculate a different parent policy after permissions change.
+Seven native transaction/recovery checks pass. Recovery display now verifies each
+current file against the sealed recovery outcome before labeling it restored,
+finished or retained. Two actual native inspection checks verify both correct
+restoration labels and loss of only the affected label after a later user edit.
+Earlier failed desktop runs remain recorded: instrumentation traced the quit to
+the application's window-close handler; later harness fixes hide its test window,
+wait for asynchronous command admission and select controls by name.
+
 Remaining scope is substantial: actual application/recovery renderer acceptance,
 complete forced-crash lease reconciliation and catalog publication recovery,
 new-directory/link/structural operations, special-stream/hardlink/ownership policies,

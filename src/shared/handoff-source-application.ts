@@ -12,5 +12,6 @@ export interface SourceApplicationDetail {
   observationSha256:string;
   sourceAcceptance?:{status:string;at:number};
   recovery?:{id:string;outcome:string;at:number};
+  recoveryFiles?:{id:string;path:string;action:"restored"|"finished"|"kept"}[];
   permissions:{id:string;path:string;mode:"preserveOriginal"|"inheritProject";sddl?:string}[];
 }

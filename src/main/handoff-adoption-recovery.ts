@@ -37,7 +37,7 @@ export async function prepareAdoptionRecovery(transaction:AdoptionTransaction,tr
       if(observed.observed.backup&&observed.observed.backupMetadata)metadataSource={path:`actual/${original.request.id}`,proof:observed.observed.backup,metadata:observed.observed.backupMetadata};
     }
     const before=observed.observed.target||undefined;if(before&&decision.action==="finish")metadataSource=undefined;
-    const native=await prepareAdoptionNativeRequest({id:randomUUID(),transactionId:transaction.id,owner:transaction.owner,home:transaction.home,root:transaction.root,path:observed.path,action:before?after?"replace":"delete":"create",before,after,stage,metadataSource,restoreMetadata:decision.action==="restore"&&!!metadataSource},options);row.requestId=native.request.id;row.requestSha256=native.sha256;plan.operations.push(row);
+    const native=await prepareAdoptionNativeRequest({id:randomUUID(),transactionId:transaction.id,owner:transaction.owner,home:transaction.home,root:transaction.root,path:observed.path,action:before?after?"replace":"delete":"create",before,after,stage,metadataSource,creationSecurity:decision.action==="finish"&&!before?original.request.creationSecurity:undefined,restoreMetadata:decision.action==="restore"&&!!metadataSource},options);row.requestId=native.request.id;row.requestSha256=native.sha256;plan.operations.push(row);
   }
   // Staging new recovery bytes must not change the original observed source state.
   const after=await inspectAdoptionTransaction(transaction,transactionSha256,options);if(adoptionObservationSha(after)!==input.observationSha256)throw Error("采用恢复状态在准备期间发生变化，所有版本已保留");

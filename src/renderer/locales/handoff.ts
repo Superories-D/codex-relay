@@ -1,4 +1,7 @@
 const messages:[string,string,string][]=[
+  ["已恢复写回前原件","Original restored and verified","反映前の元ファイルを復元・検証済み"],
+  ["已完成已审阅结果","Reviewed result completed and verified","確認済みの結果を反映・検証済み"],
+  ["已保留当前文件","Current file retained and verified","現在のファイルを保持・検証済み"],
   ["原项目上的写回验收","Acceptance on the original project","元のプロジェクトでの反映検証"],
   ["最近恢复结果","Latest recovery outcome","最近の復旧結果"],
   ["已恢复全部所选原件","All selected originals restored","選択したすべての元ファイルを復元済み"],

@@ -145,7 +145,14 @@ checks now run the four Windows layouts only.
    layouts and actual managed Git paths beyond260characters pass. Repository
    metadata locks and prepared ref verification cover fresh source admission;
    complete current regression and actual Electron preview proof are tracked in
-   QA output. Source application/recovery UI, forced-crash lease reconciliation,
+   QA output. Source application/recovery now connects complete protected plans,
+   explicit new-file/omitted-setup policies, actual confirmation, native moves,
+   unchanged Git staging and independent per-path recovery to the product UI.
+   New-file permissions inherit from the reviewed target directory with stale-ACL
+   refusal. Actual Electron application/recovery/restart5checks and mounted source
+   preview4checks pass, application renderer4layouts pass, focused regression28checks
+   pass. Native helper12checks and transaction/recovery7checks pass; independent
+   recovery-label inspection2checks passes. Forced-crash lease reconciliation,
    new-directory/link/structural operations, missing-role/format/
    topology choices and packaged release acceptance remain required. This milestone
    is still in progress and no .29 release has been published. See
