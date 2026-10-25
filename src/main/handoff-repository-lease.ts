@@ -1,0 +1,40 @@
+import {promises as fs} from "node:fs";
+import path from "node:path";
+import os from "node:os";
+import {createHash,randomUUID} from "node:crypto";
+import {z} from "zod";
+import {spawnWindowsDomain,releaseWindowsDomain,windowsDomainHost,type DomainChild} from "../core/windows-domain";
+import {terminateTree} from "../core/process";
+import {adoptionNativeDirectories} from "./handoff-adoption-native";
+import {checkpointFingerprint,sameCheckpointPath} from "./checkpoint-file";
+import type {AdoptionRepositoryGuard} from "./handoff-adoption-guards";
+const digest=z.string().regex(/^[a-f0-9]{64}$/),decimal=z.string().regex(/^\d+$/),hash=(value:string|Buffer)=>createHash("sha256").update(value).digest("hex");
+const leaseProof=z.object({file:z.string(),dev:decimal,ino:decimal,bytes:z.number().int().nonnegative().safe(),sha256:digest}).strict();
+const leaseMessage=z.object({version:z.literal(1),id:z.string().uuid(),requestSha256:digest,phase:z.enum(["held","released"]),locks:z.array(leaseProof)}).strict();
+type LeaseMessage=z.infer<typeof leaseMessage>;
+export type RepositoryLeaseOptions={signal?:AbortSignal;leaseExecutable?:string;protect?:(directory:string)=>Promise<void>;onLeaseHeld?:(value:{id:string;home:string;locks:LeaseMessage["locks"]})=>Promise<void>};
+/** A Windows-owned handle keeps every conventional Git lock alive and deletes it
+ * on forced termination. No stale-lock deletion or PID guessing is necessary. */
+export async function withWindowsRepositoryLease<T>(guards:AdoptionRepositoryGuard[],scratch:string,options:RepositoryLeaseOptions,action:(signal:AbortSignal)=>Promise<T>):Promise<T>{
+  if(process.platform!=="win32")throw Error("原项目锁恢复需要 Windows 进程组件");options.signal?.throwIfAborted();
+  const id=randomUUID(),owner=randomUUID(),home=path.join(scratch,`repository-lease-${id}`);await fs.mkdir(home,{mode:0o700});await options.protect?.(home);await fs.writeFile(path.join(home,".relay-repository-lease.json"),JSON.stringify({version:1,id,owner}),{flag:"wx",mode:0o600});
+  const requestFile=path.join(home,"request.json"),request={version:1,id,owner,home,repositories:guards.map(guard=>({gitDir:guard.gitDir,commonDir:guard.commonDir,index:guard.index,branch:guard.branch})),directories:await adoptionNativeDirectories([requestFile,...guards.flatMap(guard=>[path.join(guard.gitDir,".lease-parent"),path.join(guard.commonDir,".lease-parent")])])},json=JSON.stringify(request),requestSha256=hash(json);await fs.writeFile(requestFile,json,{flag:"wx",mode:0o600});
+  const runtimeParent=await fs.realpath(os.tmpdir()),runtime=await fs.mkdtemp(path.join(runtimeParent,"relay-repo-lease-")),claim=randomUUID();await fs.writeFile(path.join(runtime,".relay-repository-lease-process.json"),JSON.stringify({version:1,claim}),{flag:"wx",mode:0o600});
+  const expected=[...new Set(guards.flatMap(guard=>[...guard.lockPaths,path.join(guard.gitDir,"HEAD.lock"),...guard.refs.map(ref=>path.join(ref.name==="HEAD"?guard.gitDir:guard.commonDir,...ref.name.split("/"))+".lock")]).map(file=>path.resolve(file).toLowerCase()))].sort(),lost=new AbortController(),signal=options.signal?AbortSignal.any([options.signal,lost.signal]):lost.signal;
+  let child:DomainChild|undefined,stop:Promise<void>|undefined,error:unknown,callbackError:unknown,result:T|undefined,reached=false,held=false,released=false,closing=false,readyResolve!:(message:LeaseMessage)=>void,readyReject!:(error:unknown)=>void,bootstrap:ReturnType<typeof setTimeout>|undefined;
+  const ready=new Promise<LeaseMessage>((resolve,reject)=>{readyResolve=resolve;readyReject=reject;});void ready.catch(()=>{});
+  const stopping=()=>{if(child){stop??=terminateTree(child);void stop.catch(()=>{});}};
+  try{
+    const host=await windowsDomainHost(),executable=await fs.realpath(options.leaseExecutable||path.join(path.dirname(host),"RelayRepositoryLeaseHost.exe")),standard=/^(SystemRoot|windir|SystemDrive|TEMP|TMP|USERPROFILE|APPDATA|LOCALAPPDATA|ProgramData|ProgramFiles|ProgramFiles\(x86\)|CommonProgramFiles|CommonProgramFiles\(x86\)|USERDOMAIN|USERNAME|COMPUTERNAME|HOMEDRIVE|HOMEPATH|PROCESSOR_ARCHITECTURE|PROCESSOR_IDENTIFIER|NUMBER_OF_PROCESSORS|OS)$/i,env:NodeJS.ProcessEnv=Object.fromEntries(Object.entries(process.env).filter(([key])=>standard.test(key)));env.PATH=path.join(process.env.SystemRoot||"C:/Windows","System32");
+    child=await spawnWindowsDomain(executable,[requestFile,requestSha256],runtime,env);const running=child,closed=new Promise<number|null>((resolve,reject)=>{running.once("error",reject);running.once("close",resolve);if(running.exitCode!==null)resolve(running.exitCode);});let stderr="";running.stderr.on("data",chunk=>{stderr=(stderr+chunk.toString()).slice(-16000);});running.stdin.on("error",()=>{});
+    bootstrap=setTimeout(()=>{void(async()=>{if(running.exitCode!==null||running.signalCode!==null)return;try{await fs.lstat(path.join(runtime,`relay-domain-${running.relayDomain!.owner.nonce}.json`));}catch(cause){const failure=Error("原项目锁组件未完成受管启动",{cause});lost.abort(failure);readyReject(failure);stopping();}})();},20000);
+    options.signal?.addEventListener("abort",stopping,{once:true});if(options.signal?.aborted)stopping();
+    const output=(async()=>{let pending="";for await(const chunk of running.stdout){pending+=chunk.toString("utf8");let index:number;while((index=pending.indexOf("\n"))>=0){const line=pending.slice(0,index).replace(/\r$/,"");pending=pending.slice(index+1);const message=leaseMessage.parse(JSON.parse(line));if(message.id!==id||message.requestSha256!==requestSha256)throw Error("原项目锁回执与当前计划不一致");if(message.phase==="held"){if(held||JSON.stringify(message.locks.map(lock=>path.resolve(lock.file).toLowerCase()).sort())!==JSON.stringify(expected))throw Error("原项目锁集合与已审阅仓库不一致");held=true;readyResolve(message);}else{if(!closing||!held||released||message.locks.length)throw Error("原项目锁释放回执无法验证");released=true;}}}if(pending.length)throw Error("原项目锁回执不完整");})().catch(cause=>{lost.abort(cause);readyReject(cause);stopping();throw cause;});
+    void closed.then(()=>{if(!closing){const failure=Error("原项目锁持有进程已结束，写回已停止");lost.abort(failure);readyReject(failure);}},cause=>{lost.abort(cause);readyReject(cause);});
+    const invoke=(async()=>{try{const message=await ready;signal.throwIfAborted();for(const lock of message.locks){const proof=await checkpointFingerprint(lock.file,{signal});if(proof.identity.split(":").slice(0,2).join(":")!==`${lock.dev}:${lock.ino}`||proof.bytes!==lock.bytes||proof.sha256!==lock.sha256)throw Error("原项目锁归属在核对期间发生变化");}await options.onLeaseHeld?.({id,home,locks:message.locks});signal.throwIfAborted();result=await action(signal);signal.throwIfAborted();reached=true;}catch(cause){callbackError=cause;}finally{closing=true;if(!running.stdin.destroyed)running.stdin.end(`release ${id}\n`);}})();
+    const outcomes=await Promise.allSettled([output,invoke,closed]);await stop;for(const outcome of outcomes)if(outcome.status==="rejected")throw outcome.reason;if(callbackError)throw callbackError;options.signal?.throwIfAborted();const code=(outcomes[2]as PromiseFulfilledResult<number|null>).value;if(code!==0||!held||!released||!reached)throw Error("原项目锁组件未能完整完成，写回记录已保留",{cause:Error(stderr)});await fs.writeFile(path.join(home,"released.json"),JSON.stringify({version:1,id,requestSha256,at:Date.now()}),{flag:"wx",mode:0o600});return result!;
+  }catch(cause){error=cause;throw cause;}finally{
+    if(bootstrap)clearTimeout(bootstrap);options.signal?.removeEventListener("abort",stopping);if(child?.relayDomain){const domain=child.relayDomain;try{await releaseWindowsDomain(domain.owner.home,domain.owner.nonce);}catch(cause){throw error?new AggregateError([error,cause],"原项目锁进程归属未能释放"):cause;}}
+    const actual=await fs.realpath(runtime),marker=JSON.parse(await fs.readFile(path.join(actual,".relay-repository-lease-process.json"),"utf8"));if(path.dirname(actual)!==runtimeParent||!path.basename(actual).startsWith("relay-repo-lease-")||(await fs.lstat(runtime)).isSymbolicLink()||marker.claim!==claim||!sameCheckpointPath(actual,runtime))throw Error("原项目锁运行目录归属已变化");await fs.rm(actual,{recursive:true,force:true});
+  }
+}

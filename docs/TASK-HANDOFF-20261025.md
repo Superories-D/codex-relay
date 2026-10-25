@@ -3,12 +3,30 @@
 Status: Windows production source in development after complete v0.6.28.
 Linux-specific work is paused. No v0.6.29 release tag or formal release exists.
 The incomplete development snapshot is separate from the released main branch.
-The user resumed the persistent iteration goal after the prior round was paused.
-Continue the Windows milestone from its retained development snapshot and evidence.
+The latest user instruction is to stop after this round. Automatic iteration is
+paused at this handoff; do not resume without a new user instruction.
 The milestone still requires complete topology choices, guarded original-source
 adoption, partial-phase reconciliation and a complete packaged Windows release.
 Compatible child-repository assembly is implemented. A helper-only release does
 not satisfy the milestone.
+
+Round wrap-up, 2026-10-25: source application and per-path recovery are connected
+to the actual Windows UI. Actual Electron coverage passed five scenarios,
+including a full 8 MiB+47-byte write, addition/deletion, fresh acceptance,
+preservation of user staging and task intent, refusing later edits, mixed recovery,
+and reopening verified history after restart. Four localized renderer layouts
+also passed. Latest complete source-application snapshot before repository-lease
+work is 65200a0f418699773ad498f236a5580edf5d5e77 on the retained WIP branch.
+
+The final in-progress increment adds RelayRepositoryLeaseHost: native owned
+delete-on-close Git lock handles in the existing managed Windows process domain.
+Working-tree build and the targeted actual Windows process-domain guard test
+passed (1 passed, 8 intentionally skipped). Forced process-kill cleanup, partial
+acquisition, foreign-lock preservation and broader end-to-end regression have
+NOT been validated for this new increment. Do not treat the build or that single
+test as crash-recovery proof. New source paths are handoff-repository-lease.ts
+and RelayRepositoryLeaseHost.cs; build-windows-native.mjs includes the component.
+No v0.6.29 release, main merge or installed-host restart was performed.
 
 Implemented: independently retained raw payload/index/shared-index/history;
 explicit dirty checkpoint baseline; private two-parent candidates; per-path,

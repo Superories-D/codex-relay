@@ -8,10 +8,11 @@ import {checkpointOid,checkpointManifest} from "../shared/checkpoints";
 import {CheckpointGit} from "./checkpoint-git";
 import {checkpointFingerprint,sameCheckpointPath} from "./checkpoint-file";
 import {handoffGitEnvironment} from "./handoff-merge";
+import {withWindowsRepositoryLease,type RepositoryLeaseOptions} from "./handoff-repository-lease";
 const hash=(value:string|Buffer)=>createHash("sha256").update(value).digest("hex"),key=(value:string)=>path.resolve(value).toLowerCase();
 export const adoptionRepositoryGuard=z.object({source:z.string(),gitDir:z.string(),commonDir:z.string(),identity:z.string(),format:z.enum(["sha1","sha256"]),head:checkpointOid.optional(),branch:z.string(),index:z.string(),lockPaths:z.array(z.string()),refs:z.array(z.object({name:z.string(),oid:checkpointOid.optional()}).strict()),metadata:z.array(z.object({file:z.string(),identity:z.string().optional(),bytes:z.number().int().nonnegative().safe().optional(),sha256:z.string().regex(/^[a-f0-9]{64}$/).optional()}).strict())}).strict();
 export type AdoptionRepositoryGuard=z.infer<typeof adoptionRepositoryGuard>;
-type Options={native?:boolean;signal?:AbortSignal};
+type Options={native?:boolean;signal?:AbortSignal}&RepositoryLeaseOptions;
 async function fileGuard(file:string,signal?:AbortSignal){try{const actual=await checkpointFingerprint(file,{signal});return{file,identity:actual.identity,bytes:actual.bytes,sha256:actual.sha256};}catch(error){if((error as NodeJS.ErrnoException).code!=="ENOENT")throw error;return{file};}}
 async function repositoryIdentity(folder:string){const stat=await fs.lstat(folder,{bigint:true});if(!stat.isDirectory()||stat.isSymbolicLink()||!sameCheckpointPath(folder,await fs.realpath(folder)))throw Error("原项目仓库目录归属已变化");return`${stat.dev}:${stat.ino}`;}
 /** Compare semantic source contents across independently copied manifests. Storage
@@ -58,6 +59,10 @@ async function withRefLease<T>(scratch:string,cwd:string,refs:{name:string;oid?:
 /** Index/config/HEAD leases and prepared ref transactions span the entire action.
  * Every lease is exclusive, and cleanup only removes the exact created inode. */
 export async function withAdoptionRepositoryLeases<T>(guards:AdoptionRepositoryGuard[],scratch:string,options:Options,action:(signal:AbortSignal)=>Promise<T>):Promise<T>{
+  if(process.platform==="win32"&&options.native!==false){
+    await assertAdoptionRepositoryGuards(guards,scratch,options);const git=new CheckpointGit(scratch,options);for(const guard of guards)if(await git.text(guard.source,["rev-parse","--show-ref-format"])!=="files")throw Error("当前仓库引用后端需要先明确崩溃恢复策略");
+    return withWindowsRepositoryLease(guards,scratch,options,async signal=>{await assertAdoptionRepositoryGuards(guards,scratch,{...options,signal});signal.throwIfAborted();return action(signal);});
+  }
   await assertAdoptionRepositoryGuards(guards,scratch,options);const held:{file:string;identity:string;sha256:string;handle:Awaited<ReturnType<typeof fs.open>>}[]=[];
   try{
     const names=[...new Set(guards.flatMap(guard=>guard.lockPaths))].sort();for(const file of names){options.signal?.throwIfAborted();const handle=await fs.open(file,"wx",0o600);let recorded=false;try{const value=`Codex Relay adoption lease ${randomUUID()}\n`;await handle.writeFile(value);await handle.sync();const stat=await handle.stat({bigint:true});held.push({file,identity:`${stat.dev}:${stat.ino}`,sha256:hash(value),handle});recorded=true;}finally{if(!recorded)await handle.close();}}
