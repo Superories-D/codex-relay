@@ -35,6 +35,7 @@ export function Dialog({
         const style = getComputedStyle(element);
         content.current.style.maxWidth = `${Math.max(1, width - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight))}px`;
         content.current.style.maxHeight = `${Math.max(1, Math.min(height * .9, height - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom)))}px`;
+        content.current.style.setProperty("--dialog-available-height",content.current.style.maxHeight);
       }
     };
     fit();

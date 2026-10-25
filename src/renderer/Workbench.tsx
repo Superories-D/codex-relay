@@ -12,6 +12,7 @@ import {
   Folder,
   FolderOpen,
   GitBranch,
+  GitMerge,
   GitCommitHorizontal,
   GitCompareArrows,
   LoaderCircle,
@@ -47,6 +48,7 @@ import { GoalCard } from "./GoalCard";
 import { TokenUsageCard } from "./TokenUsageCard";
 import { GitBranchPicker } from "./GitBranchPicker";
 import {WorkspaceCheckpoints} from "./WorkspaceCheckpoints";
+import {HandoffCenter} from "./HandoffCenter";
 import { QuestionPanel } from "./QuestionPanel";
 import { mergePage, agentRows } from "./chat-view";
 import {
@@ -211,6 +213,7 @@ export function Workbench({
   const { language } = useI18n();
   const [wide, setWide] = useState(false);
   const [checkpoints,setCheckpoints]=useState(false);
+  const [handoffs,setHandoffs]=useState(false);
   const [gitPreview, setGitPreview] = useState<{
     cwd: string;
     root: string;
@@ -292,6 +295,7 @@ export function Workbench({
           ))}
         </div>
         <button title={t("工作区检查点")} aria-label={t("工作区检查点")} disabled={!cwd} onClick={()=>setCheckpoints(true)}><Save size={14}/></button>
+        {(job?.checkpoint||job?.handoff)&&<button title={t("任务成果交接")} aria-label={t("任务成果交接")} onClick={()=>setHandoffs(true)}><GitMerge size={14}/></button>}
         <button
           className="workbench-size"
           aria-label={wide ? t("收窄工作面板") : t("扩大工作面板")}
@@ -310,6 +314,7 @@ export function Workbench({
         </button>
       </header>
       {checkpoints&&<WorkspaceCheckpoints call={call} initialCwd={cwd} initialJob={job} jobs={job?[job]:[]} close={()=>setCheckpoints(false)} open={onOpenConversation}/>}
+      {handoffs&&<HandoffCenter call={call} initialJob={job} jobs={job?[job]:[]} close={()=>setHandoffs(false)} open={onOpenConversation}/>}
       {file ? (
         <FilePreview
           cwd={repositoryPreview ? gitPreview.root : cwd}
@@ -462,6 +467,7 @@ function Summary({
   return (
     <div className="summary-scroll">
       <GoalCard key={job?.id} job={job} call={call} />
+      {job?.handoff&&<section className="summary-card"><h3>{t("集成候选续接任务")}</h3><code>{job.handoff.commit}</code><p>{t("源交接记录")}: {job.handoff.id}</p><p>{t("在当前续接任务中管理交付验收。")}</p></section>}
       {job?.checkpoint&&<section className="summary-card"><h3>{t("检查点任务分支")}</h3><code>{job.checkpoint.branch}</code><p>{t("来源工作区")}: {job.checkpoint.sourceCwd}</p><small>SHA256 {job.checkpoint.manifestSha256}</small><p>{t("验收条件需要在当前分支重新验证。")}</p></section>}
       <section className="summary-card">
         <div className="summary-card-title">

@@ -45,7 +45,7 @@ export async function verifyCheckpointContents(input:CheckpointManifest,root:str
 function validateRestorePaths(manifest:CheckpointManifest){
   const paths=new Map<string,string>(),fold=(p:string)=>process.platform==="win32"?p.toLowerCase():p;
   for(const node of manifest.repos){if(node.relative)checkpointPath.parse(node.relative);
-    for(const file of node.files){const name=node.relative?`${node.relative}/${file.path}`:file.path,key=fold(name);checkpointPath.parse(name);
+    for(const file of node.files){const name=node.relative?`${node.relative}/${file.path}`:file.path,key=fold(name);checkpointPath.parse(name);if(file.kind==="link"&&file.link!.external&&!path.isAbsolute(node.source))throw Error("检查点外部链接缺少绝对来源路径");
       if(paths.has(key))throw Error("检查点恢复路径冲突");paths.set(key,file.kind);
     }
   }
@@ -57,7 +57,7 @@ async function copyStored(root:string,file:CheckpointStoredFile,targetRoot:strin
 }
 export async function restoreCheckpoint(input:CheckpointManifest,root:string,attempt:string,options:CheckpointRestoreOptions={}){
   const manifest=checkpointManifest.parse(input);validateRestorePaths(manifest);const canonical=await fs.realpath(attempt);if(!sameCheckpointPath(attempt,canonical)||(await fs.lstat(attempt)).isSymbolicLink()||(await fs.readdir(attempt)).length)throw Error("恢复目标必须是全新独立目录");
-  const owner={version:1,id:randomUUID(),checkpointId:manifest.id,createdAt:Date.now()};await atomicWrite(path.join(attempt,".relay-checkpoint-restore.json"),JSON.stringify(owner));
+  const owner={version:1,id:randomUUID(),checkpointId:manifest.id,createdAt:Date.now(),linkSemantics:2};await atomicWrite(path.join(attempt,".relay-checkpoint-restore.json"),JSON.stringify(owner));
   const rootBranch=options.branch||`checkpoint/${manifest.id}/${owner.id}`;
   const git=new CheckpointGit(path.join(attempt,"commands"),options),worktree=path.join(attempt,"workspace");
   const nodes=manifest.repos.slice().sort((a,b)=>a.relative.length-b.relative.length),targets=new Map<string,{repo:string;target:string;gitDir:string}>(),layout:z.infer<typeof layoutSchema>={version:1,checkpointId:manifest.id,owner:owner.id,repos:[]};
@@ -102,7 +102,7 @@ export async function restoreCheckpoint(input:CheckpointManifest,root:string,att
     }
   }
   for(const node of nodes){const {target}=targets.get(node.id)!;for(const file of node.files)if(file.kind==="link"){
-    options.signal?.throwIfAborted();const out=await checkpointOutputPath(target,file.path),link=file.link!,destination=link.internal!==undefined?path.resolve(worktree,...link.internal.split("/")):link.target;
+    options.signal?.throwIfAborted();const out=await checkpointOutputPath(target,file.path),link=file.link!,destination=link.internal!==undefined?path.resolve(worktree,...link.internal.split("/")):path.resolve(node.source,path.dirname(file.path),link.target);
     await fs.symlink(destination,out,link.directory&&process.platform==="win32"?"junction":link.directory?"dir":"file");
   }}
   await verifyRestoredCheckpoint(manifest,attempt,{...options,exactIndex:true});options.signal?.throwIfAborted();
@@ -113,6 +113,7 @@ export async function restoreCheckpoint(input:CheckpointManifest,root:string,att
 export async function verifyRestoredCheckpoint(manifest:CheckpointManifest,attempt:string,options:CheckpointRestoreOptions={}){
   validateRestorePaths(checkpointManifest.parse(manifest));await directoryIdentity(attempt);const worktree=path.join(await fs.realpath(attempt),"workspace"),git=new CheckpointGit(path.join(attempt,"commands"),options);
   const owner=JSON.parse(await fs.readFile(path.join(attempt,".relay-checkpoint-restore.json"),"utf8")),layout=layoutSchema.parse(JSON.parse(await fs.readFile(path.join(attempt,"restore-layout.json"),"utf8")));
+  if(owner.linkSemantics!==undefined&&owner.linkSemantics!==2)throw Error("恢复链接语义版本无法验证");
   if(layout.checkpointId!==manifest.id||layout.owner!==owner.id||owner.checkpointId!==manifest.id||layout.repos.length!==manifest.repos.length)throw Error("恢复布局与检查点身份不一致");await directoryIdentity(worktree);
   await verifyRestoredInventory(manifest,worktree,options.signal);
   for(const node of manifest.repos){const target=node.relative?path.join(worktree,...node.relative.split("/")):worktree;
@@ -121,7 +122,7 @@ export async function verifyRestoredCheckpoint(manifest:CheckpointManifest,attem
     for(const file of node.files){options.signal?.throwIfAborted();const out=path.join(target,...file.path.split("/"));
       if(file.kind==="absent"){try{await fs.lstat(out);throw Error("恢复的删除状态不一致");}catch(error){if((error as NodeJS.ErrnoException).code!=="ENOENT")throw error;}continue;}
       const stat=await fs.lstat(out);if(file.kind==="directory"){if(!stat.isDirectory()||stat.isSymbolicLink())throw Error("恢复目录无法验证");continue;}
-      if(file.kind==="link"){if(!stat.isSymbolicLink())throw Error("恢复链接无法验证");const actual=await fs.readlink(out),expected=file.link!.internal!==undefined?path.resolve(worktree,...file.link!.internal.split("/")):path.resolve(path.dirname(out),file.link!.target);if(!sameCheckpointPath(path.resolve(path.dirname(out),actual),expected))throw Error("恢复链接目标不一致");continue;}
+      if(file.kind==="link"){if(!stat.isSymbolicLink())throw Error("恢复链接无法验证");const actual=await fs.readlink(out),expected=file.link!.internal!==undefined?path.resolve(worktree,...file.link!.internal.split("/")):path.resolve(owner.linkSemantics===2?path.join(node.source,path.dirname(file.path)):path.dirname(out),file.link!.target);if(!sameCheckpointPath(path.resolve(path.dirname(out),actual),expected))throw Error("恢复链接目标不一致");continue;}
       const actual=await checkpointFingerprint(out,{signal:options.signal});if(actual.sha256!==file.stored!.sha256||actual.bytes!==file.stored!.bytes)throw Error("恢复文件字节与检查点不一致");
     }
     const index=await git.text(target,["rev-parse","--path-format=absolute","--git-path","index"],isolatedEnv);

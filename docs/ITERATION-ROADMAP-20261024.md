@@ -91,7 +91,7 @@ checks now run the four Windows layouts only.
    public binary sizes and complete metadata downloads passed. Source/main/tag:
    `36889676461fea7e83cf6546e6837bf70f789321`. See
    `RECOVERY-DOMAINS-20261025.md`.
-7. **Windows recoverable workspace checkpoints and task branches (v0.6.28).**
+7. **Windows recoverable workspace checkpoints and task branches (published v0.6.28).**
    Preserve a reviewable source/index/worktree state before isolated task
    branches, carry intended uncommitted changes without overwriting the original,
    and restore a checkpoint into a new worktree after interruption. Connect the
@@ -108,9 +108,11 @@ checks now run the four Windows layouts only.
    flows plus the Setup wizard pass, including complete64MiB/159-entry checkpoint
    restore, source-review cancellation, paused tasks, restart and four locales.
    Ten JS/CSS bundles/native helper match the build and all89 ZIP files match.
-   Complete Windows artifacts are prepared for publication. See
+   All five complete attachments passed upload/download SHA readback; anonymous
+   full Setup download and public binary sizes/metadata bytes pass. Main/tag:
+   `3a99e6342ed4ee80f5fe10a1a9c7bfa165f63175`. See
    `WORKSPACE-CHECKPOINTS-20261025.md`.
-8. **Windows task handoff and branch review (next substantial goal).** Turn a
+8. **Windows task handoff and branch review (in progress after v0.6.28).** Turn a
    completed isolated task into a reviewable handoff: compare checkpoint base,
    current source and task results; build an integrated proposal in a fresh
    worktree; expose conflicts and acceptance evidence before adoption. Bind every
@@ -121,6 +123,33 @@ checks now run the four Windows layouts only.
    conflicts, large binary/Unicode content, stale reviews, restart and Windows
    locales before the next full release. Begin implementation after the .28
    publisher has captured its clean release source.
+   Production source now includes retained archives, streamed raw snapshots,
+   explicit checkpoint bases, two-parent candidate worktrees, structured/manual
+   and whole-tree conflict resolution, missing-receipt recovery and a durable
+   asynchronous service with main IPC. Native proof covers full8MiB/Unicode bytes,
+   untouched original indices, private GC and cancellation/process cleanup.
+   Fresh candidate acceptance and paused continuation admission now bind criteria
+   revisions, full bytes, durable plans/proofs/receipts and Scheduler validation;
+   seven admission regressions, ten native flows and actual Electron creation/
+   resolution/acceptance/admission/restart all pass. The four-language review UI
+   passes synthetic and actual Electron checks, including150%zoom. Full content
+   review, actual child proposals/assembly, root/child ignored setup choices and
+   explicit independent retries are implemented. Latest combined regression is
+   30PASS; mounted graph regression3PASS, actual graph Electron4flows and mounted
+   Electron2flows pass. The adoption foundation adds a managed native file helper,
+   complete metadata/byte guards, a multi-file journal and per-path recovery;
+   native10checks, managed4checks, transaction/recovery6checks and existing native
+   process-domain15checks pass. A durable read-only original-source preview now
+   connects source recapture, actual mounted inventories, full fingerprints and
+   restartable pagination to the product UI. Focused service proof, four-language
+   layouts and actual managed Git paths beyond260characters pass. Repository
+   metadata locks and prepared ref verification cover fresh source admission;
+   complete current regression and actual Electron preview proof are tracked in
+   QA output. Source application/recovery UI, forced-crash lease reconciliation,
+   new-directory/link/structural operations, missing-role/format/
+   topology choices and packaged release acceptance remain required. This milestone
+   is still in progress and no .29 release has been published. See
+   `TASK-HANDOFF-20261025.md`.
 
 Every milestone includes complete Windows Setup, Portable and ZIP artifacts,
 instructions and SHA256 checksums. Upload through the authorized LAN Gitea API

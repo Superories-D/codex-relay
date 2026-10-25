@@ -4,11 +4,13 @@ import { vaultEnglish } from "./vault";
 import { operationsEnglish } from "./operations";
 import {recoveryEnglish} from "./recovery";
 import {checkpointEnglish} from "./checkpoints";
+import {handoffEnglish} from "./handoff";
 export const english: Record<string, string> = {
 ...vaultEnglish,
 ...operationsEnglish,
 ...recoveryEnglish,
 ...checkpointEnglish,
+...handoffEnglish,
 "重新加载": "Reload",
 "创建或管理 Bot": "Create or manage a bot",
 "取消验收": "Cancel verification",

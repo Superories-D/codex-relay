@@ -8,6 +8,7 @@ import { DeliveryPlans } from "./delivery-plans";
 import { DeliveryBatches } from "./delivery-batches";
 import { Vaults } from "./vault";
 import {Checkpoints} from "./checkpoints";
+import {Handoffs} from "./handoffs";
 import { OperationsHistory } from "./operations-history";
 import {RecoveryDomains} from "../core/recovery-domains";
 import { WindowPlacement } from "./window-placement";
@@ -256,6 +257,7 @@ async function boot() {
     report:error=>scheduler.log(error,"warning")});
   const checkpoints=new Checkpoints({root:dataRoot,target:id=>scheduler.deliveryTarget(id),lookup:id=>{const job=store.data.jobs.find(j=>j.id===id);if(!job)throw Error("任务不存在");return job;},withRepository:(cwd,action)=>desktop.withRepository(cwd,action),admit:value=>scheduler.addCheckpointTask(value),
     protect:directory=>protectDataDirectory(path.join(scripts,"protect-directory.ps1"),directory),report:error=>scheduler.log(error,"warning")});
+  const handoffs=new Handoffs({root:dataRoot,target:id=>scheduler.deliveryTarget(id),checkpoint:id=>checkpoints.handoffSource(id),withRepository:(cwd,action)=>desktop.withRepository(cwd,action),protect:directory=>protectDataDirectory(path.join(scripts,"protect-directory.ps1"),directory),report:error=>scheduler.log(error,"warning"),admit:value=>scheduler.addHandoffTask(value),findContinuation:(entryId,workspaceId)=>store.data.jobs.find(job=>job.handoff?.id===entryId&&job.handoff.workspaceId===workspaceId),lookup:id=>{const job=store.data.jobs.find(item=>item.id===id);if(!job)throw Error("任务不存在");return job;}});
   scheduler.runtimeReady = () => cliSetup.state.phase === "ready";
   const operationsHistory=new OperationsHistory({root:dataRoot,worker:path.join(__dirname,"operations-worker.cjs"),report:issue=>scheduler.log(issue,"warning")});
   try{await operationsHistory.start(scheduler.operationsObservation());}catch(error){operationsHistory.pause(error);}
@@ -370,6 +372,29 @@ async function boot() {
       case "delivery.batch.export": return deliveryBatches.export(idSchema.parse(args));
       case "vault.list": return vaults.list();
       case "checkpoints.list":return checkpoints.list();
+      case "handoffs.list":return handoffs.list();
+      case "handoffs.create":return handoffs.create(args);
+      case "handoffs.detail":return handoffs.detail(args);
+      case "handoffs.graphDetail":return handoffs.graphDetail(args);
+      case "handoffs.graphList":return handoffs.graphList(args);
+      case "handoffs.graphResolve":return handoffs.graphResolve(args);
+      case "handoffs.graphInspect":return handoffs.graphInspect(args);
+      case "handoffs.graphAssemble":return handoffs.graphAssemble(args);
+      case "handoffs.retry":return handoffs.retry(args);
+      case "handoffs.content":return handoffs.content(args);
+      case "handoffs.contentResult":return handoffs.contentResult(args);
+      case "handoffs.verify":return handoffs.verify(idSchema.parse(args));
+      case "handoffs.criteria":return handoffs.configureCriteria(args);
+      case "handoffs.review":return handoffs.review(idSchema.parse(args));
+      case "handoffs.admit":return handoffs.admit(args);
+      case "handoffs.sourcePreview":return handoffs.sourcePreview(args);
+      case "handoffs.sourcePreviewDetail":return handoffs.sourcePreviewDetail(args);
+      case "handoffs.task":return handoffs.task(idSchema.parse(args));
+      case "handoffs.cancel":return handoffs.cancel(idSchema.parse(args));
+      case "handoffs.resolve":return handoffs.resolve(args);
+      case "handoffs.inspectWorking":return handoffs.inspectWorking(args);
+      case "handoffs.recover":return handoffs.recover(idSchema.parse(args));
+      case "handoffs.open":{const directory=await handoffs.openDirectory(idSchema.parse(args)),issue=await shell.openPath(directory);if(issue)throw Error(issue);return;}
       case "checkpoints.preview":return checkpoints.preview(args);
       case "checkpoints.capture":return checkpoints.capture(idSchema.parse(args));
       case "checkpoints.detail":return checkpoints.detail(args);
@@ -1592,6 +1617,7 @@ async function boot() {
             deliveryBatches.shutdown(),
             vaults.shutdown(),
             checkpoints.shutdown(),
+            handoffs.shutdown(),
             importer.drain(),
             backgroundHistory.shutdown(),
             scheduler.shutdown(),
@@ -1613,6 +1639,7 @@ async function boot() {
           deliveryBatches.resume();
           vaults.resume();
           checkpoints.resume();
+          handoffs.resume();
           existing.start();
           schedules.start();
           catalog.resume();

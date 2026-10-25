@@ -93,6 +93,7 @@ export interface RecoveryEvent {
   detail?: string;
 }
 export interface Job {
+  handoff?:{id:string;workspaceId:string;reviewId:string;admissionId:string;proofId:string;proofSha256:string;criteriaRevision:number;commit:string;sourceJobId:string;checkpointId:string;manifestSha256:string};
   checkpoint?: {id:string;restoreId:string;manifestSha256:string;sourceJobId?:string;sourceCwd:string;branch:string;mode:"independent"|"linked"};
   runtimeDomain?: {version:1;nonce:string;accountId:string;home:string;workspace:string;project:string;sandbox:"workspaceWrite"|"readOnly"};
   recoveryDomainObservation?: {signature:string;status:"scoped"|"global";reason:string;at:number;processes?:number};

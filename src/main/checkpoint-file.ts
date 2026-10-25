@@ -6,18 +6,18 @@ export const insideCheckpoint=(root:string,file:string)=>{const rel=path.relativ
 const identity=(a:BigIntStats,b:BigIntStats)=>a.dev===b.dev&&a.ino===b.ino&&a.size===b.size&&a.mtimeNs===b.mtimeNs&&a.ctimeNs===b.ctimeNs;
 export const sameCheckpointPath=(a:string,b:string)=>process.platform==="win32"?path.resolve(a).toLowerCase()===path.resolve(b).toLowerCase():path.resolve(a)===path.resolve(b);
 export const checkpointStat=(value:BigIntStats)=>[value.dev,value.ino,value.size,value.mtimeNs,value.ctimeNs].map(String).join(":");
-export async function checkpointFingerprint(file:string,options:{signal?:AbortSignal;output?:string;progress?:(bytes:number)=>void}={}){
+export async function checkpointFingerprint(file:string,options:{signal?:AbortSignal;output?:string;gitFormat?:"sha1"|"sha256";observe?:(chunk:Buffer,offset:number)=>void;progress?:(bytes:number)=>void}={}){
   options.signal?.throwIfAborted();const physical=await fs.realpath(file),before=await fs.lstat(file,{bigint:true});
   if(!before.isFile()||before.isSymbolicLink()||!sameCheckpointPath(physical,file))throw Error("检查点源文件路径已变化");
   const input=await fs.open(file,constants.O_RDONLY|(process.platform==="win32"?0:constants.O_NOFOLLOW|constants.O_NONBLOCK));let output:Awaited<ReturnType<typeof fs.open>>|undefined;
   try{const opened=await input.stat({bigint:true});if(!identity(before,opened))throw Error("检查点源文件已变化");
-    if(options.output)output=await fs.open(options.output,"wx",0o600);const hash=createHash("sha256"),buffer=Buffer.allocUnsafe(256*1024);let count=0;
+    if(options.output)output=await fs.open(options.output,"wx",0o600);const hash=createHash("sha256"),gitHash=options.gitFormat?createHash(options.gitFormat).update(`blob ${before.size}\0`):undefined,buffer=Buffer.allocUnsafe(256*1024);let count=0;
     for(;;){options.signal?.throwIfAborted();const chunk=await input.read(buffer,0,buffer.length,null);if(!chunk.bytesRead)break;count+=chunk.bytesRead;if(BigInt(count)>before.size||!Number.isSafeInteger(count))throw Error("检查点源文件已变化");
-      const bytes=buffer.subarray(0,chunk.bytesRead);hash.update(bytes);if(output){let at=0;while(at<bytes.length){const part=await output.write(bytes,at,bytes.length-at,null);if(!part.bytesWritten)throw Error("检查点文件无法完整写入");at+=part.bytesWritten;}}
-      options.progress?.(count);
+      const bytes=buffer.subarray(0,chunk.bytesRead);hash.update(bytes);gitHash?.update(bytes);if(output){let at=0;while(at<bytes.length){const part=await output.write(bytes,at,bytes.length-at,null);if(!part.bytesWritten)throw Error("检查点文件无法完整写入");at+=part.bytesWritten;}}
+      options.observe?.(bytes,count-bytes.length);options.progress?.(count);
     }
     options.signal?.throwIfAborted();if(BigInt(count)!==before.size||!identity(opened,await input.stat({bigint:true}))||!identity(opened,await fs.lstat(file,{bigint:true}))||await fs.realpath(file)!==physical)throw Error("检查点源文件已变化");
-    if(output)await output.sync();return{bytes:count,sha256:hash.digest("hex"),identity:checkpointStat(before)};
+    if(output)await output.sync();return{bytes:count,sha256:hash.digest("hex"),identity:checkpointStat(before),...(gitHash?{gitOid:gitHash.digest("hex")}: {})};
   }finally{await input.close();await output?.close();}
 }
 export async function checkpointSourcePath(root:string,relative:string){

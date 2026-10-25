@@ -1,0 +1,10 @@
+import {z} from "zod";
+import {checkpointDigest,checkpointOid,checkpointPath} from "./checkpoints";
+const uuid=z.string().uuid();
+export const handoffAttachment=z.object({path:checkpointPath,kind:z.enum(["submodule","nested"]),repositoryId:uuid,sourceWorkspaceId:uuid,workspaceId:uuid,commit:checkpointOid,tree:checkpointOid,sourceSha256:checkpointDigest}).strict();
+export type HandoffAttachment=z.infer<typeof handoffAttachment>;
+export const handoffSetupChoice=z.enum(["base","source","task","omit"]);
+export const handoffSetupFile=z.object({path:checkpointPath,role:z.enum(["base","source","task"]),archiveId:uuid,storedPath:checkpointPath,bytes:z.number().int().nonnegative().safe(),sha256:checkpointDigest}).strict();
+export const handoffComposition=z.object({version:z.literal(1),id:uuid,baseWorkspaceId:uuid,baseSha256:checkpointDigest,tree:checkpointOid,createdAt:z.number().finite(),attachments:z.array(handoffAttachment),setup:z.object({choice:handoffSetupChoice,paths:z.array(checkpointPath),files:z.array(handoffSetupFile)}).strict()}).strict();
+export type HandoffComposition=z.infer<typeof handoffComposition>;
+export const handoffReplica=z.object({sourceWorkspaceId:uuid,sourceSha256:checkpointDigest,parentRoot:z.string(),parentIdentity:z.string(),relative:checkpointPath}).strict();

@@ -1,5 +1,6 @@
 import { WorkflowReport } from "./WorkflowReport";
 import {WorkspaceCheckpoints} from "./WorkspaceCheckpoints";
+import {HandoffCenter} from "./HandoffCenter";
 import { DeliveryCenter } from "./DeliveryCenter";
 import { OperationsCenter } from "./OperationsCenter";
 import { WorkflowBuilder } from "./WorkflowBuilder";
@@ -44,6 +45,7 @@ export function TaskCenter({
   useI18n();
   const [workflowReport, setWorkflowReport] = useState<string>();
   const [checkpoints,setCheckpoints]=useState(false);
+  const [handoffs,setHandoffs]=useState(false);
   const [deliveryCenter, setDeliveryCenter] = useState(false);
   const [cockpit,setCockpit]=useState(false);
   const [building, setBuilding] = useState(false);
@@ -124,6 +126,7 @@ export function TaskCenter({
       setBusy(false);
     }
   };
+  if(handoffs)return <HandoffCenter jobs={jobs} call={call} initialJob={jobs.find(job=>selected.length===1&&job.id===selected[0])} close={()=>setHandoffs(false)} open={open}/>;
   if (deliveryCenter) return <DeliveryCenter snapshot={snapshot} call={call} open={open} back={() => setDeliveryCenter(false)}/>;
   if(cockpit)return <OperationsCenter snapshot={snapshot} call={call} open={open} back={()=>setCockpit(false)} approval={approval} manage={manage}/>;
   return (
@@ -139,6 +142,7 @@ export function TaskCenter({
         <button onClick={() => setDeliveryCenter(true)}>{t("交付中心")}</button>
         <button onClick={()=>setCockpit(true)}>{t("任务运行台")}</button>
         <button onClick={()=>setCheckpoints(true)}>{t("工作区检查点")}</button>
+        <button onClick={()=>setHandoffs(true)}>{t("任务成果交接")}</button>
         <button onClick={close}>{t("返回聊天")}</button>
       </header>
       {checkpoints&&<WorkspaceCheckpoints call={call} jobs={jobs} initialCwd={project} initialJob={jobs.find(job=>selected.length===1&&job.id===selected[0])} close={()=>setCheckpoints(false)} open={job=>{setCheckpoints(false);open(job);}}/>}

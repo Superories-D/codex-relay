@@ -1682,6 +1682,30 @@ export class Scheduler extends EventEmitter {
       }finally{this.maintaining=false;}
     });
   }
+  addHandoffTask(value:import("../shared/handoff").HandoffTaskAdmission) {
+    return this.queueMaintenance(async()=>{
+      this.maintaining=true;
+      try{
+        await this.tickInFlight;if(this.closing)throw Error("客户端正在关闭");
+        const existing=this.store.data.jobs.find(job=>job.handoff?.id===value.entry.id&&job.handoff.workspaceId===value.workspace.id);
+        if(existing){if(existing.handoff!.commit!==value.workspace.commit)throw Error("该交接候选已关联其他任务内容");return existing;}
+        if(value.workspace.state!=="reviewable"||value.review.entryId!==value.entry.id||value.review.workspaceId!==value.workspace.id||value.review.commit!==value.workspace.commit||!["passed","unconfigured"].includes(value.review.status))throw Error("请先完成当前候选的采用验收");
+        await value.validate();if(this.closing)throw Error("客户端正在关闭");
+        const expected=await fs.realpath(path.join(value.workspace.target,...value.entry.projectRelative.split("/").filter(Boolean))),cwd=await fs.realpath(value.cwd),relative=path.relative(await fs.realpath(value.workspace.target),cwd);
+        if(cwd!==expected||relative===".."||relative.startsWith(".."+path.sep)||path.isAbsolute(relative)||!(await fs.stat(cwd)).isDirectory())throw Error("续接任务目录与候选不一致");
+        const source=this.store.data.jobs.find(job=>job.id===value.entry.taskJobId),now=Date.now();
+        const job:Job={id:randomUUID(),title:value.title,prompt:value.prompt,cwd,mode:"cli",interactive:true,pendingMessage:value.prompt,
+          model:source?.model||"",effort:source?.effort||"medium",bucket:source?.bucket||"codex",approvalPolicy:source?.approvalPolicy||"on-request",sandbox:source?.sandbox||"workspaceWrite",
+          review:source?.review,planMode:source?.planMode,multiAgent:source?.multiAgent,serviceTier:source?.serviceTier,
+          state:"paused",stopIntent:"pause",rotations:0,createdAt:now,updatedAt:now,
+          handoff:{id:value.entry.id,workspaceId:value.workspace.id,reviewId:value.review.id,admissionId:value.admissionId,proofId:value.proof.id,proofSha256:value.proof.sha256,criteriaRevision:value.entry.criteria.revision,commit:value.workspace.commit,sourceJobId:value.entry.taskJobId,checkpointId:value.entry.checkpointId,manifestSha256:value.entry.manifestSha256},
+          ...(value.entry.criteria.checks.length?{delivery:{revision:1,checks:structuredClone(value.entry.criteria.checks),reports:[]}}:{})};
+        await this.chats.user(job.id,job.prompt);this.store.data.jobs.push(job);
+        try{await this.store.save();}catch(error){this.store.data.jobs=this.store.data.jobs.filter(item=>item!==job);await fs.rm(this.chats.file(job.id),{force:true}).catch(()=>{});throw error;}
+        this.changed();return job;
+      }finally{this.maintaining=false;}
+    });
+  }
   configure(settings: import("../shared/types").Settings) {
     return this.queueMaintenance(async () => {
       this.maintaining = true;

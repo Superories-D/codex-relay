@@ -49,6 +49,17 @@ it("records directory links without reading their external contents",async()=>{
   await write("a","base");await commit();const outside=path.join(root,"outside");await fs.mkdir(outside);await fs.writeFile(path.join(outside,"private"),"outside bytes");await fs.symlink(outside,path.join(source,"linked"),"junction");
   const prepared=await prepareCheckpoint(source,"Link",options());const link=prepared.manifest.repos[0].files.find(f=>f.kind==="link");expect(link?.link?.external).toBe(true);expect(prepared.manifest.repos[0].files.some(f=>f.path.includes("private"))).toBe(false);
 },30000);
+it("preserves external relative-link meaning on new restores while retaining verification compatibility with old receipts",async()=>{
+  await write("a","base");await commit();const outside=path.join(root,"outside");await fs.mkdir(outside);await fs.writeFile(path.join(outside,"external.txt"),"external dependency");await fs.symlink(outside,path.join(source,"relative-link"),"junction");
+  const prepared=await prepareCheckpoint(source,"Relative external link",options()),manifest=await captureCheckpointFiles(prepared,options()),attempt=path.join(root,"relative-restore");
+  // A portable checkpoint can contain a relative directory symlink captured on
+  // a machine with symlink privileges. Restoring as a Windows junction needs no
+  // such privilege, and must preserve the original semantic target.
+  manifest.repos[0].files.find(file=>file.path==="relative-link")!.link!.target="../outside";
+  await fs.mkdir(attempt);const restored=await restoreCheckpoint(manifest,storage,attempt,{native:false});
+  expect(await fs.realpath(path.join(restored.target,"relative-link"))).toBe(await fs.realpath(outside));expect(await fs.readFile(path.join(restored.target,"relative-link/external.txt"),"utf8")).toBe("external dependency");expect(await verifyRestoredCheckpoint(manifest,attempt,{native:false})).toMatchObject({passed:true});
+  const markerFile=path.join(attempt,".relay-checkpoint-restore.json"),marker=JSON.parse(await fs.readFile(markerFile,"utf8"));delete marker.linkSemantics;await fs.writeFile(markerFile,JSON.stringify(marker));await fs.unlink(path.join(restored.target,"relative-link"));await fs.symlink(path.resolve(restored.target,"../outside"),path.join(restored.target,"relative-link"),"junction");expect(await verifyRestoredCheckpoint(manifest,attempt,{native:false})).toMatchObject({passed:true});
+},60000);
 it("restores complete working/index state after the source repository is removed",async()=>{
   await write(".gitattributes","*.txt text eol=crlf\n");await write("a.txt","base\r\n");await write("gone.txt","base\r\n");await commit();await write("a.txt","stage\n");await git.run(source,["add","--","a.txt"]);await write("a.txt","working mixed\r\nLF\n");await fs.rm(path.join(source,"gone.txt"));await write("[日本語].bin",Buffer.from([0,254,255]));
   const before=await git.run(source,["status","--porcelain=v1","-z"]),prepared=await prepareCheckpoint(source,"Independent",options()),manifest=await captureCheckpointFiles(prepared,options());
