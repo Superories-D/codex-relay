@@ -3,6 +3,7 @@ import { MessageQueue } from "./MessageQueue";
 import { loadDraftState, saveDraftState, remainingDraft, remainingFiles,confirmNativeDraft } from "./drafts";
 import {NativeFollowupRecovery,type PendingNativeFollowup} from "./native-followup-recovery";
 import {nativeFollowupSchema} from "../shared/native-followup";
+import {NativeCreationRecovery,type PendingNativeCreation} from "./native-creation-recovery";
 import { ChatSearch } from "./ChatSearch";
 import { TaskCenter } from "./TaskCenter";
 import { TaskTemplates } from "./TaskTemplates";
@@ -157,12 +158,15 @@ export function AgentApp({
   const [deliveryOpen, setDeliveryOpen] = useState(false), [deliveryVersion,setDeliveryVersion]=useState(0);
   const [visibleProjects, setVisibleProjects] = useState(30),
     [visibleThreads, setVisibleThreads] = useState<Record<string, number>>({});
-  const [selected, setSelected] = useState<string | undefined>(
+  const [selected, setSelectedValue] = useState<string | undefined>(
     () => localStorage.getItem("relay.lastChat") || undefined,
   );
+  const selectionVersion=useRef(0);
+  const setSelected=(value:string|undefined)=>{selectionVersion.current++;setSelectedValue(value);};
   const [manage, setManage] = useState("");
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
+  const actionPending=useRef(false);
   const [search, setSearch] = useState("");
   const [archived, setArchived] = useState(false);
   const [inspector, setInspector] = useState(
@@ -216,6 +220,10 @@ export function AgentApp({
   const [nativeEntries,setNativeEntries]=useState<PendingNativeFollowup[]>([]);
   const [nativeFault,setNativeFault]=useState("");
   const [nativeMessages,setNativeMessages]=useState<Record<string,string>>({});
+  const nativeCreations=useRef<NativeCreationRecovery|undefined>(undefined);
+  const [creationReady,setCreationReady]=useState(false),[creationFault,setCreationFault]=useState("");
+  const [creationEntries,setCreationEntries]=useState<PendingNativeCreation[]>([]);
+  const [creationMessages,setCreationMessages]=useState<Record<string,{text:string;jobId?:string;cwd:string}>>({});
   const [draftSaveFailed, setDraftSaveFailed] = useState(false);
   const [pasting, setPasting] = useState<Record<string, number>>({});
   const pasteLocks = useRef(new Map<string, number>());
@@ -301,6 +309,8 @@ export function AgentApp({
   const draft = drafts[key] ?? "",
     attachments = files[key] ?? [];
   const pendingNative=nativeEntries.find(record=>record.request.input.id===job?.id);
+  const pendingCreation=!job?creationEntries.find(record=>record.draftKey===key||record.request.input.cwd===cwd):undefined;
+  const creationMessage=creationMessages[key]||(!job?Object.values(creationMessages).find(value=>value.cwd===cwd):undefined);
   const call = async (name: string, args?: unknown): Promise<any> => {
     try {
       return await window.relay.command(name, args);
@@ -317,12 +327,13 @@ export function AgentApp({
     }
   };
   const action = (fn: () => Promise<unknown>) => {
-    if (pending) return;
+    if (actionPending.current) return;
+    actionPending.current=true;
     setPending(true);
     setError("");
     void fn()
       .catch((e) => setError(errorText(e)))
-      .finally(() => setPending(false));
+      .finally(() => {actionPending.current=false;setPending(false);});
   };
   const addPastedFiles = (
     target: string,
@@ -601,6 +612,31 @@ export function AgentApp({
     const timer=setInterval(()=>{if(controller)void controller.drain().catch(fail);else initialize();},3000);
     return()=>{alive=false;clearInterval(timer);controller?.dispose();if(nativeFollowups.current===controller)nativeFollowups.current=undefined;};
   },[]);
+  useEffect(()=>{
+    let alive=true,initializing=false,controller:NativeCreationRecovery|undefined;
+    const fail=(error:unknown)=>{if(alive)setCreationFault(errorText(error));};
+    const initialize=()=>{
+      if(initializing||controller||!alive)return;initializing=true;
+      void window.relay.command("chat.submission.identity").then(identity=>{
+        if(!alive)return;
+        const id=nativeFollowupSchema.shape.installationId.parse(identity);
+        controller=new NativeCreationRecovery({storage:localStorage,identity:id,call:(name,args)=>window.relay.command(name,args),
+          accepted:(record,result)=>{
+            const next=confirmNativeDraft(localStorage,draftStateRef.current,record.request.requestId,record.draftKey,record.draft,record.request.input.attachments||[]);
+            draftStateRef.current=next;setDrafts(next.drafts);setFiles(next.files);
+            clearDeliveryDraft(record.draftKey,record.request.input.deliveryChecks||[]);setDeliveryVersion(value=>value+1);
+            setCreationMessages(values=>({...values,[record.draftKey]:{text:"原创建请求已确认，聊天已保留。",jobId:result.jobId,cwd:record.request.input.cwd}}));
+          },
+          rejected:(record,result)=>{if(result.state==="rejected")setCreationMessages(values=>({...values,[record.draftKey]:{text:result.error,cwd:record.request.input.cwd}}));},
+          changed:()=>{if(alive&&controller){setCreationEntries(controller.entries());setCreationFault("");}},
+        });
+        nativeCreations.current=controller;setCreationReady(true);setCreationFault("");setCreationEntries(controller.entries());
+        return controller.drain();
+      }).catch(fail).finally(()=>{initializing=false;});
+    };initialize();
+    const timer=setInterval(()=>{if(controller)void controller.drain().catch(fail);else initialize();},3000);
+    return()=>{alive=false;clearInterval(timer);controller?.dispose();if(nativeCreations.current===controller)nativeCreations.current=undefined;};
+  },[]);
   const send = async (
     mode: "send" | "queue" | "steer" = "send",
     review = false,
@@ -608,6 +644,7 @@ export function AgentApp({
   ) => {
     if (pasteLocks.current.has(key)) return;
     if(job&&pendingNative)throw Error(t("此任务仍有待确认消息，正在自动核对原请求。"));
+    if(!job&&pendingCreation)throw Error(t("此项目仍有待确认创建，正在自动核对原请求。"));
     if (!draft.trim() && !review) return;
     const slash = draft.trim().match(/^\/([a-z]+)(?:\s+(.*))?$/s);
     if (slash && !review) {
@@ -683,6 +720,8 @@ export function AgentApp({
         throw new Error(t("请先创建持续目标，再在聊天中补充文件或发起审查"));
     }
     if (!job) {
+      const navigation=selectionVersion.current;
+      if(!creatingGoal&&(!nativeCreations.current||creationFault))throw Error(t("创建恢复尚未就绪，草稿已保留。"));
       let dir = cwd;
       if (!dir) {
         dir = await call("choose.directory");
@@ -700,24 +739,33 @@ export function AgentApp({
         dir = created.cwd;
         refreshDesktop();
       }
-      const added = (await call(creatingGoal ? "chat.goal.create" : "job.add", {
+      const input = {
         title: text.replace(/\s+/g, " ").slice(0, 80),
         prompt: text,
         cwd: dir,
-        mode: "cli",
+        mode: "cli" as const,
         model,
         effort,
         bucket: "codex",
-        approvalPolicy: "on-request",
+        approvalPolicy: "on-request" as const,
         sandbox,
-        interactive: true,
+        interactive: true as const,
         attachments,
         review,
         planMode,
         multiAgent,
         deliveryChecks: deliveryDraft,
-        ...(creatingGoal ? { tokenBudget, start: !saveGoalOnly } : {}),
-      })) as Job;
+      };
+      if(!creatingGoal){
+        const recovery=nativeCreations.current!;
+        const result=await recovery.enqueue({installationId:recovery.identity,requestId:crypto.randomUUID(),input},draft,key);
+        if(result.state==="accepted"&&selectionVersion.current===navigation&&
+            !(draftStateRef.current.drafts[key]||"").length&&!(draftStateRef.current.files[key]||[]).length){
+          setSelected(result.jobId);localStorage.setItem("relay.lastChat",result.jobId);
+        }
+        following.current=true;return;
+      }
+      const added=await call("chat.goal.create",{...input,tokenBudget,start:!saveGoalOnly}) as Job;
       setSelected(added.id);
       clearDeliveryDraft(key,deliveryDraft);setDeliveryVersion(value=>value+1);
       localStorage.setItem("relay.lastChat", added.id);
@@ -1566,6 +1614,24 @@ export function AgentApp({
                   </div>
                 </div>
                 <div className="agent-composer-wrap">
+                  {!job&&creationFault&&<p role="alert" className="agent-history-note">{t("创建恢复尚未就绪，草稿已保留。")} {creationFault}</p>}
+                  {pendingCreation&&<div role="status" className="agent-history-note native-creation-pending">
+                    <p>{t("正在自动确认新聊天，重载后仍会继续，请勿重复创建。")}</p>
+                    {nativeCreations.current?.errors.get(pendingCreation.request.requestId)&&<p>{errorText(nativeCreations.current.errors.get(pendingCreation.request.requestId))}</p>}
+                    <button disabled={pending} onClick={()=>void nativeCreations.current?.cancel(pendingCreation).catch(error=>setCreationFault(errorText(error)))}>{t("停止确认并保留草稿")}</button>
+                  </div>}
+                  {!job&&!pendingCreation&&creationMessage&&<div role="status" className="agent-history-note native-creation-result">
+                    <p>{t(creationMessage.text)}</p>
+                    {creationMessage.jobId&&<button onClick={()=>{setSelected(creationMessage.jobId);localStorage.setItem("relay.lastChat",creationMessage.jobId!);}}>{t("打开已创建聊天")}</button>}
+                  </div>}
+                  {creationEntries.length>0&&!pendingCreation&&<details className="agent-history-note native-creation-pending">
+                    <summary>{t("后台待确认创建")} · {creationEntries.length}</summary>
+                    <div className="native-followup-list">{creationEntries.map(record=><div key={record.request.requestId}>
+                      <p>{record.request.input.title}</p>
+                      {nativeCreations.current?.errors.get(record.request.requestId)&&<p>{errorText(nativeCreations.current.errors.get(record.request.requestId))}</p>}
+                      <button onClick={()=>void nativeCreations.current?.cancel(record).catch(error=>setCreationFault(errorText(error)))}>{t("停止确认并保留草稿")}</button>
+                    </div>)}</div>
+                  </details>}
                   {nativeFault&&<p role="alert" className="agent-history-note">{t("消息恢复尚未就绪，草稿已保留。")} {nativeFault}</p>}
                   {pendingNative&&<div role="status" className="agent-history-note native-followup-pending">
                     <p>{t("正在自动核对原消息，切换任务或重载后仍会继续。")}</p>
@@ -1991,7 +2057,8 @@ export function AgentApp({
                           }
                           disabled={
                             pending ||
-                            !!pendingNative || (!!job&&(!nativeReady||!!nativeFault)) ||
+                            !!pendingNative || !!pendingCreation || (!!job&&(!nativeReady||!!nativeFault)) ||
+                            (!job&&!goalMode&&(!creationReady||!!creationFault)) ||
                             !!pasting[key] ||
                             !draft.trim() ||
                             !!job?.archived ||

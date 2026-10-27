@@ -1,3 +1,4 @@
+import {newJobInputSchema} from "../shared/new-job";
 import path from "node:path";
 import { z } from "zod";
 import { GOAL_OBJECTIVE_MAX_LENGTH } from "../shared/goal";
@@ -43,33 +44,7 @@ export const chatSendSchema = z
     serviceTier: z.string().max(50).optional(),
   })
   .strict();
-export const newJobSchema = z
-  .object({
-    deliveryChecks: deliveryChecksSchema.optional(),
-    title: z.string().trim().min(1).max(120),
-    prompt: z.string().trim().min(1).max(100000),
-    cwd: absolute,
-    mode: z.enum(["cli", "desktop"]),
-    model: z.string().max(200),
-    effort,
-    bucket: z.string().min(1).max(100),
-    approvalPolicy: z.enum(["on-request", "never"]),
-    sandbox: z.enum(["workspaceWrite", "readOnly", "dangerFullAccess"]),
-    completionMarker: z
-      .string()
-      .trim()
-      .max(80)
-      .refine((v) => !/[\r\n\x00-\x1f]/.test(v), "完成标记必须为单行文本")
-      .optional(),
-    maxCompletionRetries: z.number().int().min(0).max(10).optional(),
-    interactive: z.boolean().optional(),
-    attachments: attachmentsSchema.optional(),
-    review: z.boolean().optional(),
-    planMode: z.boolean().optional(),
-    multiAgent: z.boolean().optional(),
-    serviceTier: z.string().max(50).optional(),
-  })
-  .strict();
+export const newJobSchema = newJobInputSchema.extend({cwd:absolute,attachments:attachmentsSchema.optional()});
 export const settingsSchema = z
   .object({
     maxConcurrentTasks: z.number().int().min(1).max(8).optional(),
