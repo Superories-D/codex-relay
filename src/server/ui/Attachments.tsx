@@ -1,3 +1,4 @@
+import {serverHeaders} from "./identity";
 import React, { useEffect, useRef, useState } from "react";
 import type { ChatAttachment } from "../../shared/types";
 import { t, errorText } from "../../renderer/i18n";
@@ -37,7 +38,7 @@ export function RemoteAttachments({
   const pendingKey = attachmentKey(id) + ".pending";
   async function receive(fileId: string, name: string, file?: File) {
     const endpoint = `/api/uploads/${fileId}`,
-      headers = { Authorization: `Bearer ${token}` };
+      headers = { Authorization: `Bearer ${token}`, ...serverHeaders() };
     let response: Response;
     try {
       response = await fetch(
@@ -51,14 +52,16 @@ export function RemoteAttachments({
               },
               body: file,
               signal: AbortSignal.timeout(60000),
+              redirect:"error",
             }
-          : { headers, signal: AbortSignal.timeout(15000) },
+          : { headers, signal: AbortSignal.timeout(15000),redirect:"error" },
       );
     } catch (e) {
       if (!file) throw e;
       response = await fetch(endpoint, {
         headers,
         signal: AbortSignal.timeout(15000),
+        redirect:"error",
       });
     }
     const data = await response.json();

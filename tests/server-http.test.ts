@@ -74,6 +74,11 @@ describe.skipIf(process.platform !== "linux")(
             approvalPolicy: "on-request",
           },
         };
+        const wrongIdentity = { ...headers,"X-Relay-Server-ID":randomUUID() };
+        expect((await fetch(base+"/api/command",{method:"POST",headers:wrongIdentity,body:JSON.stringify({name:"job.submit",args:request})})).status).toBe(409);
+        expect((await fetch(base+`/api/uploads/${randomUUID()}?name=wrong.txt`,{method:"POST",headers:wrongIdentity,body:"wrong server"})).status).toBe(409);
+        expect(runtime.store.data.jobs).toHaveLength(0);
+        headers["X-Relay-Server-ID" as keyof typeof headers]=runtime.installationId;
         const [a, b] = await Promise.all([
           command("job.submit", request),
           command("job.submit", request),

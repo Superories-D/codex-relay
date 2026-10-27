@@ -1,3 +1,4 @@
+import {serverHeaders} from "./identity";
 export class CommandError extends Error {
   constructor(
     readonly status: number,
@@ -11,10 +12,12 @@ export async function request(token: string, name: string, args?: unknown) {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
+      ...serverHeaders(),
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ name, args }),
     signal: AbortSignal.timeout(60000),
+    redirect:"error",
   });
   const value = await response.json();
   if (!response.ok)
@@ -35,9 +38,13 @@ export async function watch(
     try {
       onStatus(attempt ? "重新连接中" : "正在连接");
       const response = await fetch("/api/events", {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: { Authorization: `Bearer ${token}`, ...serverHeaders() },
         signal,
+        redirect:"error",
       });
+      if (response.status === 409) {
+        onStatus("服务器身份已变化，请在新标签页连接；本页保留原服务器的待确认请求。");return;
+      }
       if (response.status === 401) {
         onStatus("令牌无效，请重新连接");
         return;

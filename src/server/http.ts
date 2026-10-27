@@ -130,6 +130,9 @@ export async function openHttp(
         !timingSafeEqual(presented, expected)
       )
         return send(res, 401, { error: "Authentication required" });
+      const serverId = req.headers["x-relay-server-id"];
+      if (serverId !== undefined && serverId !== runtime.installationId)
+        return send(res,409,{error:"Server installation changed; reconnect to the original server"});
       if (req.method === "GET" && req.url === "/api/meta")
         return send(res, 200, {
           version: 1,

@@ -1,3 +1,4 @@
+import {bindServerIdentity} from "./identity";
 import {WorkflowOperations} from "./WorkflowOperations";
 import {RemoteSchedules} from "./RemoteSchedules";
 import {RemoteGoal} from "./RemoteGoal";
@@ -143,21 +144,15 @@ function App() {
     void fetch("/api/meta", {
       headers: { Authorization: `Bearer ${token}` },
       signal: controller.signal,
+      redirect:"error",
     })
       .then(async (r) => {
         if (!r.ok) throw Error("令牌无效，请重新连接");
         const meta = await r.json();
+        if(!current)return;
+        bindServerIdentity(meta.serverId);
         if (current) {
-          setRoots(meta.workspaces);
-          setDirectory((old) =>
-            meta.workspaces.includes(old) ? old : meta.workspaces[0] || "",
-          );
-        }
-      })
-      .catch((e) => {
-        if (current) setError(errorText(e));
-      });
-    void watch(
+          void watch(
       token,
       controller.signal,
       (value) => {
@@ -167,6 +162,15 @@ function App() {
         if (current) setStatus(value);
       },
     );
+          setRoots(meta.workspaces);
+          setDirectory((old) =>
+            meta.workspaces.includes(old) ? old : meta.workspaces[0] || "",
+          );
+        }
+      })
+      .catch((e) => {
+        if (current) setError(errorText(e));
+      });
     return () => {
       current = false;
       controller.abort();
@@ -405,14 +409,10 @@ function App() {
     setEntry("");
     setSnapshot(undefined);
     setSelected("");
-    setPending(null);
-    setPendingMessage(null);
-    followupDrafts.current = {};
-    setFollowup("");
-    setPrompt("");
+    // Disconnect the viewer only. Keep exact pending requests and drafts so
+    // reconnecting with refreshed credentials can confirm the original IDs.
     previews.current.clear();
-    for (const key of ["token", "pending", "draft", "message", "followups"])
-      sessionStorage.removeItem(`relay.remote.${key}`);
+    sessionStorage.removeItem("relay.remote.token");
   }
   return (
     <div className="remote-shell">

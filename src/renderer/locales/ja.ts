@@ -3,6 +3,9 @@ import { operationsJapanese } from "./operations";
 import {recoveryJapanese} from "./recovery";
 import {checkpointJapanese} from "./checkpoints";
 export const japanese: Record<string, string> = {
+"服务器身份已变化，请在新标签页连接；本页保留原服务器的待确认请求。":"サーバーの識別情報が変わりました。新しいタブで接続してください。元のサーバーへの未確認リクエストはこのタブに保持されます。",
+"服务器缺少安装标识，请更新服务器后重连。":"サーバーにインストール識別子がありません。更新後に再接続してください。",
+"正在验证服务器身份，请稍后重试。":"サーバーの識別情報を確認中です。しばらくしてから再試行してください。",
 ...vaultJapanese,
 ...operationsJapanese,
 ...recoveryJapanese,

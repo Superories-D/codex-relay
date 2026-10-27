@@ -310,6 +310,25 @@ const { chromium } = require(
         const download=page.waitForEvent("download");
         await page.locator(".conversation-header").getByRole("button",{name:"Export Markdown",exact:true}).click();
         assert.match((await download).suggestedFilename(),/^conversation-.*\.md$/);
+        await page.route("**/api/command",async route=>{
+          const body=route.request().postDataJSON();
+          if(body?.name==="job.submit"&&body.args.input.prompt==="Keep pending on disconnect")await route.abort();
+          else await route.fallback();
+        });
+        await page.locator(".new-task textarea").fill("Keep pending on disconnect");
+        await page.locator(".new-task button[type=submit]").click();
+        await page.waitForFunction(()=>!!sessionStorage.getItem("relay.remote.pending"));
+        const pendingBefore=await page.evaluate(()=>sessionStorage.getItem("relay.remote.pending"));
+        await page.locator(".remote-header").getByRole("button",{name:"Disconnect",exact:true}).click();
+        assert.equal(await page.evaluate(()=>sessionStorage.getItem("relay.remote.pending")),pendingBefore);
+        await page.reload();await page.locator(".connect-card input").fill(token);await page.locator(".connect-card button").click();
+        await page.locator(".connection-bar.online").waitFor();
+        assert.equal(await page.evaluate(()=>sessionStorage.getItem("relay.remote.pending")),pendingBefore);
+        await page.route("**/api/meta",async route=>{const r=await route.fetch();await route.fulfill({response:r,json:{...(await r.json()),serverId:"00000000-0000-4000-8000-000000000001"}});});
+        await page.reload();await page.getByText("The server installation changed. Connect in a new tab; pending requests for the original server remain here.",{exact:true}).waitFor();
+        assert.equal(await page.evaluate(()=>sessionStorage.getItem("relay.remote.pending")),pendingBefore);
+        assert.equal(await page.locator(".connection-bar.online").count(),0);
+
 
       }
       await context.close();
