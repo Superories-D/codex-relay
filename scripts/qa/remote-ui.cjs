@@ -87,7 +87,7 @@ const { chromium } = require(
         await page.route("**/api/uploads/**",async route=>{if(!droppedUpload && route.request().method()==="POST"){droppedUpload=true;await route.fetch();await route.abort();}else await route.continue();});
         let droppedStream = false,
           droppedSubmit = false,
-          droppedMessage = false, droppedWorkflow = false, droppedSchedule=false, droppedRetry=false;
+          droppedMessage = false, droppedWorkflow = false, droppedSchedule=false, droppedRetry=false, droppedDeliverySave=false, droppedDeliveryRun=false;
         await page.route("**/api/events", async (route) => {
           if (!droppedStream) {
             droppedStream = true;
@@ -95,6 +95,8 @@ const { chromium } = require(
           } else await route.continue();
         });
         await page.route("**/api/command", async (route) => {
+          if(!droppedDeliverySave && route.request().postDataJSON()?.name === "delivery.save") {droppedDeliverySave=true;await route.fetch();await route.abort();return;}
+          if(!droppedDeliveryRun && route.request().postDataJSON()?.name === "delivery.run") {droppedDeliveryRun=true;await route.fetch();await route.abort();return;}
           if(!droppedRetry && route.request().postDataJSON()?.name === "workflow.retry") {droppedRetry=true;await route.fetch();await route.abort();return;}
 
           if(!droppedSchedule && route.request().postDataJSON()?.name === "schedule.create") {droppedSchedule=true;await route.fetch();await route.abort();return;}
@@ -235,6 +237,48 @@ const { chromium } = require(
           document.querySelector(".state-pill")?.textContent || "",
         ),
       );
+      {
+        const delivery=page.locator('.remote-delivery'),file=`accept-${language}.txt`;
+        const waitDelivery=(revision,count,status)=>page.waitForFunction(async({title,revision,count,status})=>{
+          const snap=await(await fetch('/api/snapshot',{headers:{Authorization:`Bearer ${sessionStorage.getItem('relay.remote.token')}`}})).json();
+          const job=snap.jobs.find(j=>j.title===title),d=job?.delivery;
+          return d?.revision===revision && d.reports.length===count && (!status||d.reports.at(-1)?.status===status) && !sessionStorage.getItem(`relay.remote.action.delivery.${job.id}`);
+        },{title:`Remote QA ${language}`,revision,count,status});
+        await delivery.locator('summary').click();
+        await delivery.locator('.delivery-actions > button').nth(0).click();
+        await page.locator('.delivery-dialog .delivery-actions > button').first().click();
+        await page.locator('.delivery-check input').nth(1).fill(file);
+        if(language==='en'){
+          await page.evaluate(()=>{window.deliverySetItem=Storage.prototype.setItem;Storage.prototype.setItem=function(key,value){if(key.startsWith('relay.remote.action.delivery.'))throw Error('simulated receipt storage full');return window.deliverySetItem.call(this,key,value);};});
+          await page.locator('.delivery-dialog .delivery-actions > button').last().click();
+          await page.locator('.delivery-dialog [role=alert]').waitFor();
+          assert.equal(await page.locator('.delivery-check input').nth(1).inputValue(),file,'storage failure must retain check editor');
+          await page.evaluate(()=>Storage.prototype.setItem=window.deliverySetItem);
+        }
+        await page.locator('.delivery-dialog .delivery-actions > button').last().click();
+        if(language==='en'){
+          await page.waitForFunction(()=>Object.keys(sessionStorage).some(k=>k.startsWith('relay.remote.action.delivery.')));
+          await page.reload();await page.locator('.connection-bar.online').waitFor();
+          await page.locator('.remote-task-list button').filter({hasText:`Remote QA ${language}`}).click();
+          await delivery.locator('summary').click();
+        }
+        await waitDelivery(1,0);
+        await delivery.locator('.delivery-actions > button').nth(1).click();
+        if(language==='en'){
+          await page.waitForFunction(()=>Object.keys(sessionStorage).some(k=>k.startsWith('relay.remote.action.delivery.')));
+          await page.reload();await page.locator('.connection-bar.online').waitFor();
+          await page.locator('.remote-task-list button').filter({hasText:`Remote QA ${language}`}).click();
+          await delivery.locator('summary').click();
+        }
+        await waitDelivery(1,1,'failed');
+        await delivery.locator('.delivery-actions > button').nth(2).click();
+        await page.waitForFunction(()=>document.querySelector('.remote-followup textarea')?.value.includes('客户端直接检查文件'));
+        assert.equal(await page.locator('.remote-messages article').count(),1,'preparing a repair must not submit a message');
+        await fs.writeFile(path.join(workspace,file),'accepted output');
+        await delivery.locator('.delivery-actions > button').nth(1).click();
+        await waitDelivery(1,2,'passed');
+        await delivery.locator('.delivery-results code').filter({hasText:'SHA256'}).waitFor();
+      }
       await page.evaluate(() => document.fonts.ready);
       await page.screenshot({
         path: `qa-output/remote-${language}-${width}.png`,

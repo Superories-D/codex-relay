@@ -94,6 +94,15 @@ p {
   align-items: center;
   flex-wrap: wrap;
 }
+.remote-delivery fieldset {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.remote-delivery code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .remote-header {
   display: flex;
   justify-content: space-between;

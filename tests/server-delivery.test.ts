@@ -57,6 +57,15 @@ it.skipIf(process.platform !== "linux")("retains remote verification receipts ac
     const unsafe: any = await runtime.command("delivery.run", {requestId:randomUUID(), id:job.id, revision:1, reportId:saved.delivery!.reports.at(-1)!.id});
     expect(unsafe.state).toBe("uncertain");
     expect(saved.delivery!.reports).toHaveLength(2);
+    saved.recoveryRequired = false;
+    const save = {requestId:randomUUID(), id:job.id, revision:1, checks:[{kind:"file", path:"other.txt", label:"New output", minBytes:1}]};
+    const changed: any = (await (await post("delivery.save", save)).json()).result;
+    expect(changed).toMatchObject({state:"succeeded",result:{revision:2}});
+    expect(saved.delivery!.reports).toHaveLength(2);
+    expect((await (await post("delivery.save", save)).json()).result).toEqual(changed);
+    expect(saved.delivery!.revision).toBe(2);
+    expect((await runtime.command("delivery.save", {...save, requestId:randomUUID()})) as any).toMatchObject({state:"uncertain"});
+    await expect(runtime.command("delivery.save", {...save, requestId:randomUUID(), revision:2, checks:[{kind:"file",path:"../secret",label:"Escape"}]})).rejects.toThrow();
   } finally {
     await web?.close();
     await runtime.close();

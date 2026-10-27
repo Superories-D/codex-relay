@@ -4,6 +4,7 @@ import {bindServerIdentity,serverHeaders} from "./identity";
 import {WorkflowOperations} from "./WorkflowOperations";
 import {RemoteSchedules} from "./RemoteSchedules";
 import {RemoteGoal} from "./RemoteGoal";
+import {RemoteDelivery} from "./RemoteDelivery";
 import {LiveControls} from "./LiveControls";
 import {RemoteArtifacts} from "./Artifacts";
 import { RemoteAttachments,readAttachments,saveAttachments } from "./Attachments";
@@ -103,6 +104,7 @@ function App() {
       }
     })(),
   );
+  const pendingMessageRef=useRef(pendingMessage);pendingMessageRef.current=pendingMessage;
   const [pending, setPending] = useState<Submission | null>(readPending),
     [followup, setFollowup] = useState("");
   const [chat, setChat] = useState<ChatItem[]>([]),
@@ -677,6 +679,14 @@ function App() {
                   <RecoveryHistory job={job} />
                   <LiveControls key={`live-${job.id}`} job={job} call={call}/>
                   <RemoteGoal key={`goal-${job.id}`} job={job} call={call}/>
+                  <RemoteDelivery key={`delivery-${job.id}`} job={job} call={call} repair={text=>{
+                    if(pendingMessageRef.current?.id===job.id) throw Error(t("该会话有待确认消息，请先等待回执。"));
+                    const next=[followupDrafts.current[job.id],text].filter(Boolean).join("\n\n");
+                    if(next.length>100000)throw Error(t("修复要求超过消息上限，请精简条件或手动填写追问。"));
+                    const drafts={...followupDrafts.current,[job.id]:next};
+                    sessionStorage.setItem("relay.remote.followups",JSON.stringify(drafts));followupDrafts.current=drafts;
+                    if(selection.current===job.id)setFollowup(next);
+                  }}/>
                   <RemoteArtifacts key={`artifacts-${job.id}`} id={job.id} call={call}/>
                   <label>{t("任务优先级")}<select aria-label={t("任务优先级")} value={job.priority || "normal"} disabled={busy} onChange={e => run("chat.priority",{id:job.id,priority:e.target.value})}>
                     <option value="high">{t("高")}</option><option value="normal">{t("普通优先级")}</option><option value="low">{t("低")}</option>

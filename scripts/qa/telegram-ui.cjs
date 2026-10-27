@@ -94,6 +94,7 @@ function telegramFixture(){
         await page.locator('.schedule-form').getByRole('button',{name:/^Delivery checks for each run/}).click();
         await page.locator('.delivery-dialog').getByRole('button',{name:'Add check',exact:true}).click();await page.locator('.delivery-check input').nth(1).fill('report.txt');
         await page.locator('.delivery-dialog').getByRole('button',{name:'Save acceptance checks',exact:true}).click();
+        const formBounds=await page.locator('.schedule-form').boundingBox();assert.ok(formBounds.y>=0&&formBounds.y+formBounds.height<=1001,'Schedule editor must remain inside the viewport after closing its nested acceptance dialog');
         await page.locator('.schedule-form').getByRole('button',{name:'Save schedule',exact:true}).click();await page.waitForFunction(()=>window.nativeScheduleSaves.length===1);
         assert.equal(await page.evaluate(()=>window.nativeScheduleSaves[0].deliveryChecks[0].path),'report.txt');
         await page.locator('.schedule-form').waitFor({state:'detached'});

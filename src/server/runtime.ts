@@ -29,6 +29,7 @@ import {
   controlSchema,
   chatSendSchema,
   idSchema,
+  deliverySaveSchema,
 } from "../main/validation";
 import { ServerCipher } from "./vault";
 import { acquireOwner } from "./owner";
@@ -218,6 +219,10 @@ export class ServerRuntime {
         return this.scheduler.readDelivery(idSchema.parse(args));
       case "delivery.repair":
         return this.scheduler.deliveryPrompt(idSchema.parse(args));
+      case "delivery.save": {
+        const a=deliverySaveSchema.extend({requestId:idSchema}).parse(args);
+        return (this.remoteActions ||= new RemoteActions(this.store.root)).run(a.requestId,name,a.id,{revision:a.revision,checks:a.checks},()=>this.scheduler.saveDelivery(a.id,a.revision,a.checks));
+      }
       case "delivery.run": {
         const a=z.object({requestId:idSchema,id:idSchema,revision:z.number().int().nonnegative(),reportId:idSchema.optional()}).strict().parse(args);
         const expected={revision:a.revision,reportId:a.reportId};

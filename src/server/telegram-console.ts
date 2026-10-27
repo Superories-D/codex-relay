@@ -289,6 +289,7 @@ export class TelegramConsole {
       const job = this.job(args || context.task);
       if (command === "repair") {
         const text = await this.runtime.command("delivery.repair", job.id) as string;
+        if(text.length>100000) return this.paginate("修复要求超过消息上限，请精简条件或手动填写追问。\n\n"+text,job.id);
         const reply = this.paginate(`修复追问预览（尚未投递）\n${text}\n\n确认后提交修复追问：空闲任务进入队列，运行中的任务在本轮结束后处理。`, job.id);
         reply.keyboard!.push([this.action("确认排队修复", job, "chat.submit", {requestId, input:{id:job.id, text, action:"queue", attachments:[]}})]);
         return reply;

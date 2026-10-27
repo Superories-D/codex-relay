@@ -1,10 +1,16 @@
-import {  legacyEnglish } from "./legacy-en";
+import { legacyEnglish } from "./legacy-en";
 import { nativeEnglish } from "./native-en";
 import { vaultEnglish } from "./vault";
 import { operationsEnglish } from "./operations";
 import {recoveryEnglish} from "./recovery";
 import {checkpointEnglish} from "./checkpoints";
 export const english: Record<string, string> = {
+"修复要求超过消息上限，请精简条件或手动填写追问。": "Repair instructions exceed the message limit. Simplify the checks or write a follow-up manually.",
+
+"保存后更新当前任务的验收条件；历史报告保留，需重新验收。": "Saving updates acceptance checks for this task. Previous reports remain; verify the new contract again.",
+"该会话有待确认消息，请先等待回执。": "This chat has a pending message. Wait for its receipt first.",
+"操作请求未能保存，请保留条件并重试。": "The operation could not be saved. Keep your checks and try again.",
+
 "计划修改只影响后续运行；已有任务的验收条件保持原样。":"Plan changes apply to future runs. Existing tasks keep their own delivery checks.",
 "每次运行的交付验收":"Delivery checks for each run",
 "断线后自动恢复连接与待确认请求，不会重复创建任务。":"Reconnects and recovers pending requests automatically without creating duplicate tasks.",

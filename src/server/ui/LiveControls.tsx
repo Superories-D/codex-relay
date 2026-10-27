@@ -57,7 +57,7 @@ export function useRemoteAction(
     };
   }, [pending, id]);
   function submit(name: string, args: any) {
-    if (pending) return;
+    if (pending) return false;
     try {
       const value = {
         name,
@@ -67,8 +67,10 @@ export function useRemoteAction(
       setReceipt(undefined);
       setPending(value);
       setError("");
+      return true;
     } catch (e) {
       setError(errorText(e));
+      return false;
     }
   }
   return { submit, pending, receipt, error };
