@@ -151,7 +151,7 @@ export class ServerRuntime {
     this.schedules.start();
   }
   get draining() { return this.closing; }
-  beginDrain() { this.closing = true; }
+  beginDrain() { this.closing = true; this.scheduler.interruptDeliveryChecks(); }
   command(name: string, args?: unknown): Promise<unknown> {
     if (name === "health") return Promise.resolve(serviceHealth(this.scheduler.snapshot(),this.closing));
     if (this.closing) return Promise.reject(Object.assign(Error("Server is shutting down; retry after restart"),{status:503}));
@@ -406,7 +406,7 @@ export class ServerRuntime {
     return this.closePromise;
   }
   private async closeOnce() {
-    this.closing = true;
+    this.beginDrain();
     await this.cliSetup?.shutdown();
     await Promise.allSettled([...this.inFlight]);
     await this.schedules.shutdown();

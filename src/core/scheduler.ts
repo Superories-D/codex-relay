@@ -402,6 +402,9 @@ export class Scheduler extends EventEmitter {
     if(!this.store.data.jobs.some(job=>job.id===id))throw Error("任务不存在");
     const controller=this.deliveryControllers.get(id);controller?.abort();return {cancelled:!!controller};
   }
+  interruptDeliveryChecks() {
+    this.verification.abort();
+  }
   flagDeliveryEvidence(id: string, revision: number, reportId: string, reason: "changed" | "unverified") {
     return this.queueControl(id, async () => {
       const job = this.store.data.jobs.find(j => j.id === id);
@@ -465,7 +468,9 @@ export class Scheduler extends EventEmitter {
     job.stage = "正在验收交付产物"; this.changed();
     const report = await verifyDelivery(job.cwd, delivery.checks, {revision: delivery.revision, source, turnId: job.turnId, signal: AbortSignal.any([this.verification.signal,controller.signal,...(signal ? [signal] : [])])});
     delivery.reports = [...delivery.reports, report].slice(-10);
-    delivery.pendingCompletion = false;
+    // A service shutdown is an interrupted read, not failed artifact evidence.
+    // Recheck it on restart unless the user deliberately paused/cancelled work.
+    delivery.pendingCompletion = !job.stopIntent && this.verification.signal.aborted && report.findings.some(f=>f.code === "cancelled");
     delete delivery.staleEvidence;
     if (source !== "manual") delivery.blockedCompletion = report.status !== "passed";
     job.stage = report.status === "passed" ? "交付验收通过" : "交付验收未通过";
@@ -2584,7 +2589,7 @@ export class Scheduler extends EventEmitter {
   }
   async shutdown() {
     this.closing = true;
-    this.verification.abort();
+    this.interruptDeliveryChecks();
     if (this.timer) clearInterval(this.timer);
     try {
       await this.warmups.shutdown();

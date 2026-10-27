@@ -35,6 +35,8 @@ Import an official ChatGPT `auth.json` obtained through the official CLI's norma
 
 SIGINT/SIGTERM stops owned workers with the existing process-confirmation checks, saves runnable work for the next service start, and preserves explicit user pauses/cancellations. If process shutdown cannot be confirmed, the supervisor stays alive and reports the failure. Unexpected termination uses the existing ownership/recovery checks on the next start.
 
+Draining first interrupts file verification, before waiting for accepted HTTP/IPC commands. The current file read finishes and subsequent chunks stop; a large artifact is not read to completion just to exit. A shutdown-interrupted check is recorded as unverified and marked for automatic read-only verification at the next start. Previously paused/cancelled tasks remain held, and explicit per-task verification cancellation does not schedule an automatic retry. The original remote operation receipt is preserved; restart recovery creates separate file evidence rather than replaying that command.
+
 ## Verification scope
 
 `node scripts/qa/headless.cjs` launches the bundled daemon, connects the real CLI through authenticated loopback TCP, checks singleton ownership, submits an account-free task and verifies persistence after restart. It does not call a model. Unit/integration tests cover the vault, tampered ciphertext, key permissions and unsupported desktop state. Existing supervisor integration tests cover real synthetic JSONL worker processes and interruption recovery. Live Codex subscription inference still requires acceptance testing on the intended server.
