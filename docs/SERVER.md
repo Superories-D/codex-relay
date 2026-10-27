@@ -69,6 +69,8 @@ Delivery evidence is available through `delivery.read` (task UUID) and `delivery
 
 `delivery.save` takes `{ "requestId": "UUID", "id": "TASK_UUID", "revision": 1, "checks": [...] }`. It requires the current contract revision, validates all relative paths and preserves previous reports without treating them as evidence for the new revision. The web console's delivery panel edits these conditions, verifies files and displays the same report view as Windows. Save/verify requests are retained before sending and automatically reconciled after a lost response or reload. Adding repair instructions changes only that task's follow-up draft; sending it remains an explicit action.
 
+New-task acceptance drafts now persist in the browser session and are included in the original reliable task submission. Task templates can save these checks alongside prompt/model preferences. Applying a template replaces the new-task contract, while existing task contracts remain unchanged. Saved templates contain conditions only, without old reports or passed evidence. The template store checks its 16 MiB UTF-8 capacity before publishing a change so an oversized save cannot create a collection that fails to reopen.
+
 ## Remote browser console
 
 After forwarding the HTTP port, open `http://127.0.0.1:7899/` and enter the server's HTTP token. The console has responsive phone/desktop layouts and Chinese, English and Japanese text. It supports task creation, workflow creation, realtime task states, automatic recovery notices, paged chat, follow-up queues, pause/resume/cancel, global dispatch control, and explicit approvals/input answers. Workflow reports download through the browser after preview.

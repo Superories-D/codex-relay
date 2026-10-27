@@ -5,6 +5,10 @@ import { operationsEnglish } from "./operations";
 import {recoveryEnglish} from "./recovery";
 import {checkpointEnglish} from "./checkpoints";
 export const english: Record<string, string> = {
+"模板总大小超过 16 MiB，请精简内容后重试": "Templates exceed 16 MiB in total. Shorten their content and try again.",
+
+"模板中的验收条件只用于新任务，已有任务的条件保持不变。": "Template acceptance checks apply to new tasks. Existing task checks stay unchanged.",
+
 "修复要求超过消息上限，请精简条件或手动填写追问。": "Repair instructions exceed the message limit. Simplify the checks or write a follow-up manually.",
 
 "保存后更新当前任务的验收条件；历史报告保留，需重新验收。": "Saving updates acceptance checks for this task. Previous reports remain; verify the new contract again.",

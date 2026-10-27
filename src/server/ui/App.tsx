@@ -5,6 +5,9 @@ import {WorkflowOperations} from "./WorkflowOperations";
 import {RemoteSchedules} from "./RemoteSchedules";
 import {RemoteGoal} from "./RemoteGoal";
 import {RemoteDelivery} from "./RemoteDelivery";
+import {DeliveryDialog} from "../../renderer/DeliveryDialog";
+import {readDeliveryDraft,writeDeliveryDraft,clearDeliveryDraft} from "../../renderer/delivery-draft";
+import type {DeliveryCheck} from "../../shared/delivery";
 import {LiveControls} from "./LiveControls";
 import {RemoteArtifacts} from "./Artifacts";
 import { RemoteAttachments,readAttachments,saveAttachments } from "./Attachments";
@@ -42,6 +45,7 @@ const readPending = () => {
     return null;
   }
 };
+const newDeliveryKey="remote:new";
 setLanguage(
   (sessionStorage.getItem("relay.remote.language") || "auto") as Language,
 );
@@ -79,11 +83,18 @@ function App() {
       sessionStorage.getItem("relay.remote.draft") || "",
     );
   const [templateOptions, setTemplateOptions] = useState({effort:"",planMode:false,multiAgent:false});
+  const [newDeliveryChecks,setNewDeliveryChecks]=useState(()=>readDeliveryDraft(newDeliveryKey,sessionStorage));
+  const [newDeliveryOpen,setNewDeliveryOpen]=useState(false);
+  function saveNewDelivery(checks:DeliveryCheck[]){writeDeliveryDraft(newDeliveryKey,checks,sessionStorage);setNewDeliveryChecks(checks);}
+  function clearNewDelivery(checks:DeliveryCheck[]=[]){
+    clearDeliveryDraft(newDeliveryKey,checks,sessionStorage);
+    setNewDeliveryChecks(current=>JSON.stringify(current)===JSON.stringify(checks)?readDeliveryDraft(newDeliveryKey,sessionStorage):current);
+  }
   const [newAttachments,setNewAttachments]=useState<ChatAttachment[]>(()=>readAttachments("new"));
   const [followAttachments,setFollowAttachments]=useState<ChatAttachment[]>([]);
   const [newUploading,setNewUploading]=useState(false),[followUploading,setFollowUploading]=useState(false);
   useEffect(()=>setFollowAttachments(readAttachments(selected)),[selected]);
-  function clearAttachments(id:string,used:ChatAttachment[]=[]){const paths=new Set(used.map(a=>a.path));const next=readAttachments(id).filter(a=>!paths.has(a.path));saveAttachments(id,next);if(id==="new")setNewAttachments(next);else if(selection.current===id)setFollowAttachments(next);}
+  function clearAttachments(id:string,used:ChatAttachment[]=[]){try{const paths=new Set(used.map(a=>a.path));const next=readAttachments(id).filter(a=>!paths.has(a.path));saveAttachments(id,next);if(id==="new")setNewAttachments(next);else if(selection.current===id)setFollowAttachments(next);}catch(e){setError(errorText(e));}}
   const [pendingMessage, setPendingMessage] = useState<PendingMessage|null>(() => {
     try {
       return JSON.parse(
@@ -187,6 +198,7 @@ function App() {
       );
       if (accepted) {
         clearAttachments("new",pending.input.attachments);
+        clearNewDelivery(pending.input.deliveryChecks);
         setSelected(accepted.id);
         setPending(null);
         setPrompt((current) =>
@@ -333,6 +345,7 @@ function App() {
         mode: "cli" as const,
         model,
         ...templateOptions,
+        deliveryChecks:newDeliveryChecks,
         bucket: "codex",
         approvalPolicy: "on-request" as const,
         sandbox: "workspaceWrite" as const,
@@ -347,6 +360,7 @@ function App() {
       sessionStorage.setItem("relay.remote.pending", JSON.stringify(payload));
       const accepted = await action("job.submit", {requestId:payload.requestId,input:payload.input});
       clearAttachments("new",payload.input.attachments);
+      clearNewDelivery(payload.input.deliveryChecks);
       setSelected(accepted.id);
       setPending(current=>current?.requestId===payload.requestId?null:current);
       setPrompt((current) => (current === payload.input.prompt ? "" : current));
@@ -545,6 +559,7 @@ function App() {
                     />
                   </label>
                   <RemoteAttachments id="new" token={token} value={newAttachments} onChange={setNewAttachments} onBusy={setNewUploading} disabled={busy||!!pending}/>
+                  <button type="button" disabled={busy||!!pending} onClick={()=>setNewDeliveryOpen(true)}>{t("交付验收")} · {newDeliveryChecks.length}</button>
                   <button type="submit" disabled={busy || newUploading || !directory}>
                     {t(pending ? "重试同一提交" : "创建并排队")}
                   </button>
@@ -768,7 +783,9 @@ function App() {
             </section>
           </main>}
           {settingsOpen && snapshot && <RuntimeSettings settings={snapshot.settings} call={call} close={() => setSettingsOpen(false)} />}
-          {templates && <TaskTemplates draft={prompt} preferences={{model,...templateOptions}} call={call} close={() => setTemplates(false)} apply={template => {
+          {newDeliveryOpen&&<DeliveryDialog initial={newDeliveryChecks} call={call} saveDraft={saveNewDelivery} close={()=>setNewDeliveryOpen(false)}/>}
+          {templates && <TaskTemplates draft={prompt} preferences={{model,...templateOptions,deliveryChecks:newDeliveryChecks}} call={call} close={() => setTemplates(false)} apply={template => {
+            saveNewDelivery(template.deliveryChecks||[]);
             setPrompt(value => value ? value + "\n\n" + template.prompt : template.prompt);
             setModel(template.model); setTemplateOptions({effort:template.effort,planMode:template.planMode,multiAgent:template.multiAgent}); setTemplates(false);
           }} />}

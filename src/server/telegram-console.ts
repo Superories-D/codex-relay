@@ -1,5 +1,6 @@
 import { ServerAssets } from "./assets";
 import {deliveryStatus} from "./delivery-view";
+import {deliveryChecksSchema} from "../shared/delivery";
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import { attachmentsSchema } from "../main/validation";
@@ -21,6 +22,7 @@ export const contextSchema = z
         planMode: z.boolean(),
         multiAgent: z.boolean(),
         prompt: z.string().max(100000).optional(),
+        deliveryChecks: deliveryChecksSchema.optional(),
       })
       .optional(),
   })
@@ -73,6 +75,7 @@ const defaults: NonNullable<TelegramContext["defaults"]> = {
   effort: "",
   planMode: false,
   multiAgent: false,
+  deliveryChecks: [],
 };
 
 /** Presentation and explicit user operations. It never invokes an arbitrary runtime command. */
@@ -335,7 +338,7 @@ export class TelegramConsole {
       const [action,...parts]=args.split(/\s+/),value=parts.join(" ");
       if(action==="create"){
         const minutes=Number(parts.shift()),prompt=parts.join(" "),input=await this.input(context,prompt);
-        const receipt:any=await this.runtime.command("schedule.create",{requestId,id:requestId,input:{title:input.title,prompt:input.prompt,cwd:input.cwd,enabled:true,cadence:"interval",minutes,hour:9,minute:0,weekday:1,worktree:false}});
+        const receipt:any=await this.runtime.command("schedule.create",{requestId,id:requestId,input:{title:input.title,prompt:input.prompt,cwd:input.cwd,enabled:true,cadence:"interval",minutes,hour:9,minute:0,weekday:1,worktree:false,deliveryChecks:input.deliveryChecks}});
         return `定时任务: ${receipt.state} · ${requestId}\n/schedules 查看；时间为服务器时区。`;
       }
       const tasks:any=await this.runtime.command("schedule.list"),matches=tasks.tasks.filter((task:any)=>value.length>=8&&task.id.startsWith(value));
@@ -835,7 +838,7 @@ export class TelegramConsole {
             state.items
               .map(
                 (t) =>
-                  `${t.name}\n/template ${t.id}\n${t.prompt.slice(0, 200)}`,
+                  `${t.name}\n/template ${t.id}\n交付验收: ${t.deliveryChecks?.length||0} 条\n${t.prompt.slice(0, 200)}`,
               )
               .join("\n\n") ||
               "暂无模板，可先在网页保存模板。/template off 清除模板。",
@@ -852,6 +855,7 @@ export class TelegramConsole {
           planMode: t.planMode,
           multiAgent: t.multiAgent,
           prompt: t.prompt,
+          deliveryChecks: t.deliveryChecks || [],
         };
       } else if (command === "template") next = { ...defaults };
       else if (command === "model") {
@@ -871,7 +875,7 @@ export class TelegramConsole {
       }
       if (command !== "defaults")
         await this.save({ ...context, defaults: next });
-      return `新任务默认值（不改已有任务）\n模型: ${next.model || "default"}\n推理: ${next.effort || "default"}\n计划模式: ${next.planMode ? "on" : "off"}\n多代理: ${next.multiAgent ? "on" : "off"}\n模板前缀: ${next.prompt?.slice(0, 1000) || "无"}`;
+      return `新任务默认值（不改已有任务）\n模型: ${next.model || "default"}\n推理: ${next.effort || "default"}\n计划模式: ${next.planMode ? "on" : "off"}\n多代理: ${next.multiAgent ? "on" : "off"}\n交付验收: ${next.deliveryChecks?.length||0} 条\n模板前缀: ${next.prompt?.slice(0, 1000) || "无"}`;
     }
     if (command === "dispatch") {
       const [action, scope = "project"] = args.split(/\s+/);

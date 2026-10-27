@@ -150,9 +150,21 @@ const { chromium } = require(
       await page.locator(".connection-bar.online").waitFor();
       await page.locator(".new-task textarea").fill(`Remote QA ${language}`);
       if (language === "en") {
+        await page.locator('.new-task').getByRole('button',{name:'Task templates',exact:true}).click();
+        const templates=page.locator('.task-templates');
+        await templates.locator('form input').fill('Verified output template');
+        await templates.locator('form textarea').fill('Template verification instructions');
+        await templates.getByRole('button',{name:/^Delivery acceptance/}).click();
+        await page.locator('.delivery-dialog .delivery-actions > button').first().click();
+        await page.locator('.delivery-check input').nth(1).fill('template-output.txt');
+        await page.locator('.delivery-dialog .delivery-actions > button').last().click();
+        await templates.getByRole('button',{name:'Save template',exact:true}).click();
+        await templates.locator('.template-list article').getByRole('button',{name:'Insert into draft',exact:true}).click();
+        await page.locator('.new-task').getByRole('button',{name:'Delivery acceptance · 1',exact:true}).waitFor();
         await page.locator('.new-task input[type=file]').setInputFiles({name:"evidence.txt",mimeType:"text/plain",buffer:Buffer.from("Evidence document")});
         await page.locator('.new-task .remote-attachments span').filter({hasText:"upload-evidence.txt"}).waitFor();
         await page.reload();await page.locator(".connection-bar.online").waitFor();
+        await page.locator('.new-task').getByRole('button',{name:'Delivery acceptance · 1',exact:true}).waitFor();
         await page.locator('.new-task .remote-attachments span').filter({hasText:"upload-evidence.txt"}).waitFor();
         await page.evaluate(() => {
           window.__qaSetItem = Storage.prototype.setItem;
@@ -189,6 +201,8 @@ const { chromium } = require(
       );
       await page.locator(".remote-messages article").waitFor();
       if(language === "en") {
+        const checks=await page.evaluate(async()=>{const r=await fetch('/api/snapshot',{headers:{Authorization:`Bearer ${sessionStorage.getItem('relay.remote.token')}`}});return(await r.json()).jobs.find(j=>j.title==='Remote QA en').delivery.checks;});assert.equal(checks[0].path,'template-output.txt');
+        await page.locator('.new-task').getByRole('button',{name:'Delivery acceptance · 0',exact:true}).waitFor();
         await page.locator(".remote-artifacts summary").click();
         await page.locator(".remote-artifacts").getByText("upload-evidence.txt",{exact:false}).waitFor();
         await page.locator(".remote-artifacts").getByRole("button",{name:"Preview",exact:true}).click();
@@ -239,6 +253,7 @@ const { chromium } = require(
       );
       {
         const delivery=page.locator('.remote-delivery'),file=`accept-${language}.txt`;
+        const revision=language==='en'?2:1;
         const waitDelivery=(revision,count,status)=>page.waitForFunction(async({title,revision,count,status})=>{
           const snap=await(await fetch('/api/snapshot',{headers:{Authorization:`Bearer ${sessionStorage.getItem('relay.remote.token')}`}})).json();
           const job=snap.jobs.find(j=>j.title===title),d=job?.delivery;
@@ -246,6 +261,7 @@ const { chromium } = require(
         },{title:`Remote QA ${language}`,revision,count,status});
         await delivery.locator('summary').click();
         await delivery.locator('.delivery-actions > button').nth(0).click();
+        while(await page.locator('.delivery-dialog .delivery-check').count())await page.locator('.delivery-dialog .delivery-remove').first().click();
         await page.locator('.delivery-dialog .delivery-actions > button').first().click();
         await page.locator('.delivery-check input').nth(1).fill(file);
         if(language==='en'){
@@ -262,7 +278,7 @@ const { chromium } = require(
           await page.locator('.remote-task-list button').filter({hasText:`Remote QA ${language}`}).click();
           await delivery.locator('summary').click();
         }
-        await waitDelivery(1,0);
+        await waitDelivery(revision,0);
         await delivery.locator('.delivery-actions > button').nth(1).click();
         if(language==='en'){
           await page.waitForFunction(()=>Object.keys(sessionStorage).some(k=>k.startsWith('relay.remote.action.delivery.')));
@@ -270,13 +286,13 @@ const { chromium } = require(
           await page.locator('.remote-task-list button').filter({hasText:`Remote QA ${language}`}).click();
           await delivery.locator('summary').click();
         }
-        await waitDelivery(1,1,'failed');
+        await waitDelivery(revision,1,'failed');
         await delivery.locator('.delivery-actions > button').nth(2).click();
         await page.waitForFunction(()=>document.querySelector('.remote-followup textarea')?.value.includes('客户端直接检查文件'));
         assert.equal(await page.locator('.remote-messages article').count(),1,'preparing a repair must not submit a message');
         await fs.writeFile(path.join(workspace,file),'accepted output');
         await delivery.locator('.delivery-actions > button').nth(1).click();
-        await waitDelivery(1,2,'passed');
+        await waitDelivery(revision,2,'passed');
         await delivery.locator('.delivery-results code').filter({hasText:'SHA256'}).waitFor();
       }
       if(language==='en'){

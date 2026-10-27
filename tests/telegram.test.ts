@@ -29,7 +29,7 @@ async function setup() {
   const base = await fs.mkdtemp(path.join(os.tmpdir(), "relay-telegram-")),
     workspace = path.join(base, "project");
   await fs.mkdir(workspace);
-  const runtime = await ServerRuntime.open(path.join(base, "data"));
+  const runtime = await ServerRuntime.open(path.join(base, "data"),undefined,[workspace]);
   await runtime.scheduler.dispatch(true);
   return {
     base,
@@ -667,6 +667,7 @@ describe.skipIf(process.platform !== "linux")("Telegram mobile console", () => {
           effort: "high",
           planMode: false,
           multiAgent: false,
+          deliveryChecks:[{kind:"file",path:"report.txt",label:"Report",minBytes:1}],
         },
       });
       await f.send(`/template ${template.items[0].id}`);
@@ -680,6 +681,7 @@ describe.skipIf(process.platform !== "linux")("Telegram mobile console", () => {
       expect(jobs[1].dependsOn).toEqual([jobs[0].id]);
       expect(jobs[2].dependsOn).toEqual([jobs[1].id]);
       expect(jobs[0].prompt).toBe("Verify before changing\n\nInvestigate");
+      expect(jobs.every(j=>j.delivery?.checks[0].path==="report.txt" && !j.delivery.reports.length)).toBe(true);
       await f.bridge.pollOnce();
       expect(jobs).toHaveLength(3);
       const report = await f.send(`/handoff ${jobs[0].workflow!.id}`);
@@ -701,6 +703,26 @@ describe.skipIf(process.platform !== "linux")("Telegram mobile console", () => {
     } finally {
       await f.close();
     }
+  });
+  it("snapshots template checks into future tasks and schedules without changing existing jobs",async()=>{
+    const f=await consoleFixture();
+    try {
+      await f.send("/project 1");
+      const content={name:"Verified output",prompt:"Produce report",model:"",effort:"",planMode:false,multiAgent:false,deliveryChecks:[{kind:"file",path:"report.txt",label:"Report",minBytes:1}]};
+      const saved:any=await f.runtime.command("templates.save",{revision:0,template:content});
+      const id=saved.items[0].id;
+      expect((await f.send(`/template ${id}`)).text).toContain("交付验收: 1 条");
+      await f.restart();
+      await f.runtime.command("templates.save",{revision:1,id,template:{...content,deliveryChecks:[]}});
+      await f.send("/new Captured contract");
+      const first=f.runtime.store.data.jobs[0];
+      expect(first.delivery?.checks).toEqual(content.deliveryChecks);
+      expect((await f.send("/schedule create 60 Recurring contract")).text).toContain("succeeded");
+      expect(f.runtime.desktop.data.schedules[0].deliveryChecks).toEqual(content.deliveryChecks);
+      await f.send("/template off");await f.send("/new No contract");
+      expect(f.runtime.store.data.jobs[1].delivery).toBeUndefined();
+      expect(first.delivery?.checks).toEqual(content.deliveryChecks);
+    } finally {await f.close();}
   });
   it("answers all questions using buttons and free text, rejects stale choices and keeps answer mode safe after restart", async () => {
     const f = await consoleFixture();

@@ -3,6 +3,10 @@ import { operationsJapanese } from "./operations";
 import {recoveryJapanese} from "./recovery";
 import {checkpointJapanese} from "./checkpoints";
 export const japanese: Record<string, string> = {
+"模板总大小超过 16 MiB，请精简内容后重试": "テンプレートの合計が 16 MiB を超えています。内容を減らして再試行してください。",
+
+"模板中的验收条件只用于新任务，已有任务的条件保持不变。": "テンプレートの検証条件は新しいタスクに適用されます。既存タスクの条件は変更されません。",
+
 "修复要求超过消息上限，请精简条件或手动填写追问。": "修正指示がメッセージの上限を超えています。条件を簡略化するか、追記を手動で入力してください。",
 
 "保存后更新当前任务的验收条件；历史报告保留，需重新验收。": "保存すると現在のタスクの検証条件を更新します。過去の報告は保持され、再検証が必要です。",

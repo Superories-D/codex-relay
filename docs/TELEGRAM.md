@@ -109,6 +109,8 @@ Creation is atomic and idempotent across restart/retry. Workflows contain 2–12
 
 Templates prepend their saved prompt to new task/stage instructions and supply model, effort, plan and multi-agent preferences. Changing defaults never modifies an existing task. New tasks retain `on-request` approval and `workspaceWrite` sandbox policy; Telegram does not disable either.
 
+Templates can also carry file, content, SHA256 or JSON acceptance checks. Selecting a template snapshots those checks into persistent Telegram defaults; later edits to the saved template do not change that selection. `/new`, every `/workflow` stage and `/schedule create` copy the selected checks into independent task/run contracts with empty reports. `/defaults` shows the count and `/template off` clears future defaults. Existing task conditions are unchanged. Legacy templates without checks remain readable and select an empty contract.
+
 ### Approvals and guided questions
 
 `/approvals [PAGE]` presents one complete request at a time, including navigation to every pending request. Command and permission requests expose explicit **approve/decline** buttons. Codes expire after five minutes and bind the job, native request, history/turn identity and full current parameters. A changed request invalidates the code; opening a fresh approval list invalidates earlier codes. Requests whose full JSON detail exceeds 2,600 characters require the web console, so no approval is offered against truncated context.
