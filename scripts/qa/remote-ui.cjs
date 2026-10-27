@@ -279,6 +279,34 @@ const { chromium } = require(
         await waitDelivery(1,2,'passed');
         await delivery.locator('.delivery-results code').filter({hasText:'SHA256'}).waitFor();
       }
+      if(language==='en'){
+        const other=await page.evaluate(async workspace=>{
+          const command=async(name,args)=>{const r=await fetch('/api/command',{method:'POST',headers:{Authorization:`Bearer ${sessionStorage.getItem('relay.remote.token')}`,'Content-Type':'application/json'},body:JSON.stringify({name,args})});return(await r.json()).result;};
+          const job=await command('job.submit',{requestId:crypto.randomUUID(),input:{title:'Attachment isolation target',prompt:'No model call',cwd:workspace,mode:'cli',model:'',effort:'',bucket:'codex',approvalPolicy:'on-request',sandbox:'workspaceWrite'}});
+          await command('job.control',{id:job.id,action:'pause'});return job.id;
+        },workspace);
+        let release,accepted,delivered;
+        const held=new Promise(resolve=>release=resolve),ready=new Promise(resolve=>accepted=resolve),done=new Promise(resolve=>delivered=resolve);
+        await page.route('**/api/uploads/**',async route=>{
+          if(route.request().method()==='POST'&&new URL(route.request().url()).searchParams.get('name')==='selection-race.txt'){
+            const response=await route.fetch();accepted();await held;await route.fulfill({response});delivered();
+          } else await route.fallback();
+        });
+        await page.locator('.remote-followup input[type=file]').setInputFiles({name:'selection-race.txt',mimeType:'text/plain',buffer:Buffer.from('Private to the first task')});
+        await ready;
+        await page.locator('.remote-task-list button').filter({hasText:'Attachment isolation target'}).click();
+        await page.waitForFunction(()=>!document.querySelector('.remote-followup input[type=file]')?.disabled);
+        assert.equal(await page.locator('.remote-followup input[type=file]').isEnabled(),true,'Switching tasks must release the old upload UI lock');
+        release();await done;
+        await page.waitForTimeout(100);
+        assert.equal(await page.locator('.remote-followup .remote-attachments span').filter({hasText:'selection-race.txt'}).count(),0,'A late upload must not attach to the newly selected task');
+        assert.deepEqual(await page.evaluate(id=>JSON.parse(sessionStorage.getItem(`relay.remote.attachments.${id}`)||'[]'),other),[]);
+        await page.locator('.remote-task-list button').filter({hasText:'Remote QA en'}).click();
+        await page.locator('.remote-followup .remote-attachments span').filter({hasText:'selection-race.txt'}).waitFor();
+        assert.equal(await page.locator('.remote-followup .remote-attachments > div').count(),1,'Returning to the original task must recover exactly one accepted file');
+        await page.locator('.remote-followup .remote-attachments > div > button').click();
+        await page.evaluate(async id=>fetch('/api/command',{method:'POST',headers:{Authorization:`Bearer ${sessionStorage.getItem('relay.remote.token')}`,'Content-Type':'application/json'},body:JSON.stringify({name:'job.metadata',args:{id,archived:true}})}),other);
+      }
       await page.evaluate(() => document.fonts.ready);
       await page.screenshot({
         path: `qa-output/remote-${language}-${width}.png`,
