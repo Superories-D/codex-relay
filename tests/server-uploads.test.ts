@@ -37,6 +37,25 @@ it("stores immutable upload receipts, rejects conflicting retries, forged refere
     await fs.rm(root, { recursive: true, force: true });
   }
 });
+it("keeps an accepted upload ID reserved when its payload disappears", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "relay-upload-loss-"));
+  try {
+    const uploads = new ServerUploads(root), id = randomUUID();
+    const first = await uploads.put(id, "proof.txt", Buffer.from("original"));
+    const receipt = path.join(root, "remote-uploads", id, "receipt.json");
+    const originalReceipt = await fs.readFile(receipt, "utf8");
+    await fs.unlink(first.attachment.path);
+    await expect(uploads.read(id)).rejects.toThrow("receipt retained");
+    await expect(uploads.put(id, "proof.txt", Buffer.from("replacement"))).rejects.toThrow("receipt retained");
+    expect(await fs.readFile(receipt, "utf8")).toBe(originalReceipt);
+    await expect(fs.stat(first.attachment.path)).rejects.toMatchObject({code: "ENOENT"});
+    // The owner can restore the original payload, after which normal retries work.
+    await fs.writeFile(first.attachment.path, "original");
+    expect(await uploads.put(id, "proof.txt", Buffer.from("original"))).toEqual(first);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
 it("streams Telegram downloads with size bounds and rejects path injection before network I/O", async () => {
   const mock = vi
     .spyOn(globalThis, "fetch")

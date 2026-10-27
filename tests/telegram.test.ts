@@ -1022,6 +1022,7 @@ it.skipIf(process.platform !== "linux")(
     const f = await setup(),
       t = transport();
     let downloads = 0;
+    const sharedUpload = vi.spyOn(f.runtime.uploads, "put");
     const api: TelegramApi = async (method, body, signal) =>
       method === "getFile"
         ? { file_path: "documents/file_1.txt", file_size: 5 }
@@ -1064,6 +1065,7 @@ it.skipIf(process.platform !== "linux")(
       );
       await bridge.pollOnce();
       expect(downloads).toBe(1);
+      expect(sharedUpload).toHaveBeenCalledTimes(1);
       t.setUpdates([message(12, "/run 1 Use the document")]);
       await bridge.pollOnce();
       const job = f.runtime.store.data.jobs[0];

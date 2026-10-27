@@ -5,7 +5,6 @@ import {
 } from "./notification-policy";
 import { attachmentsSchema } from "../main/validation";
 import {
-  ServerUploads,
   telegramDownload,
   UPLOAD_LIMIT,
   type TelegramDownload,
@@ -707,7 +706,7 @@ export class TelegramBridge {
   private async stageMedia(
     incoming: NonNullable<State["incoming"]>,
   ): Promise<TelegramReply> {
-    const uploads = new ServerUploads(this.runtime.store.root),
+    const uploads = this.runtime.uploads,
       id = requestId(this.identity, incoming.updateId),
       media = incoming.media!;
     let result;
