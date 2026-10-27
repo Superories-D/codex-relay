@@ -63,6 +63,24 @@ it("recovers a successful turn after cleanup failed without starting another wor
  await(scheduler as any).tick();await until(()=>!job.recoveryRequired);await until(()=>!(scheduler as any).recoveryTasks.size);
  await(scheduler as any).tick();expect(job.state).toBe("completed");expect(workers).toHaveLength(1);expect(job.completion?.revision).toBe(1);
 });
+it("automatically flushes a retained completed answer after storage recovers without another worker or UI read",async()=>{
+ const job=await scheduler.add({...input,cwd:root,interactive:true});await until(()=>workers[0]?.started);
+ const append=fs.appendFile.bind(fs);let offline=true,release!:()=>void,entered!:()=>void;
+ const gate=new Promise<void>(r=>{release=r;}),writing=new Promise<void>(r=>{entered=r;});
+ const fault=vi.spyOn(fs,"appendFile").mockImplementation(async(file,data,options)=>{
+  if(String(file)===scheduler.chats.file(job.id)&&offline){if(String(data).includes('"kind":"plan"')){entered();await gate;}throw Error("journal storage offline");}await append(file,data,options);
+ });
+ let restoreClock=()=>{};
+ try{
+ workers[0].emit("chat","turn/plan/updated",{turnId:job.turnId,plan:[]});await writing;
+ workers[0].emit("chat","item/completed",{turnId:job.turnId,item:{id:"final",type:"agentMessage",text:"Recovered exact answer"}});workers[0].settle({kind:"completed"});
+ await until(()=>!!job.completionPending);const checkpointAt=job.completion!.finishedAt,originalNow=Date.now.bind(Date),clock=vi.spyOn(Date,"now").mockImplementation(()=>originalNow()+1000);restoreClock=()=>clock.mockRestore();
+ release();await(scheduler as any).currentRun;
+ expect(job.recoveryRequired).toBe(true);expect(job.completionPending).toBe(true);offline=false;job.autoRecovery!.nextAttemptAt=0;
+ await(scheduler as any).tick();await until(()=>!(scheduler as any).recoveryTasks.size);await(scheduler as any).tick();expect(job.state).toBe("completed");expect(workers).toHaveLength(1);
+ const answer=await scheduler.chats.latestAssistant(job.id,job.completion);expect(answer).toMatchObject({text:"Recovered exact answer",status:"completed",turnId:job.turnId});expect(answer!.at).toBeGreaterThan(checkpointAt);
+ }finally{offline=false;release();restoreClock();fault.mockRestore();}
+});
 it.each([true,false])("recovers the saved success then rechecks delivery (artifact exists: %s) without inference",async(exists)=>{
  const job=await scheduler.add({...input,cwd:root,interactive:true,deliveryChecks:[{kind:"file",path:"artifact",label:"Artifact",minBytes:1}]});await until(()=>workers[0]?.started);
  if(exists)await fs.writeFile(path.join(root,"artifact"),"done");workers[0].failClose=true;workers[0].settle({kind:"completed"});await(scheduler as any).currentRun;

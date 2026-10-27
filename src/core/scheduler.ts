@@ -504,6 +504,14 @@ export class Scheduler extends EventEmitter {
     return undo;
   }
   private async finishRecordedCompletion(job:Job, source:"automatic"|"recovery") {
+    if(source === "recovery") {
+      await this.chats.flush(job.id);
+      for(const agent of job.agents||[])await this.chats.flush(agent.threadId);
+      // The protocol reducer can finish after the success checkpoint. Once
+      // the old owner is idle, include its retained final records in the window.
+      if(job.completionPending && job.completion)
+        job.completion.finishedAt=Math.max(job.completion.finishedAt,Date.now());
+    }
     let failed=false,undo:undefined|(()=>void);
     if (!job.stopIntent && !this.closing && job.delivery?.checks.length)
       failed=(await this.recordDelivery(job,source)).status !== "passed";
