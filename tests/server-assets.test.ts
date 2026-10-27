@@ -90,3 +90,23 @@ it.skipIf(process.platform !== "linux")(
     }
   },
 );
+it.skipIf(process.platform!=="linux")("delivers isolated schedule artifacts after plan removal without exposing other private data",async()=>{
+ const {promisify}=await import("node:util"),{execFile}=await import("node:child_process"),{randomUUID}=await import("node:crypto"),exec=promisify(execFile);
+ const base=await fs.mkdtemp(path.join(os.tmpdir(),"relay-worktree-assets-")),work=path.join(base,"project");await fs.mkdir(work);
+ const git=(...args:string[])=>exec("git",["-C",work,...args]);await git("init","-b","main");await git("-c","user.name=QA","-c","user.email=qa@invalid.local","commit","--allow-empty","-m","fixture");
+ const runtime=await ServerRuntime.open(path.join(base,"data"),undefined,[work]);await runtime.scheduler.dispatch(true);
+ try{
+ const id=randomUUID(),input={title:"Worktree",prompt:"Make output",cwd:work,enabled:false,cadence:"interval",minutes:60,hour:9,minute:0,weekday:1,worktree:true};
+ await runtime.command("schedule.create",{requestId:randomUUID(),id,input});
+ const receipt:any=await runtime.command("schedule.run",{requestId:randomUUID(),id});expect(receipt.state).toBe("succeeded");const job=runtime.store.data.jobs[0];
+ expect(job.schedule?.sourceCwd).toBe(work);
+ const result=path.join(job.cwd,"result.txt");await fs.writeFile(result,"isolated result");
+ await runtime.scheduler.chats.append(job.id,{id:"generated",role:"tool",kind:"fileChange",text:"Output",at:Date.now(),data:{changes:[{path:result},{path:path.join(runtime.store.root,"state.json")}]}});
+ await runtime.scheduler.chats.user(job.id,"Read output",result);
+ const assets=new ServerAssets(runtime,[work]);const listed=await assets.list(job.id);expect(listed.files.map(f=>f.name)).toEqual(["result.txt"]);
+ await runtime.command("schedule.remove",{requestId:randomUUID(),id});expect((await assets.read(job.id,listed.files[0].id)).preview).toBe("isolated result");
+ expect((await new ServerAssets(runtime,[]).list(job.id)).files).toHaveLength(0);
+ const original=job.cwd;await fs.rename(original,original+"-saved");await fs.writeFile(path.join(runtime.store.root,"result.txt"),"private state");await fs.symlink(runtime.store.root,original);
+ expect((await assets.list(job.id)).files).toHaveLength(0);await expect(assets.read(job.id,listed.files[0].id)).rejects.toThrow();
+ }finally{await runtime.close();await fs.rm(base,{recursive:true,force:true});}
+});

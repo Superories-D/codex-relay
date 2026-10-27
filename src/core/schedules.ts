@@ -195,6 +195,7 @@ export class Schedules {
           taskId: id,
           runId: reservation.id,
           requestedAt: reservation.requestedAt,
+          sourceCwd: task.cwd,
         },
       );
       return await this.finish(task, job);

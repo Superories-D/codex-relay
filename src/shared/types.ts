@@ -104,7 +104,7 @@ export interface Job {
   priority?: "high" | "normal" | "low";
   enqueuedAt?: number;
   recoveryHistory?: RecoveryEvent[];
-  schedule?: { taskId: string; runId: string; requestedAt: number };
+  schedule?: { taskId: string; runId: string; requestedAt: number; sourceCwd?:string };
   projectCwd?: string;
   agentOrigin?: { jobId: string; parentThreadId: string };
   preserveNativePermissions?: boolean;

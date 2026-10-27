@@ -334,7 +334,7 @@ it("preserves a pending occurrence across time-zone changes and rolls back faile
   expect(store.data.jobs).toHaveLength(0);
   await schedules.run(task.id, true);
   expect(store.data.jobs).toHaveLength(1);
-  expect(store.data.jobs[0].schedule).toEqual({ taskId: task.id, runId: reservation.id, requestedAt: reservation.requestedAt });
+  expect(store.data.jobs[0].schedule).toEqual({ taskId: task.id, runId: reservation.id, requestedAt: reservation.requestedAt,sourceCwd:task.cwd });
   expect(task.nextRun).toBe(nextSchedule(task, now));
   await schedules.tick();
   expect(store.data.jobs).toHaveLength(1);

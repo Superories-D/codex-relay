@@ -3,6 +3,8 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { redact } from "../core/redact";
 import type { ServerRuntime } from "./runtime";
+import type { Job } from "../shared/types";
+import {resolveWorkspace} from "./workspaces";
 const inside = (root: string, file: string) => {
   const relative = path.relative(root, file);
   return (
@@ -32,26 +34,42 @@ export class ServerAssets {
     const assets = await this.runtime.scheduler.chats.assets(jobId);
     return { job, files: [...assets.outputs, ...assets.sources].slice(0, 100) };
   }
-  private allowed(file: string) {
+  private async managedRoot(job:Job) {
+    const reservation=job.schedule;
+    if(!reservation||!/^[0-9a-f-]{36}$/i.test(reservation.runId))return undefined;
+    const expected=path.join(this.runtime.store.root,"worktrees",reservation.runId);
+    if(path.resolve(job.cwd)!==expected)return undefined;
+    const source=reservation.sourceCwd||this.runtime.desktop.data.schedules.find(t=>t.id===reservation.taskId&&t.worktree)?.cwd;
+    if(!source)return undefined;
+    try{
+      await resolveWorkspace(this.roots,source);
+      // A replaced worktree directory must not grant access to another private tree.
+      if(await fs.realpath(expected)!==expected)return undefined;
+      return expected;
+    }catch{return undefined;}
+  }
+  private allowed(file: string, managed?:string) {
     return (
       this.roots.some((root) => inside(root, file)) ||
+      !!managed&&inside(managed,file) ||
       inside(path.join(this.runtime.store.root, "media"), file) ||
       inside(path.join(this.runtime.store.root, "remote-uploads"), file)
     );
   }
   async list(jobId: string) {
     const { job, files } = await this.references(jobId),
-      result = [];
+      result = [], managed=await this.managedRoot(job),seen=new Set<string>();
     for (const asset of files) {
       if (/^https?:/.test(asset.path)) continue;
       try {
         const file = await fs.realpath(path.resolve(job.cwd, asset.path));
-        if (!this.allowed(file)) continue;
+        if (!this.allowed(file,managed)) continue;
         const stat = await fs.stat(file);
         if (!stat.isFile() || stat.nlink > 1 || stat.size > 8 * 1024 * 1024)
           continue;
+        const id=digest(jobId+file+stamp(stat));if(seen.has(id))continue;seen.add(id);
         result.push({
-          id: digest(jobId + file + stamp(stat)),
+          id,
           name: safeName(file),
           size: stat.size,
           kind: asset.kind,
@@ -63,7 +81,7 @@ export class ServerAssets {
   }
   async read(jobId: string, id: string) {
     if (!/^[a-f0-9]{24}$/.test(id)) throw Error("Invalid artifact ID");
-    const { job, files } = await this.references(jobId);
+    const { job, files } = await this.references(jobId),managed=await this.managedRoot(job);
     for (const asset of files) {
       if (/^https?:/.test(asset.path)) continue;
       let file: string, stat: import("node:fs").Stats;
@@ -73,7 +91,7 @@ export class ServerAssets {
       } catch {
         continue;
       }
-      if (!this.allowed(file) || digest(jobId + file + stamp(stat)) !== id)
+      if (!this.allowed(file,managed) || digest(jobId + file + stamp(stat)) !== id)
         continue;
       const handle = await fs.open(
         file,
@@ -83,7 +101,7 @@ export class ServerAssets {
         const opened = await handle.stat(),
           actual = await fs.realpath(`/proc/self/fd/${handle.fd}`);
         if (
-          !this.allowed(actual) ||
+          !this.allowed(actual,managed) ||
           !opened.isFile() ||
           opened.nlink > 1 ||
           opened.size > 8 * 1024 * 1024 ||
