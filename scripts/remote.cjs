@@ -124,14 +124,9 @@ async function command(name, args, retry = false) {
       if (record) store().finish(record, result);
       return result;
     } catch (error) {
-      if (
-        record &&
-        error instanceof HttpError &&
-        error.status >= 400 &&
-        error.status < 500 &&
-        error.status !== 429
-      )
-        store().finish(record, undefined, error.message);
+      // A gateway error can be returned after the server committed the request.
+      // Preserve the original payload and ID; 4xx still stop this attempt so
+      // validation and authentication errors do not create an automatic loop.
       if (controller.signal.aborted) throw error;
       if (
         !retry ||
@@ -304,6 +299,7 @@ async function main() {
       throw Error(
         "Recovery server installation differs from the recorded server",
       );
+    if (record.state === "rejected") store().reopen(record);
     console.log(JSON.stringify(await command(record.name, record.args, true)));
     return;
   }

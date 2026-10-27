@@ -78,7 +78,8 @@ it.skipIf(process.platform !== "linux")(
     let accepted!: () => void;
     const ready = new Promise<void>((resolve) => (accepted = resolve));
     let drop = true,
-      changed = false;
+      changed = false,
+      errorAfterAcceptance = false;
     const proxy = http.createServer(async (req, res) => {
       let body = "";
       for await (const c of req) body += c;
@@ -100,6 +101,12 @@ it.skipIf(process.platform !== "linux")(
         drop = false;
         accepted();
         res.destroy();
+        return;
+      }
+      if (req.method === "POST" && errorAfterAcceptance) {
+        errorAfterAcceptance = false;
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Lost persistence acknowledgement" }));
         return;
       }
       res.writeHead(response.status, { "Content-Type": "application/json" });
@@ -168,11 +175,25 @@ it.skipIf(process.platform !== "linux")(
       );
       expect(runtime.store.data.jobs).toHaveLength(1);
       expect(store.read(id).state).toBe("confirmed");
+      // Older clients marked even an ambiguous 4xx as rejected. Explicit
+      // recovery upgrades that receipt without changing its identity.
+      store.finish({ ...store.read(id), state: "pending" }, undefined, "old error");
+      await run(["recover", "--profile", "server", "--request-id", id]);
+      expect(store.read(id).state).toBe("confirmed");
+      expect(runtime.store.data.jobs).toHaveLength(1);
+      const secondId = randomUUID();
+      errorAfterAcceptance = true;
+      await expect(run(["run", "--profile", "server", "--prompt", "Accepted before error", "--request-id", secondId, "--detach"])).rejects.toThrow("Lost persistence acknowledgement");
+      expect(store.read(secondId).state).toBe("pending");
+      expect(runtime.store.data.jobs).toHaveLength(2);
+      const second = await run(["recover", "--profile", "server", "--request-id", secondId]);
+      expect(JSON.parse(second.stdout).id).toBe(runtime.store.data.jobs[1].id);
+      expect(runtime.store.data.jobs).toHaveLength(2);
       changed = true;
       await expect(
         run(["recover", "--profile", "server", "--request-id", id]),
       ).rejects.toThrow("installation differs");
-      expect(runtime.store.data.jobs).toHaveLength(1);
+      expect(runtime.store.data.jobs).toHaveLength(2);
     } finally {
       child?.kill("SIGKILL");
       proxy.closeAllConnections();

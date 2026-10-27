@@ -35,3 +35,5 @@ node scripts/remote.cjs recover --profile production --request-id REQUEST_UUID
 客户端普通网络重试采用有限退避；最终仍失败时请求留在本地，使用 recover 继续确认。状态 watch 独立自动重连，Ctrl+C 只关闭查看器。禁止 HTTP 跨机器明文端点、URL 内凭据和 HTTP 重定向。请求箱可能包含任务内容，请按私有数据保管。
 
 本轮已在 Linux 实测客户端进程被杀后的恢复与服务端去重。Windows ACL 和客户端测试已纳入现有 Windows CI，本次环境未运行原生 Windows 验收。
+
+HTTP 4xx 会结束本次尝试并显示错误，但不会抹掉或永久封死本地请求：服务器或中间代理可能在提交已经生效后返回错误。排查连接、权限或服务器状态后可用 `recover` 重用同一编号；无效参数也不会被自动反复发送。旧版误记为 rejected 的可靠请求也可通过显式 `recover` 重新核对，仍会校验服务器安装身份。
