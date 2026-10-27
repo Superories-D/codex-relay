@@ -615,6 +615,30 @@ describe.skipIf(process.platform !== "linux")("Telegram mobile console", () => {
       await f.close();
     }
   });
+  it.each(["control","typed-control","button-queue","typed-queue"])("recovers a %s receipt after a lost reply checkpoint and restart",async kind=>{
+    let fail=false;
+    const f=await consoleFixture(async(file,value)=>{
+      if(fail&&file.endsWith("telegram-state.json")&&JSON.parse(String(value)).pending){fail=false;throw Error("Management reply lost");}
+      await atomicWrite(file,value);
+    });
+    try {
+      await f.send("/run 1 Managed task");const job=f.runtime.store.data.jobs[0];
+      let command:string;
+      if(kind.includes("control"))command=kind==="typed-control"?`/pause ${job.id}`:buttons(await f.click(`/control pause ${job.id}`))[0].callback_data;
+      else {
+        await f.send("first");await f.send("second");
+        command=kind==="button-queue"?buttons(await f.send("/queue")).find(button=>button.text==="↓ 1")!.callback_data:`/edit ${job.queuedMessages![0].id} ${job.queueRevision} changed`;
+      }
+      const control=vi.spyOn(f.runtime.scheduler,"controlObserved"),queue=vi.spyOn(f.runtime.scheduler,"editQueue");fail=true;
+      await expect(kind.startsWith("typed-")?f.send(command):f.click(command)).rejects.toThrow("Management reply lost");
+      const revision=job.queueRevision,texts=job.queuedMessages?.map(message=>message.text);
+      if(kind.includes("control")){expect(job.state).toBe("paused");await f.runtime.scheduler.control(job.id,"resume");}
+      await f.restart();await f.bridge.pollOnce();
+      expect(f.t.sent.at(-1).text).toContain("操作已确认");
+      if(kind.includes("control")){expect(control).toHaveBeenCalledTimes(1);expect(job.state).toBe("queued");}
+      else {expect(queue).toHaveBeenCalledTimes(1);expect(job.queueRevision).toBe(revision);expect(job.queuedMessages?.map(message=>message.text)).toEqual(texts);}
+    }finally{await f.close();}
+  });
   it("manages the real queue with revision checks and prevents repeat button execution", async () => {
     const f = await consoleFixture();
     try {

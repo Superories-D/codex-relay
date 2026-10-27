@@ -4,6 +4,7 @@ import {
   wantsNotice,
 } from "./notification-policy";
 import {deliveryStatus} from "./delivery-view";
+import {taskControlSignature} from "../shared/task-control";
 import { attachmentsSchema } from "../main/validation";
 import {
   telegramDownload,
@@ -539,6 +540,11 @@ export class TelegramBridge {
       };
     }
     if (["pause", "resume", "cancel"].includes(command)) {
+      const id=requestId(this.identity,updateId),recorded=await this.runtime.command("action.read",id) as any;
+      if(recorded) {
+        if(recorded.action!=="task.control")throw Error("Request ID belongs to another operation");
+        return this.console.taskReceipt(recorded);
+      }
       const job = this.findJob(args.trim() || context.task || "");
       if (
         command === "resume" &&
@@ -550,11 +556,11 @@ export class TelegramBridge {
         (command === "cancel" && job.state === "cancelled")
       )
         return `Task already ${job.state}: ${job.id}`;
-      await this.runtime.command("job.control", {
+      return this.console.taskReceipt(await this.runtime.command("task.control", {
+        requestId:id,expected:taskControlSignature(job),
         id: job.id,
         action: command,
-      });
-      return `${command}: ${job.id}`;
+      }));
     }
     if (command === "dismiss") {
       this.wizard = undefined;

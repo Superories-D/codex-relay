@@ -1,4 +1,5 @@
 import { dispatchHeld, projectKey, projectHasCapacity } from "../shared/dispatch";
+import {taskControlSignature} from "../shared/task-control";
 import { operationCard, accountGateReasons,indexOperations, type AccountGateCode } from "./operations";
 import { operationObservation } from "./operations-observation";
 import {RecoveryDomains,captureWindowsDomain} from "./recovery-domains";
@@ -1470,6 +1471,19 @@ export class Scheduler extends EventEmitter {
     }));
     return { results };
   }
+  controlObserved(id:string,action:"pause"|"resume"|"cancel",expected:string):Promise<{applied:boolean}> {
+    const matches=()=>{const job=this.store.data.jobs.find(job=>job.id===id);return !!job&&taskControlSignature(job)===expected;};
+    if(action!=="resume"&&this.recoveryTasks.has(id)) {
+      // Preserve the existing immediate stop-intent path while ownership is
+      // checked. The observed state is checked before publishing that intent.
+      if(!matches())return Promise.resolve({applied:false});
+      return this.control(id,action).then(()=>({applied:true}));
+    }
+    return this.queueControl(id,async()=>{
+      if(!matches())return {applied:false};
+      await this.controlOnce(id,action);return {applied:true};
+    });
+  }
   control(id: string, action: "pause" | "resume" | "cancel"): Promise<void> {
     if (action !== "resume" && this.recoveryTasks.has(id)) {
       const job = this.store.data.jobs.find((j) => j.id === id);
@@ -1477,6 +1491,7 @@ export class Scheduler extends EventEmitter {
         // Ownership checks can take time. Remember Stop immediately instead of
         // leaving it behind that check, where an app restart could lose it.
         if (job.stopIntent !== "cancel") job.stopIntent = action;
+        job.controlRevision=(job.controlRevision||0)+1;
         const saved = this.store.save();
         void saved.catch(() => {}); // Observed below after the recovery control.
         this.changed();
@@ -2463,6 +2478,7 @@ export class Scheduler extends EventEmitter {
     if (!job) throw new Error("任务不存在");
     if (["completed", "cancelled"].includes(job.state))
       throw new Error("终止任务不可再次操作，请新建任务");
+    job.controlRevision=(job.controlRevision||0)+1;
     if (action !== "resume") {
       job.stopIntent = action;
       if (job.autoRecovery) recordRecovery(job, "stopped");

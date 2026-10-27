@@ -358,6 +358,14 @@ export class ServerRuntime {
         const a = controlSchema.parse(args);
         return this.scheduler.control(a.id, a.action);
       }
+      case "task.control": {
+        const a=controlSchema.extend({requestId:idSchema,expected:z.string().min(1).max(2000)}).strict().parse(args);
+        return (this.remoteActions ||= new RemoteActions(this.store.root)).run(a.requestId,name,a.id,{action:a.action,expected:a.expected},()=>this.scheduler.controlObserved(a.id,a.action,a.expected));
+      }
+      case "task.queue": {
+        const a=z.object({requestId:idSchema,input:z.object({id:idSchema,messageId:idSchema,revision:z.number().int().nonnegative(),action:z.enum(["edit","remove","up","down"]),text:z.string().trim().min(1).max(100000).optional()}).strict()}).strict().parse(args);
+        return (this.remoteActions ||= new RemoteActions(this.store.root)).run(a.requestId,name,a.input.id,a.input,async()=>{await this.scheduler.editQueue(a.input);return {applied:true};});
+      }
       case "job.metadata": {
         const {id,...patch}=z.object({id:idSchema,title:z.string().trim().min(1).max(120).optional(),pinned:z.boolean().optional(),archived:z.boolean().optional()}).strict().parse(args);
         return this.scheduler.metadata(id,patch);

@@ -164,6 +164,9 @@ export interface Job {
   recoveryRequired?: boolean;
   // Persist user intent before stopping so crash recovery never undoes it.
   stopIntent?: "pause" | "cancel";
+  // Distinguish later control states even after a pause/resume cycle returns to
+  // the same status and no timestamp has changed.
+  controlRevision?: number;
   recoveryAttempts?: number;
   autoRecovery?: {
     reason: "process" | "interrupted" | "unknown";

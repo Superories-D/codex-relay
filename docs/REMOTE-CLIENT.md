@@ -45,3 +45,5 @@ HTTP 4xx 会结束本次尝试并显示错误，但不会抹掉或永久封死�
 `node scripts/remote.cjs info --profile production` 查询服务器安装身份、源码版本、允许工作区和公开命令。网页连接栏与任务诊断报告使用构建时的项目版本，独立发行包不依赖运行目录中的外部 package.json 来推断版本。
 
 可靠 CLI 提交的每次 HTTP 重试都会附带原服务器安装标识，由服务器在执行前核对。即使部署恰好发生在读取元数据与发送之间，也不会把待确认操作投到另一安装；部署不匹配时保留本地请求，可恢复原目标后继续核对。
+
+网页暂停、恢复、取消与队列编辑使用 `task.control` / `task.queue` 持久回执；重载后恢复当前任务并确认同一请求。`task.control` 需传入观察到的控制签名，服务在任务控制队列中检查，状态变化时返回 `applied: false`。CLI 的 `command --file` 同时为这两项、`delivery.save` / `delivery.run` 和 `schedule.abandon` 保留原始请求，使用原编号恢复。旧 `job.control` / `chat.queue` API 保留为即时调用，不能当作可自动重放的操作。

@@ -1,5 +1,6 @@
 import { ServerAssets } from "./assets";
 import {deliveryStatus} from "./delivery-view";
+import {taskControlSignature} from "../shared/task-control";
 import {deliveryChecksSchema} from "../shared/delivery";
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
@@ -243,17 +244,13 @@ export class TelegramConsole {
     };
   }
   private signature(job: Job) {
-    return JSON.stringify([
-      job.state,
-      job.turnId,
-      job.updatedAt,
-      job.queueRevision,
-      job.stopIntent,
-      job.delivery?.revision,
-      job.delivery?.reports.at(-1)?.id,
-      job.delivery?.pendingCompletion,
-      job.delivery?.staleEvidence,
-    ]);
+    return taskControlSignature(job);
+  }
+  taskReceipt(receipt:any):TelegramReply {
+    const job=this.runtime.store.data.jobs.find(job=>job.id===receipt.jobId);
+    const status=receipt.state==="succeeded"?(receipt.result?.applied===false?"任务状态已变化，操作未应用。":"操作已确认。"):"操作结果未知，请检查任务状态；不会自动重复执行。";
+    const text=`${status}\n${receipt.id}${receipt.error?"\n"+receipt.error:""}`;
+    return job?{...this.card(job),text:`${text}\n\n${this.card(job).text}`}:{text,keyboard:homeKeyboard()};
   }
   private action(label: string, job: Job, command: string, args: unknown) {
     for (const [key, action] of this.actions)
@@ -740,6 +737,11 @@ export class TelegramConsole {
       };
     }
     if (command === "confirm") {
+      const recorded=await this.runtime.command("action.read",requestId) as any;
+      if(recorded) {
+        if(!["task.control","task.queue"].includes(recorded.action))throw Error("Request ID belongs to another operation");
+        return this.taskReceipt(recorded);
+      }
       const action = this.actions.get(args);
       if (!action || action.expires <= this.now())
         throw Error("操作按钮已过期，请重新打开任务或队列");
@@ -748,6 +750,10 @@ export class TelegramConsole {
         throw Error("任务或队列已变化，请刷新后操作");
       // Consume before execution: an uncertain response must never replay a control.
       this.actions.delete(args);
+      if(action.command==="job.control"||action.command==="chat.queue") {
+        const input=action.args as Record<string,unknown>;
+        return this.taskReceipt(await this.runtime.command(action.command==="job.control"?"task.control":"task.queue",action.command==="job.control"?{...input,expected:action.signature,requestId}:{input,requestId}));
+      }
       await this.runtime.command(action.command, action.args);
       return this.card(job);
     }
@@ -808,6 +814,11 @@ export class TelegramConsole {
       );
     }
     if (["edit", "remove", "up", "down"].includes(command)) {
+      const recorded=await this.runtime.command("action.read",requestId) as any;
+      if(recorded) {
+        if(recorded.action!=="task.queue")throw Error("Request ID belongs to another operation");
+        return this.taskReceipt(recorded);
+      }
       const job = this.job(context.task),
         match = args.match(/^(\S+)\s+(\d+)(?:\s+([\s\S]+))?$/);
       if (!match || match[1].length < 8)
@@ -818,14 +829,13 @@ export class TelegramConsole {
         m.id?.startsWith(match[1]),
       );
       if (items.length !== 1) throw Error("Message ID is missing or ambiguous");
-      await this.runtime.command("chat.queue", {
+      return this.taskReceipt(await this.runtime.command("task.queue", {requestId,input:{
         id: job.id,
         messageId: items[0].id,
         revision: Number(match[2]),
         action: command,
         ...(command === "edit" ? { text: match[3] } : {}),
-      });
-      return `队列已更新 ${job.id}。/queue 刷新。`;
+      }}));
     }
     if (["priority", "rename", "pin", "archive", "depends"].includes(command)) {
       const job = this.job(context.task);

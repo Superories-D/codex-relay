@@ -81,6 +81,10 @@ const durableNames = new Set([
   "workflow.add",
   "task.steer",
   "task.model",
+  "task.control",
+  "task.queue",
+  "delivery.save",
+  "delivery.run",
   "goal.update",
   "workflow.retry",
   "workflow.control",
@@ -88,6 +92,7 @@ const durableNames = new Set([
   "schedule.save",
   "schedule.run",
   "schedule.remove",
+  "schedule.abandon",
 ]);
 async function api(route, body, serverId) {
   const response = await fetch(base + route, {

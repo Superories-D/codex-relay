@@ -17,7 +17,7 @@ import { CliSetupNotice } from "../../renderer/CliSetupNotice";
 import { RuntimeSettings } from "./RuntimeSettings";
 import { TaskTemplates } from "../../renderer/TaskTemplates";
 import { ChatSearch } from "../../renderer/ChatSearch";
-import { MessageQueue } from "../../renderer/MessageQueue";
+import {TaskManagement} from "./TaskManagement";
 import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { Job, Snapshot, ChatItem, NewJob } from "../../shared/types";
@@ -28,7 +28,7 @@ import {
   errorText,
   type Language,
 } from "../../renderer/i18n";
-import { RecoveryNotice, RecoveryHistory } from "../../renderer/RecoveryNotice";
+import { RecoveryHistory } from "../../renderer/RecoveryNotice";
 import { WorkflowBuilder } from "../../renderer/WorkflowBuilder";
 import { WorkflowReport } from "../../renderer/WorkflowReport";
 import { RemoteApproval } from "./Approvals";
@@ -73,7 +73,7 @@ function App() {
   const [snapshot, setSnapshot] = useState<Snapshot>(),
     [status, setStatus] = useState("正在连接"),
     [roots, setRoots] = useState<string[]>([]);
-  const [selected, setSelected] = useState(""),
+  const [selected, setSelected] = useState(()=>{try{return sessionStorage.getItem("relay.remote.selected")||"";}catch{return "";}}),
     [query, setQuery] = useState(""),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
@@ -132,6 +132,7 @@ function App() {
   const previews = useRef(new Map<string, any>());
   const selection = useRef(selected);
   selection.current = selected;
+  useEffect(()=>{try{if(selected)sessionStorage.setItem("relay.remote.selected",selected);else sessionStorage.removeItem("relay.remote.selected");}catch{}},[selected]);
   useEffect(()=>setRenaming(undefined),[selected]);
   const job = snapshot?.jobs.find((j) => j.id === selected);
   useEffect(() => {
@@ -640,40 +641,6 @@ function App() {
                     </div>
                     <div className="row">
                       <span className="state-pill">{t(labels[job.state])}</span>
-                      {["paused", "needs_attention"].includes(job.state) ? (
-                        <button
-                          disabled={busy}
-                          onClick={() =>
-                            run("job.control", { id: job.id, action: "resume" })
-                          }
-                        >
-                          {t("继续")}
-                        </button>
-                      ) : (
-                        !["completed", "cancelled"].includes(job.state) && (
-                          <button
-                            disabled={busy}
-                            onClick={() =>
-                              run("job.control", {
-                                id: job.id,
-                                action: "pause",
-                              })
-                            }
-                          >
-                            {t("暂停")}
-                          </button>
-                        )
-                      )}
-                      {!["completed", "cancelled"].includes(job.state) && (
-                        <button
-                          disabled={busy}
-                          onClick={() =>
-                            run("job.control", { id: job.id, action: "cancel" })
-                          }
-                        >
-                          {t("取消任务")}
-                        </button>
-                      )}
                       <button disabled={busy} onClick={() => void exportChat(job.id)}>{t("导出 Markdown")}</button>
                       <button onClick={() => setSearching(job.id)}>{t("搜索会话内容")}</button>
                       {job.workflow && (
@@ -683,13 +650,7 @@ function App() {
                       )}
                     </div>
                   </div>
-                  <RecoveryNotice
-                    job={job}
-                    onPause={() =>
-                      run("job.control", { id: job.id, action: "pause" })
-                    }
-                    pending={busy}
-                  />
+                  <TaskManagement key={`management-${job.id}`} job={job} call={call} busy={busy}/>
                   {job.workflow&&<WorkflowOperations key={`workflow-${job.workflow.id}`} job={job} jobs={snapshot?.jobs||[]} call={call} open={setSelected}/>}
                   <RecoveryHistory job={job} />
                   <LiveControls key={`live-${job.id}`} job={job} call={call}/>
@@ -706,7 +667,6 @@ function App() {
                   <label>{t("任务优先级")}<select aria-label={t("任务优先级")} value={job.priority || "normal"} disabled={busy} onChange={e => run("chat.priority",{id:job.id,priority:e.target.value})}>
                     <option value="high">{t("高")}</option><option value="normal">{t("普通优先级")}</option><option value="low">{t("低")}</option>
                   </select></label>
-                  <MessageQueue key={`queue-${job.id}`} job={job} pending={busy} onChange={args => run("chat.queue",args)} />
                   {snapshot?.approvals
                     .filter((a) => a.jobId === job.id)
                     .map((a) => (

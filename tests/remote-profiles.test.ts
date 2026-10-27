@@ -14,6 +14,26 @@ const { RemoteStore, endpoint } = createRequire(import.meta.url)(
     "../scripts/remote-store.cjs",
   ),
   exec = promisify(execFile);
+it.each(["task.control","task.queue","delivery.save","delivery.run","schedule.abandon"])("retains %s for recovery after an ambiguous response",async name=>{
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),"relay-command-recovery-")),serverId=randomUUID(),id=randomUUID(),requests:any[]=[];
+  const server=http.createServer(async(req,res)=>{
+    res.setHeader("Content-Type","application/json");
+    if(req.url==="/api/meta"){res.end(JSON.stringify({serverId}));return;}
+    let body="";for await(const chunk of req)body+=chunk;requests.push(JSON.parse(body));
+    if(requests.length===1){res.writeHead(409);res.end(JSON.stringify({error:"Acknowledgment lost after acceptance"}));}
+    else res.end(JSON.stringify({result:{id,state:"succeeded",result:{applied:true}}}));
+  });
+  server.listen(0,"127.0.0.1");await once(server,"listening");
+  try {
+    const token=path.join(root,"token"),command=path.join(root,"command.json"),url=`http://127.0.0.1:${(server.address() as any).port}`,env={...process.env,RELAY_REMOTE_HOME:path.join(root,"client")};
+    const payload={name,args:{requestId:id,id:randomUUID(),input:{text:"Original frozen input"}}};
+    await fs.writeFile(token,"a".repeat(64),{mode:0o600});await fs.writeFile(command,JSON.stringify(payload));
+    const run=(args:string[])=>exec(process.execPath,["scripts/remote.cjs",...args,"--url",url,"--token-file",token],{env});
+    await expect(run(["command","--file",command])).rejects.toThrow("Acknowledgment lost");
+    const store=new RemoteStore(env.RELAY_REMOTE_HOME);expect(store.read(id)).toMatchObject({state:"pending",serverId,name,args:payload.args});
+    await run(["recover","--request-id",id]);expect(store.read(id).state).toBe("confirmed");expect(requests).toEqual([payload,payload]);
+  }finally{await new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve()));await fs.rm(root,{recursive:true,force:true});}
+});
 it("stores private profiles and binds immutable requests to server identity", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "relay-profiles-"));
   try {

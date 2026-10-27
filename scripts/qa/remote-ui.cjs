@@ -279,7 +279,18 @@ const { chromium } = require(
         await page.locator(".remote-schedules summary").click();
       }
 
-      await page.locator(".conversation-header").getByRole("button",{name:/^(Pause|暂停|一時停止)$/}).click();
+      let controlAttempts=[],controlDropped,lostControl;
+      if(language==='en') {
+        lostControl=new Promise(resolve=>controlDropped=resolve);
+        await page.route('**/api/command',async route=>{
+          const body=route.request().postDataJSON();
+          if(body?.name!=='task.control')return route.fallback();
+          controlAttempts.push(body.args.requestId);const response=await route.fetch();
+          if(controlAttempts.length===1){await route.fulfill({status:503,json:{error:'Acknowledgment lost after accepted control'}});controlDropped();}
+          else await route.fulfill({response});
+        });
+      }
+      await page.locator(".remote-task-management").getByRole("button",{name:/^(Pause|暂停|一時停止)$/}).click();
       await page.waitForFunction(async (title) => {
         const response = await fetch("/api/snapshot", {
           headers: {
@@ -289,6 +300,13 @@ const { chromium } = require(
         const snap = await response.json();
         return snap.jobs.find((j) => j.title === title)?.state === "paused";
       }, `Remote QA ${language}`);
+      if(language==='en') {
+        await lostControl;await page.reload();await page.locator('.connection-bar.online').waitFor();
+        await page.locator('.remote-task-management').getByText('Operation acknowledged',{exact:true}).waitFor();
+        assert.ok(controlAttempts.length>=2);assert.equal(new Set(controlAttempts).size,1,'Reload must recover the original control request');
+        const revision=await page.evaluate(async()=>{const r=await fetch('/api/snapshot',{headers:{Authorization:`Bearer ${sessionStorage.getItem('relay.remote.token')}`}});return(await r.json()).jobs.find(job=>job.title==='Remote QA en').controlRevision;});
+        assert.equal(revision,1,'An acknowledged pause must execute only once');
+      }
       await page.waitForFunction(
         () =>
           !document.querySelector(".conversation-header .row button")?.disabled,
@@ -412,6 +430,26 @@ const { chromium } = require(
         await page.locator(".remote-task-list button").filter({hasText:"Remote QA en"}).click();
         const followupReceipts=await page.evaluate(async()=>{const r=await fetch("/api/snapshot",{headers:{Authorization:`Bearer ${sessionStorage.getItem("relay.remote.token")}`}});return (await r.json()).jobs.find(j=>j.title==="Remote QA en").messageReceipts.length;});
         assert.equal(followupReceipts,2,"followup must automatically resume once without selecting its task");
+        await page.evaluate(async()=>{
+          const headers={Authorization:`Bearer ${sessionStorage.getItem('relay.remote.token')}`,'Content-Type':'application/json'},snapshot=await(await fetch('/api/snapshot',{headers})).json(),job=snapshot.jobs.find(job=>job.title==='Remote QA en');
+          const response=await fetch('/api/command',{method:'POST',headers,body:JSON.stringify({name:'chat.submit',args:{requestId:crypto.randomUUID(),input:{id:job.id,text:'Additional queued management fixture',action:'queue',attachments:[]}}})});
+          if(!response.ok)throw Error(await response.text());
+        });
+        await page.waitForFunction(()=>document.querySelectorAll('.remote-task-management .message-queue li').length===2);
+        const queueBefore=await page.evaluate(async()=>{const r=await fetch('/api/snapshot',{headers:{Authorization:`Bearer ${sessionStorage.getItem('relay.remote.token')}`}});const job=(await r.json()).jobs.find(job=>job.title==='Remote QA en');return {revision:job.queueRevision,texts:job.queuedMessages.map(message=>message.text)};});
+        let queueAttempts=[],queueDropped;const lostQueue=new Promise(resolve=>queueDropped=resolve);
+        await page.route('**/api/command',async route=>{
+          const body=route.request().postDataJSON();if(body?.name!=='task.queue')return route.fallback();
+          queueAttempts.push(body.args.requestId);const response=await route.fetch();
+          if(queueAttempts.length===1){await route.fulfill({status:503,json:{error:'Acknowledgment lost after queue mutation'}});queueDropped();}
+          else await route.fulfill({response});
+        });
+        await page.locator('.remote-task-management .message-queue li').first().getByRole('button',{name:'Move down',exact:true}).click();
+        await lostQueue;await page.reload();await page.locator('.connection-bar.online').waitFor();
+        await page.locator('.remote-task-management').getByText('Operation acknowledged',{exact:true}).waitFor();
+        assert.ok(queueAttempts.length>=2);assert.equal(new Set(queueAttempts).size,1,'Queue retry must retain the original request ID');
+        const queueAfter=await page.evaluate(async()=>{const r=await fetch('/api/snapshot',{headers:{Authorization:`Bearer ${sessionStorage.getItem('relay.remote.token')}`}});const job=(await r.json()).jobs.find(job=>job.title==='Remote QA en');return {revision:job.queueRevision,texts:job.queuedMessages.map(message=>message.text)};});
+        assert.equal(queueAfter.revision,queueBefore.revision+1);assert.deepEqual(queueAfter.texts,[...queueBefore.texts].reverse());
         await page.locator(".remote-workflow").click();
         await page
           .locator(".workflow-builder input")
