@@ -1,3 +1,4 @@
+const {waitForBrowser}=require('./browser-wait.cjs');
 // Real Electron settings/IPC/persistence. Isolated empty profile; no model calls.
 const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
@@ -52,8 +53,7 @@ const output = path.join(root, "qa-output");
     assert.equal(await limit.inputValue(), "3");
     assert.equal(await limit.locator("option").count(), 8);
     await limit.selectOption("5");
-    await page.waitForFunction(
-      async () =>
+    await waitForBrowser(page,async () =>
         (await window.relay.snapshot()).settings.maxConcurrentTasks === 5,
     );
     const invalid = await page.evaluate(async () => {

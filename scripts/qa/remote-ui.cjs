@@ -1,3 +1,4 @@
+const {waitForBrowser}=require('./browser-wait.cjs');
 // Built web UI -> authenticated HTTP -> real daemon. No accounts/model calls.
 const { spawn,execFileSync } = require("node:child_process"),
   { once } = require("node:events");
@@ -244,7 +245,7 @@ const { chromium } = require(
         await panel.locator('article').getByRole('button',{name:'Edit',exact:true}).click();
         for(const revision of [2,3]){
           await panel.getByRole('button',{name:'Save changes',exact:true}).click();
-          await page.waitForFunction(async revision=>{
+          await waitForBrowser(page,async revision=>{
             const r=await fetch('/api/command',{method:'POST',headers:{Authorization:`Bearer ${sessionStorage.getItem('relay.remote.token')}`,'Content-Type':'application/json'},body:JSON.stringify({name:'schedule.list'})});
             return(await r.json()).result.tasks[0].revision===revision&&!sessionStorage.getItem('relay.remote.action.schedules.schedules');
           },revision);
@@ -291,7 +292,7 @@ const { chromium } = require(
         });
       }
       await page.locator(".remote-task-management").getByRole("button",{name:/^(Pause|暂停|一時停止)$/}).click();
-      await page.waitForFunction(async (title) => {
+      await waitForBrowser(page,async (title) => {
         const response = await fetch("/api/snapshot", {
           headers: {
             Authorization: `Bearer ${sessionStorage.getItem("relay.remote.token")}`,
@@ -318,7 +319,7 @@ const { chromium } = require(
         const revision=await page.evaluate(async()=>{const r=await fetch('/api/snapshot',{headers:{Authorization:`Bearer ${sessionStorage.getItem('relay.remote.token')}`}});return(await r.json()).jobs.find(job=>job.title==='Remote QA en').controlRevision;});
         assert.equal(revision,1,'An acknowledged pause must execute only once');
         await page.evaluate(async id=>{const response=await fetch('/api/command',{method:'POST',headers:{Authorization:`Bearer ${sessionStorage.getItem('relay.remote.token')}`,'Content-Type':'application/json'},body:JSON.stringify({name:'job.metadata',args:{id,archived:true}})});if(!response.ok)throw Error(await response.text());},other);
-        await page.waitForFunction(async id=>{const response=await fetch('/api/snapshot',{headers:{Authorization:`Bearer ${sessionStorage.getItem('relay.remote.token')}`}});return(await response.json()).jobs.find(job=>job.id===id)?.archived===true;},other);
+        await waitForBrowser(page,async id=>{const response=await fetch('/api/snapshot',{headers:{Authorization:`Bearer ${sessionStorage.getItem('relay.remote.token')}`}});return(await response.json()).jobs.find(job=>job.id===id)?.archived===true;},other);
       }
       await page.waitForFunction(
         () =>
@@ -332,7 +333,7 @@ const { chromium } = require(
       {
         const delivery=page.locator('.remote-delivery'),file=`accept-${language}.txt`;
         const revision=language==='en'?2:1;
-        const waitDelivery=(revision,count,status)=>page.waitForFunction(async({title,revision,count,status})=>{
+        const waitDelivery=(revision,count,status)=>waitForBrowser(page,async({title,revision,count,status})=>{
           const snap=await(await fetch('/api/snapshot',{headers:{Authorization:`Bearer ${sessionStorage.getItem('relay.remote.token')}`}})).json();
           const job=snap.jobs.find(j=>j.title===title),d=job?.delivery;
           return d?.revision===revision && d.reports.length===count && (!status||d.reports.at(-1)?.status===status) && !sessionStorage.getItem(`relay.remote.action.delivery.${job.id}`);
@@ -421,7 +422,7 @@ const { chromium } = require(
           () =>
             document.querySelector(".remote-followup textarea")?.value === "",
         );
-        await page.waitForFunction(async () => {
+        await waitForBrowser(page,async () => {
           const response = await fetch("/api/snapshot", {
             headers: {
               Authorization: `Bearer ${sessionStorage.getItem("relay.remote.token")}`,
@@ -514,7 +515,7 @@ const { chromium } = require(
         await page.locator(".task-center").waitFor();
         await page.locator(".task-filters select").selectOption(workspace);
         await page.locator(".project-limit select").selectOption("1");
-        await page.waitForFunction(async()=>{const r=await fetch("/api/snapshot",{headers:{Authorization:`Bearer ${sessionStorage.getItem("relay.remote.token")}`}});return (await r.json()).projectLimits?.[0]?.limit===1;});
+        await waitForBrowser(page,async()=>{const r=await fetch("/api/snapshot",{headers:{Authorization:`Bearer ${sessionStorage.getItem("relay.remote.token")}`}});return (await r.json()).projectLimits?.[0]?.limit===1;});
         await page.waitForFunction(()=>document.querySelector(".project-limit select")?.value==="1");
         await page.screenshot({path:"qa-output/remote-center-en-1280.png",fullPage:true});
         await page.locator(".task-center").getByRole("button",{name:"Back to chat",exact:true}).click();
