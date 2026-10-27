@@ -324,7 +324,8 @@ export class TelegramConsole {
       if(!saved||saved.expires<=this.now())throw Error("项目变更快照已过期，请重新 /repo");
       const file=saved.view.files[index];if(!Number.isInteger(index)||!file||!["staged","worktree"].includes(kind))throw Error("Invalid project diff selection");
       const diff=await this.runtime.command("project.diff",{cwd:saved.view.root,path:file.path,staged:kind==="staged"}) as any;
-      return this.paginate(`Git 差异 · ${diff.staged?"暂存区":"工作区"}\n${diff.root}\n${diff.branch} · ${diff.path}\n读取: ${new Date(diff.at).toISOString()}\n\n${diff.text||"当前内容无差异。"}\n\n只读检查；原文件和暂存区保持不变。`);
+      const text=diff.preview==="encoded"?"非 UTF-8 文件或差异不提供文本预览。":diff.preview==="binary"?"二进制文件不提供文本预览。":diff.text||"当前内容无差异。";
+      return this.paginate(`Git 差异 · ${diff.staged?"暂存区":"工作区"}\n${diff.root}\n${diff.branch} · ${diff.path}\n读取: ${new Date(diff.at).toISOString()}\n\n${text}\n\n只读检查；原文件和暂存区保持不变。`);
     }
     if(command === "actions") {
       const page:any=await this.runtime.command("actions.list",{limit:20});

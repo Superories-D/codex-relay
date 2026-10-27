@@ -6,7 +6,7 @@ import {CopyButton} from "../../renderer/CopyButton";
 import {t,errorText,formatDate} from "../../renderer/i18n";
 
 type DiffRequest={cwd:string;path:string;staged:boolean};
-type DiffView={request:DiffRequest;result?:{root:string;branch:string;at:number;text:string};error?:string};
+type DiffView={request:DiffRequest;result?:{root:string;branch:string;at:number;text:string;preview?:"text"|"binary"|"encoded"};error?:string};
 function DiffText({text}:{text:string}) {
   const pages=useMemo(()=>{
     const pages:string[]=[];let start=0;
@@ -71,7 +71,7 @@ export function RemoteRepository({roots,cwd,call}:{roots:string[];cwd:string;cal
     {diff&&<Dialog title={t(diff.request.staged?"暂存区差异":"工作区差异")} onClose={closeDiff}>
       <div className="remote-git-diff"><h2>{t(diff.request.staged?"暂存区差异":"工作区差异")}</h2><code>{diff.request.path}</code>
         {diffLoading&&<p role="status">{t("读取差异中…")}</p>}{diff.error&&<p role="alert">{diff.error}</p>}
-        {diff.result&&<><p className="muted">{diff.result.root}<br/>{diff.result.branch} · {formatDate(diff.result.at)}</p><CopyButton text={diff.result.text} label={t("复制差异")}/><DiffText text={diff.result.text}/></>}
+        {diff.result&&<><p className="muted">{diff.result.root}<br/>{diff.result.branch} · {formatDate(diff.result.at)}</p>{diff.result.preview==="encoded"||diff.result.preview==="binary"?<p role="status">{t(diff.result.preview==="encoded"?"非 UTF-8 文件或差异不提供文本预览。":"二进制文件不提供文本预览。")}</p>:<><CopyButton text={diff.result.text} label={t("复制差异")}/><DiffText text={diff.result.text}/></>}</>}
         <button type="button" disabled={diffLoading} onClick={()=>void openDiff(diff.request)}>{t("重新读取差异")}</button>
       </div>
     </Dialog>}

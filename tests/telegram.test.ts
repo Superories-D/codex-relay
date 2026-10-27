@@ -651,6 +651,8 @@ describe.skipIf(process.platform !== "linux")("Telegram mobile console", () => {
       const before=await fs.readFile(path.join(f.workspace,".git/index"));expect((await f.click(staged)).text).toContain("+staged");
       await fs.writeFile(path.join(f.workspace,"later.txt"),"Later work");expect((await f.click(next)).text).toContain("变更 13");
       const newer=await f.click(refresh);expect(newer.text).toContain("变更 14");expect(buttons(newer).find(button=>button.text==="工作区 1")!.callback_data).not.toBe(working);
+      await fs.writeFile(path.join(f.workspace,"encoded.txt"),Buffer.from([0xff,0xfe,0x41]));const encodedView=await f.send("/repo 1"),number=/^(\d+)\. \[\?\?\] encoded\.txt$/m.exec(encodedView.text)?.[1];expect(number).toBeTruthy();
+      const unavailable=await f.click(buttons(encodedView).find(button=>button.text===`工作区 ${number}`)!.callback_data);expect(unavailable.text).toContain("非 UTF-8");expect(unavailable.text).not.toContain("\uFFFD");
       const calls=vi.spyOn(f.runtime,"command");f.t.failNextSend();await expect(f.click(working)).rejects.toThrow("Simulated lost send acknowledgement");
       expect(calls.mock.calls.filter(call=>call[0]==="project.diff")).toHaveLength(1);await f.restart();await f.bridge.pollOnce();
       expect(f.t.sent.at(-1).text).toContain("+working");expect(f.t.sent.at(-1).text).not.toContain(config.token);expect(calls.mock.calls.filter(call=>call[0]==="project.diff")).toHaveLength(1);

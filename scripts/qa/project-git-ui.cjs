@@ -6,8 +6,9 @@ const {chromium}=require(process.env.RELAY_PLAYWRIGHT_MODULE||'playwright');
   const base=await fs.mkdtemp(path.join(os.tmpdir(),'relay-project-ui-')),workspace=path.join(base,'project'),data=path.join(base,'data');await fs.mkdir(workspace);
   const git=(...args)=>execFileSync('git',['-C',workspace,...args],{stdio:'ignore'});
   git('init','-b','main');git('config','user.name','QA');git('config','user.email','qa@invalid.local');git('config','core.autocrlf','false');
-  const file=path.join(workspace,'review 日本語.txt');await fs.writeFile(file,'base\n');git('add','-A');git('commit','-m','Base');await fs.writeFile(file,'staged\n');git('add','-A');
+  const file=path.join(workspace,'review 日本語.txt');await fs.writeFile(file,'base\n');await fs.writeFile(path.join(workspace,'legacy.txt'),'base\n');git('add','-A');git('commit','-m','Base');await fs.writeFile(file,'staged\n');git('add','-A');
   await fs.writeFile(file,Array.from({length:6000},(_,index)=>`working ${index} 🙂 日本語\n`).join(''));await Promise.all(Array.from({length:25},(_,index)=>fs.writeFile(path.join(workspace,`new-${index}.txt`),'New file')));
+  await fs.writeFile(path.join(workspace,'legacy.txt'),Buffer.from([0x63,0x61,0x66,0xe9,10]));await fs.writeFile(path.join(workspace,'encoded.txt'),Buffer.from([0xff,0xfe,0x41]));await fs.writeFile(path.join(workspace,'binary.bin'),Buffer.from([0,1,255]));
   const indexBefore=await fs.readFile(path.join(workspace,'.git/index'));
   let browser,proxy,backendPort,publicUrl,child;
   try {
@@ -34,13 +35,19 @@ const {chromium}=require(process.env.RELAY_PLAYWRIGHT_MODULE||'playwright');
       await page.locator('.connect-card input').fill(token);await page.locator('.connect-card button').click();await page.locator('.connection-bar.online').waitFor();
       if(zoom!==1)await page.evaluate(zoom=>document.body.style.zoom=String(zoom),zoom);
       const panel=page.locator('.remote-repository');await panel.locator('summary').click();await panel.locator('form button').click();await page.waitForFunction(()=>document.querySelectorAll('.remote-git-files li').length===20);
-      await panel.locator(':scope > .row button').last().click();assert.equal(await panel.locator('li').count(),6);await panel.locator(':scope > input').fill('review 日本語');
+      await panel.locator(':scope > .row button').last().click();assert.equal(await panel.locator('li').count(),9);await panel.locator(':scope > input').fill('review 日本語');
       const row=panel.locator('li');assert.equal(await row.count(),1);await row.locator('button').first().click();await page.locator('.remote-git-diff pre').waitFor();assert.match(await page.locator('.remote-git-diff pre').textContent(),/\+staged/);await page.locator('dialog[open] .modal-close').click();
       await row.locator('button').last().click();await page.locator('.remote-git-diff pre').waitFor();const chunks=[];
       for(let index=0;index<100;index++){const text=await page.locator('.remote-git-diff pre').textContent();assert.ok(text.length<=20000);chunks.push(text);const next=page.locator('.remote-git-pages button').last();if(await next.isDisabled())break;await next.click();}
       assert.equal(chunks.join(''),expected.text,'Paging must preserve every character and surrogate pair');await page.locator('.remote-git-diff .copy-button').click();assert.equal(await page.evaluate(()=>navigator.clipboard.readText()),expected.text,'Copy must retain the complete diff');
       const bounds=await page.locator('dialog[open] .modal').boundingBox();assert.ok(bounds.x>=-1&&bounds.y>=-1&&bounds.x+bounds.width<=width+1&&bounds.y+bounds.height<=1001,'Diff modal must fit its viewport and zoom');const refresh=await page.locator('.remote-git-diff > button').last().boundingBox();assert.ok(refresh.y>=bounds.y&&refresh.y+refresh.height<=bounds.y+bounds.height,'The refresh control must remain visible without scrolling the modal');
       await fs.mkdir('qa-output',{recursive:true});await page.screenshot({path:`qa-output/project-git-${language}-${width}.png`,animations:'disabled'});await page.locator('dialog[open] .modal-close').click();
+      for(const name of ['binary.bin','encoded.txt','legacy.txt']) {
+        await panel.locator(':scope > input').fill(name);await panel.locator('li button').last().click();
+        await page.locator('.remote-git-diff [role=status]').filter({hasText:name==='binary.bin'?/binary|二进制|バイナリ/i:/UTF-8/}).waitFor();
+        assert.equal(await page.locator('.remote-git-diff pre').count(),0);assert.equal(await page.locator('.remote-git-diff .copy-button').count(),0,'Unavailable text must not offer a misleading copy action');await page.locator('dialog[open] .modal-close').click();
+      }
+      await panel.locator(':scope > input').fill('review 日本語');
       if(language==='en') {
         let release,ready,delivered;const held=new Promise(resolve=>release=resolve),started=new Promise(resolve=>ready=resolve),done=new Promise(resolve=>delivered=resolve);let hold=true;
         const slow=async route=>{const body=route.request().postDataJSON();if(hold&&body?.name==='project.changes'){hold=false;const response=await route.fetch();ready();await held;try{await route.fulfill({response});}catch{}delivered();}else await route.fallback();};await page.route('**/api/command',slow);

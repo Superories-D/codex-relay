@@ -16,6 +16,9 @@ export const projectGitEnglish:Record<string,string>={
   "当前内容无差异。":"No current differences.",
   "重新读取差异":"Refresh diff",
   "分页显示，复制包含完整差异。":"Paged display; copying includes the entire diff.",
+  "非 UTF-8 文件或差异不提供文本预览。":"Text preview is unavailable for a non-UTF-8 file or diff.",
+  "二进制文件不提供文本预览。":"Text preview is unavailable for binary files.",
+  "项目目录在读取期间变化，请刷新后重试":"The project directory changed while reading. Refresh and try again.",
 };
 export const projectGitJapanese:Record<string,string>={
   "项目 Git":"プロジェクト Git",
@@ -35,4 +38,7 @@ export const projectGitJapanese:Record<string,string>={
   "当前内容无差异。":"現在の差分はありません。",
   "重新读取差异":"差分を再読み込み",
   "分页显示，复制包含完整差异。":"ページごとに表示します。コピーには差分全体が含まれます。",
+  "非 UTF-8 文件或差异不提供文本预览。":"UTF-8 以外のファイルや差分はテキスト表示できません。",
+  "二进制文件不提供文本预览。":"バイナリファイルはテキスト表示できません。",
+  "项目目录在读取期间变化，请刷新后重试":"読み取り中にプロジェクトのディレクトリが変更されました。更新して再試行してください。",
 };

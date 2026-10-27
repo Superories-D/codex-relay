@@ -7,6 +7,8 @@ import os from "node:os";
 import {ProjectGit} from "../src/server/project-git";
 import {ServerRuntime} from "../src/server/runtime";
 import {openHttp} from "../src/server/http";
+import {CheckpointGit} from "../src/main/checkpoint-git";
+import {createHash} from "node:crypto";
 const execute=promisify(execFile);
 describe.skipIf(process.platform!=="linux")("read-only project Git",()=>{
   let root:string,project:string,data:string,inspect:ProjectGit;
@@ -83,5 +85,32 @@ describe.skipIf(process.platform!=="linux")("read-only project Git",()=>{
       for(const args of [{cwd:data,path:"http-token"},{cwd:project,path:"../private/http-token"}]){const rejected=await call("project.diff",args);expect(rejected.ok).toBe(false);expect(await rejected.text()).not.toContain(token);}
       expect((await call("project.changes",{cwd:project},"0".repeat(64))).status).toBe(401);expect(runtime.store.data.jobs).toHaveLength(0);
     }finally{await web.close();await runtime.close();}
+  });
+  it("marks binary and non-UTF-8 previews instead of silently replacing source bytes",async()=>{
+    await write("legacy.txt","base\n");await git("add","legacy.txt");await git("commit","-m","Base");
+    await fs.writeFile(path.join(project,"legacy.txt"),Buffer.from([0x63,0x61,0x66,0xe9,10]));await fs.writeFile(path.join(project,"encoded.txt"),Buffer.from([0xff,0xfe,0x41]));await fs.writeFile(path.join(project,"binary.bin"),Buffer.from([0,1,255]));
+    for(const file of ["legacy.txt","encoded.txt"]){const diff=await inspect.diff(project,file);expect(diff).toMatchObject({preview:"encoded"});expect(diff.text).not.toContain("\uFFFD");expect(diff.text).toContain("preview omitted");}
+    expect(await inspect.diff(project,"binary.bin")).toMatchObject({preview:"binary"});
+  });
+  it("rechecks the workspace before publishing a listing after the root is replaced",async()=>{
+    const replacement=path.join(data,"replacement");await fs.mkdir(replacement);await execute("git",["init",replacement]);await fs.writeFile(path.join(replacement,"private-filename.txt"),"Private contents");
+    const original=CheckpointGit.prototype.run;let swapped=false;
+    vi.spyOn(CheckpointGit.prototype,"run").mockImplementation(async function(this:CheckpointGit,cwd,args,options){
+      if(!swapped&&args[0]==="status"&&options?.env?.GIT_DIR?.includes("project-inspections")){swapped=true;await fs.rename(project,path.join(root,"original-project"));await fs.symlink(replacement,project);}
+      return original.call(this,cwd,args,options);
+    });
+    await expect(inspect.changes(project)).rejects.toThrow();expect(swapped).toBe(true);expect(await fs.readdir(path.join(data,"project-inspections"))).toEqual([]);
+  });
+  it("keeps racy stat-cache entries dirty when inspecting an index copy",async()=>{
+    await fs.rm(path.join(project,".git"),{recursive:true});await git("init","--object-format=sha1","-b","main");await git("config","user.name","QA");await git("config","user.email","qa@invalid.local");
+    const file=path.join(project,"a.txt"),index=path.join(project,".git/index"),time=1600000000;
+    await fs.writeFile(file,"base\n");await git("add","a.txt");await git("commit","-m","Base");await git("update-index","--index-version=2");await fs.writeFile(file,"work\n");await fs.utimes(file,time,time);
+    // Preserve the old blob while making its cached stat match the new bytes.
+    // A source index with the same mtime is racy and Git must hash the file.
+    const stat=await fs.stat(file,{bigint:true}),bytes=await fs.readFile(index);expect(bytes.readUInt32BE(4)).toBe(2);expect(bytes.readUInt32BE(8)).toBe(1);
+    const fields=[stat.ctimeNs/1000000000n,stat.ctimeNs%1000000000n,stat.mtimeNs/1000000000n,stat.mtimeNs%1000000000n,stat.dev,stat.ino,stat.mode,stat.uid,stat.gid,stat.size];
+    fields.forEach((field,position)=>bytes.writeUInt32BE(Number(field&0xffffffffn),12+position*4));createHash("sha1").update(bytes.subarray(0,-20)).digest().copy(bytes,bytes.length-20);await fs.writeFile(index,bytes);await fs.utimes(index,time,time);
+    const original=await execute("git",["-C",project,"status","--porcelain=v1"],{env:{...process.env,GIT_OPTIONAL_LOCKS:"0"}});expect(original.stdout).toContain(" M a.txt");
+    expect((await inspect.changes(project)).files).toContainEqual({path:"a.txt",index:" ",worktree:"M"});expect((await inspect.diff(project,"a.txt")).text).toContain("+work");expect(await fs.readFile(index)).toEqual(bytes);
   });
 });

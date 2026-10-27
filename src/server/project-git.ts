@@ -19,7 +19,7 @@ type ProjectChange=GitChange&{directory?:boolean};
 export type ProjectChanges={root:string;branch:string;head:string;at:number;files:ProjectChange[];total:number;truncated:boolean};
 
 /** Read a bounded, stable file through its opened identity, before any copy. */
-async function readFile(file:string,allowed:(actual:string)=>boolean,max:number):Promise<{bytes:Buffer;mode:number}|undefined> {
+async function readFile(file:string,allowed:(actual:string)=>boolean,max:number):Promise<{bytes:Buffer;mode:number;mtime:number}|undefined> {
   let handle;
   try{handle=await fs.open(file,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);}
   catch(error){if((error as NodeJS.ErrnoException).code==="ENOENT")return;throw error;}
@@ -30,7 +30,7 @@ async function readFile(file:string,allowed:(actual:string)=>boolean,max:number)
     const bytes=Buffer.alloc(before.size);let position=0;
     while(position<bytes.length){const read=await handle.read(bytes,position,bytes.length-position,position);if(!read.bytesRead)break;position+=read.bytesRead;}
     if(position!==bytes.length||stamp(await handle.stat())!==stamp(before))throw Error("文件在读取期间变化，请刷新项目后重试");
-    return {bytes,mode:before.mode&0o777};
+    return {bytes,mode:before.mode&0o777,mtime:Math.floor(before.mtimeMs/1000)};
   }finally{await handle.close();}
 }
 
@@ -44,6 +44,7 @@ export class ProjectGit {
     try {
       const git=new CheckpointGit(path.join(scratch,"commands"),{native:false,signal:AbortSignal.timeout(15000)});
       const root=await resolveWorkspace(this.roots,await git.text(requested,["rev-parse","--show-toplevel"]));
+      const identity=await fs.stat(root,{bigint:true});
       const [gitDir,commonDir,format,branch,head]=await Promise.all([
         git.text(root,["rev-parse","--absolute-git-dir"]).then(file=>fs.realpath(file)),
         git.text(root,["rev-parse","--path-format=absolute","--git-common-dir"]).then(file=>fs.realpath(file)),
@@ -54,7 +55,14 @@ export class ProjectGit {
       const owned=path.join(scratch,"repository");await git.run(scratch,["-c","init.templateDir=","init",`--object-format=${format}`,owned],{env:isolated});
       const directory=path.join(owned,".git");
       const copy=async(source:string,target:string,limit=16*1024*1024)=>{
-        const content=await readFile(source,metadata,limit);if(content){await fs.mkdir(path.dirname(target),{recursive:true,mode:0o700});await fs.writeFile(target,content.bytes,{flag:"wx",mode:0o600});}return !!content;
+        const content=await readFile(source,metadata,limit);
+        if(content){
+          await fs.mkdir(path.dirname(target),{recursive:true,mode:0o700});await fs.writeFile(target,content.bytes,{flag:"wx",mode:0o600});
+          // A fresh index-copy timestamp can incorrectly validate stale stat
+          // entries. Keep a conservative source time so racy files are hashed.
+          await fs.utimes(target,content.mtime,content.mtime);
+        }
+        return !!content;
       };
       const shared=await optional(git,root,["rev-parse","--shared-index-path"]);
       if(shared)await copy(path.resolve(root,shared),path.join(directory,path.basename(shared)));
@@ -71,7 +79,10 @@ export class ProjectGit {
       const decoder=new TextDecoder("utf-8",{fatal:true});
       const files:ProjectChange[]=[...parseGitStatus(decoder.decode(raw)),...decoder.decode(others).split("\0").filter(Boolean).map(name=>({path:name.replace(/\/$/,""),index:"?",worktree:"?",...(name.endsWith("/")?{directory:true}:{})}))];
       for(const file of files){projectPath(file.path);if(file.original)projectPath(file.original);}
-      return await action({git,root,branch:branch.replace(/^refs\/heads\//,"")||"detached HEAD",head,env,scratch,files});
+      const result=await action({git,root,branch:branch.replace(/^refs\/heads\//,"")||"detached HEAD",head,env,scratch,files});
+      const current=await resolveWorkspace(this.roots,root),after=await fs.stat(current,{bigint:true});
+      if(current!==root||after.dev!==identity.dev||after.ino!==identity.ino)throw Error("项目目录在读取期间变化，请刷新后重试");
+      return result;
     }finally{await fs.rm(scratch,{recursive:true,force:true});}
   }
   changes(cwd:string):Promise<ProjectChanges> {
@@ -83,12 +94,13 @@ export class ProjectGit {
       const file=files.find(file=>file.path===relative&&(staged?gitStaged(file):gitUnstaged(file)));
       if(!file)throw Error("所选文件已不在该类变更中，请刷新项目");
       if(file.directory)throw Error("嵌套仓库目录只展示名称，请将该仓库单独配置为允许的项目");
-      let text:string;
+      let text:string,preview:"text"|"binary"|"encoded"="text";
       if(!staged&&file.index==="?"&&file.worktree==="?") {
         const content=await readFile(path.join(root,...relative.split("/")),actual=>inside(root,actual),textLimit);
         if(!content)throw Error("文件已移除，请刷新项目");
-        try{text=content.bytes.includes(0)?"Binary file (preview omitted)":new TextDecoder("utf-8",{fatal:true}).decode(content.bytes).split("\n").map(line=>"+"+line).join("\n");}
-        catch{text="Non-UTF-8 file (preview omitted)";}
+        if(content.bytes.includes(0)){preview="binary";text="Binary file (preview omitted)";}
+        else try{text=new TextDecoder("utf-8",{fatal:true}).decode(content.bytes).split("\n").map(line=>"+"+line).join("\n");}
+        catch{preview="encoded";text="Non-UTF-8 file (preview omitted)";}
       }else {
         const tree=path.join(scratch,"tree");await fs.mkdir(tree,{mode:0o700});
         if(!staged){
@@ -96,9 +108,10 @@ export class ProjectGit {
           if(content){const target=path.join(tree,...relative.split("/"));await fs.mkdir(path.dirname(target),{recursive:true,mode:0o700});await fs.writeFile(target,content.bytes,{flag:"wx",mode:content.mode});await fs.chmod(target,content.mode);}
         }
         const output=await git.run(root,["--literal-pathspecs","diff","--no-ext-diff","--no-textconv","--no-color","--no-relative","--ignore-submodules=all",...(staged?["--cached"]:[]),"--",relative,...(staged&&file.original?[file.original]:[])],{env:{...env,GIT_WORK_TREE:tree},metadataLimit:textLimit});
-        text=output.toString("utf8");
+        try{text=new TextDecoder("utf-8",{fatal:true}).decode(output);}
+        catch{preview="encoded";text="Non-UTF-8 diff (preview omitted)";}
       }
-      return {root,branch,head,path:relative,staged,at:Date.now(),text,rawComparison:true};
+      return {root,branch,head,path:relative,staged,at:Date.now(),text,preview,rawComparison:true};
     });
   }
 }
