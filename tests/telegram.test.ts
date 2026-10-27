@@ -5,6 +5,7 @@ import { describe, it, expect, vi } from "vitest";
 import { ServerRuntime } from "../src/server/runtime";
 import {
   TelegramBridge,
+  TelegramApiError,
   telegramApi,
   telegramConfig,
   type TelegramApi,
@@ -846,6 +847,62 @@ it("uploads documents with multipart encoding without putting the bot token in a
   } finally {
     fetchMock.mockRestore();
   }
+});
+
+it("classifies a Bot API rejection without reflecting server descriptions or credentials", async () => {
+  const mock=vi.spyOn(globalThis,"fetch").mockResolvedValue(new Response(JSON.stringify({ok:false,description:`Private server text ${config.token}`}),{status:400}));
+  try {
+    const error=await telegramApi(config.token)("getFile",{file_id:"invalid"},new AbortController().signal).catch(e=>e);
+    expect(error).toBeInstanceOf(TelegramApiError);
+    expect(error).toMatchObject({method:"getFile",status:400});
+    expect(error.message).not.toContain(config.token);
+    expect(error.message).not.toContain("Private server text");
+  } finally {mock.mockRestore();}
+});
+
+it.skipIf(process.platform!=="linux")("answers a definitively rejected file and proceeds to later Telegram commands", async () => {
+  const f=await setup(),t=transport();
+  try {
+    const api:TelegramApi=async(method,body,signal)=>{
+      if(method==="getFile")throw new TelegramApiError(method,400);
+      return t.api(method,body,signal);
+    };
+    const bridge=await TelegramBridge.open(f.runtime,config,[f.workspace],api);
+    await bridge.initialize();
+    t.setUpdates([message(11,"",{document:{file_id:"unavailable-file",file_name:"missing.txt",file_size:10}}),message(12,"/projects")]);
+    await bridge.pollOnce();
+    expect(t.sent).toHaveLength(2);
+    expect(t.sent[0].text).toContain("请重新发送附件");
+    expect(t.sent[1].text).toContain("项目");
+    expect(JSON.parse(await fs.readFile(path.join(f.runtime.store.root,"telegram-state.json"),"utf8"))).toMatchObject({offset:13});
+    expect(f.runtime.store.data.jobs).toHaveLength(0);
+  } finally {await f.close();}
+});
+
+it.skipIf(process.platform!=="linux").each([401,403,404,429,500,502])("retains an incoming file through authentication, rate limit or service failures (HTTP %s)", async status => {
+  const f=await setup(),t=transport();let fail=true;
+  const download=vi.fn(async()=>Buffer.from("recovered"));
+  try {
+    const api:TelegramApi=async(method,body,signal)=>{
+      if(method==="getFile"){
+        if(fail)throw new TelegramApiError(method,status);
+        return {file_path:"documents/recovered.txt",file_size:9};
+      }
+      return t.api(method,body,signal);
+    };
+    const bridge=await TelegramBridge.open(f.runtime,config,[f.workspace],api,atomicWrite,Date.now,download);
+    await bridge.initialize();
+    t.setUpdates([message(11,"",{document:{file_id:"recoverable-file",file_name:"recovered.txt",file_size:9}})]);
+    await expect(bridge.pollOnce()).rejects.toThrow("metadata unavailable");
+    let state=JSON.parse(await fs.readFile(path.join(f.runtime.store.root,"telegram-state.json"),"utf8"));
+    expect(state).toMatchObject({offset:11,incoming:{updateId:11,media:{fileId:"recoverable-file"}}});
+    expect(download).not.toHaveBeenCalled();expect(t.sent).toHaveLength(0);
+    fail=false;await bridge.pollOnce();
+    state=JSON.parse(await fs.readFile(path.join(f.runtime.store.root,"telegram-state.json"),"utf8"));
+    expect(state.offset).toBe(12);expect(state.incoming).toBeUndefined();
+    expect(state.inbox).toHaveLength(1);expect(download).toHaveBeenCalledTimes(1);
+    expect(t.sent[0].text).toContain("附件已暂存");
+  } finally {await f.close();}
 });
 
 describe.skipIf(process.platform !== "linux")(

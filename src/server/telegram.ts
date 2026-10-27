@@ -76,6 +76,11 @@ export type TelegramApi = (
   body: Record<string, unknown>,
   signal: AbortSignal,
 ) => Promise<any>;
+export class TelegramApiError extends Error {
+  constructor(readonly method: Parameters<TelegramApi>[0], readonly status: number) {
+    super(`Telegram ${method} failed (HTTP ${status}); check bot configuration and rate limits`);
+  }
+}
 export function telegramApi(token: string): TelegramApi {
   let nextSendAt = 0,
     notBefore = 0;
@@ -157,9 +162,7 @@ export function telegramApi(token: string): TelegramApi {
       notBefore =
         Date.now() + Math.min(3600, data.parameters.retry_after) * 1000;
     if (!response.ok || data.ok !== true)
-      throw Error(
-        `Telegram ${method} failed (HTTP ${response.status}); check bot configuration and rate limits`,
-      );
+      throw new TelegramApiError(method, response.status);
     return data.result;
   };
 }
@@ -724,6 +727,8 @@ export class TelegramBridge {
         { file_id: media.fileId },
         this.controller.signal,
       ).catch((error) => {
+        if (error instanceof TelegramApiError && error.method === "getFile" && [400,413,422].includes(error.status))
+          throw Error(`Telegram 无法获取此附件（HTTP ${error.status}）。请重新发送附件；其他指令仍可正常使用。`);
         throw new TelegramPersistenceError(
           "Telegram file metadata unavailable; retrying",
           { cause: error },
