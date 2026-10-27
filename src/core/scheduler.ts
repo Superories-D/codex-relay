@@ -285,15 +285,36 @@ export class Scheduler extends EventEmitter {
     const jobs=new Map(this.store.data.jobs.map(job=>[job.id,job]));
     return operationObservation(this.store.data,this.approvals,{active:new Set(this.active.keys()),controls:new Set(this.jobControls.keys()),home:id=>this.store.jobHome(id,jobs)},process.platform);
   }
+  private observerFailures=new WeakSet<Function>();
+  private notifyObservers(event:"operationsObserved"|"snapshot",...args:unknown[]) {
+    for(const listener of this.rawListeners(event)){
+      const failed=(error:unknown)=>{
+        if(this.observerFailures.has(listener))return;
+        this.observerFailures.add(listener);
+        this.store.data.logs.push({id:randomUUID(),at:Date.now(),level:"warning",message:`状态订阅处理失败（${event}）：${redact(error instanceof Error?error.message:String(error),2000)}`});
+        this.trimLogs();
+      };
+      try{
+        // rawListeners preserves once wrappers and isolates each subscriber.
+        const result=listener.apply(this,args);
+        if(result&&typeof result.then==="function")void Promise.resolve(result).catch(failed);
+      }catch(error){failed(error);}
+    }
+  }
+  private trimLogs(){
+    let characters = 0;
+    this.store.data.logs = this.store.data.logs
+      .slice(-500).reverse().filter((log) => {characters += log.message.length;return characters <= 500_000;}).reverse();
+  }
   changed() {
     // Separate from the coalesced renderer snapshots: observers can retain
     // distinct scheduler facts even when several changes occur within100ms.
-    if(this.listenerCount("operationsObserved"))this.emit("operationsObserved");
+    if(this.listenerCount("operationsObserved"))this.notifyObservers("operationsObserved");
     if (this.publishTimer) return;
     this.publishTimer = setTimeout(() => {
       this.publishTimer = undefined;
       if (this.listenerCount("snapshot"))
-        this.emit("snapshot", this.snapshot());
+        this.notifyObservers("snapshot", this.snapshot());
     }, 100);
     this.publishTimer.unref?.();
   }
@@ -325,15 +346,7 @@ export class Scheduler extends EventEmitter {
         message: value,
         jobId,
       });
-    let characters = 0;
-    this.store.data.logs = this.store.data.logs
-      .slice(-500)
-      .reverse()
-      .filter((log) => {
-        characters += log.message.length;
-        return characters <= 500_000;
-      })
-      .reverse();
+    this.trimLogs();
     this.changed();
   }
   add(input: NewJob, existing?: { link: ExistingLink; threadId: string; turnId?: string }, schedule?: Job["schedule"], requestId?: string): Promise<Job> {

@@ -2171,3 +2171,17 @@ it("counts isolated schedule worktrees against their source project's concurrenc
  workers[0].settle({kind:"completed"});await until(()=>!(scheduler as any).active.has(a.id));await (scheduler as any).tick();expect(workers).toHaveLength(2);
  await scheduler.dispatch(false,root);await (scheduler as any).tick();await until(()=>workers[2]?.started);expect(workers[2].ctx.job.id).toBe(b.id);
 });
+it("isolates throwing state observers without rejecting committed workflows or deleting their journals",async()=>{
+ await scheduler.dispatch(true);let healthy=0;
+ scheduler.on("operationsObserved",()=>{throw Error("api_key: observer-secret");});scheduler.on("operationsObserved",()=>{healthy++;});
+ const steps=[{...input,cwd:root},{...input,cwd:root}];const jobs=await scheduler.addWorkflow("observer-flow","Observed",steps);
+ expect(healthy).toBeGreaterThan(0);expect(store.data.jobs).toHaveLength(2);expect((await scheduler.chats.read(jobs[0].id)).items.some(i=>i.role==="user")).toBe(true);
+ const repeated=await scheduler.addWorkflow("observer-flow","Observed",steps);expect(repeated.map(j=>j.id)).toEqual(jobs.map(j=>j.id));
+ scheduler.changed();scheduler.changed();expect(store.data.logs.filter(l=>l.message.includes("状态订阅处理失败"))).toHaveLength(1);expect(JSON.stringify(store.data.logs)).not.toContain("observer-secret");
+});
+it("keeps healthy and once snapshot listeners working after synchronous and asynchronous listener failures",async()=>{
+ let healthy=0,once=0;scheduler.on("snapshot",()=>{throw Error("sync observer");});scheduler.on("snapshot",async()=>{throw Error("async observer");});
+ scheduler.on("snapshot",()=>{healthy++;});scheduler.once("snapshot",()=>{once++;});
+ scheduler.changed();await until(()=>healthy===1&&store.data.logs.some(l=>l.message.includes("async observer")));
+ scheduler.changed();await until(()=>healthy===2);expect(once).toBe(1);expect(store.data.logs.filter(l=>l.message.includes("状态订阅处理失败"))).toHaveLength(2);
+});
