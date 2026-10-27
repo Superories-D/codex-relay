@@ -1,3 +1,4 @@
+import os from "node:os";
 import {beforeEach,afterEach,it,expect} from "vitest";
 import {promises as fs} from "node:fs";
 import path from "node:path";
@@ -11,10 +12,10 @@ import {reviewLinkedCheckpoint} from "../src/main/checkpoint-linked";
 let root:string,source:string,storage:string,git:CheckpointGit;
 const digest=(value:Buffer)=>createHash("sha256").update(value).digest("hex");
 async function write(name:string,body:string|Buffer){await fs.mkdir(path.dirname(path.join(source,name)),{recursive:true});await fs.writeFile(path.join(source,name),body);}
-beforeEach(async()=>{const parent="D:/cooperate/codex-relay-qa";await fs.mkdir(parent,{recursive:true});root=await fs.mkdtemp(path.join(parent,"checkpoint-test-"));source=path.join(root,"source");storage=path.join(root,"stage");await fs.mkdir(source);await fs.mkdir(storage);git=new CheckpointGit(path.join(root,"git"),{native:false});
+beforeEach(async()=>{const parent=path.resolve(process.env.RELAY_QA_ROOT||path.join(os.tmpdir(),"codex-relay-qa"));await fs.mkdir(parent,{recursive:true});root=await fs.mkdtemp(path.join(parent,"checkpoint-test-"));source=path.join(root,"source");storage=path.join(root,"stage");await fs.mkdir(source);await fs.mkdir(storage);git=new CheckpointGit(path.join(root,"git"),{native:false});
   await git.run(source,["init","-b","main"]);await git.run(source,["config","user.name","Relay QA"]);await git.run(source,["config","user.email","qa@invalid.local"]);await git.run(source,["config","core.autocrlf","false"]);
 });
-afterEach(async()=>{const actual=await fs.realpath(root),parent=await fs.realpath("D:/cooperate/codex-relay-qa");if(path.dirname(actual)!==parent||!path.basename(actual).startsWith("checkpoint-test-"))throw Error("Unsafe checkpoint fixture cleanup");await fs.rm(actual,{recursive:true,force:true});});
+afterEach(async()=>{const actual=await fs.realpath(root),parent=await fs.realpath(path.resolve(process.env.RELAY_QA_ROOT||path.join(os.tmpdir(),"codex-relay-qa")));if(path.dirname(actual)!==parent||!path.basename(actual).startsWith("checkpoint-test-"))throw Error("Unsafe checkpoint fixture cleanup");await fs.rm(actual,{recursive:true,force:true});});
 const options=()=>({root:storage,native:false});
 async function commit(){await git.run(source,["add","-A"]);await git.run(source,["commit","-m","Fixture"]);}
 it("captures raw working bytes and the separate index without modifying source state, and packs every staged object",async()=>{
@@ -95,3 +96,9 @@ it("never executes repository clean/smudge filters while capturing and restoring
   const unsafe=path.join(root,"unsafe-attempt");await fs.mkdir(unsafe);await expect(restoreCheckpoint({...manifest,projectRelative:"../../escaped"},storage,unsafe,{native:false})).rejects.toThrow();expect(await fs.readdir(unsafe)).toEqual([]);
   await git.run(restored.target,["checkout","-b","user-changed-branch"]);await expect(verifyRestoredCheckpoint(manifest,attempt,{native:false})).rejects.toThrow("分支已变化");
 },60000);
+it("resolves caller-relative repositories and hook directories before entering an isolated Git home",async()=>{
+  const relative=new CheckpointGit(path.relative(process.cwd(),path.join(root,"relative-git")),{native:false});
+  const cwd=path.relative(process.cwd(),source);
+  expect(await relative.text(cwd,["rev-parse","--show-toplevel"])).toBe((await fs.realpath(source)).split(path.sep).join("/"));
+  expect(await relative.text(cwd,["config","--get","core.hooksPath"])).toBe(path.join(root,"relative-git","empty-hooks"));
+});

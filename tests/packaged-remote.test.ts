@@ -14,6 +14,9 @@ it("runs remote help and a profile tunnel from only declared Windows resources",
     await fs.mkdir(resources);
     const pkg = JSON.parse(await fs.readFile("package.json", "utf8"));
     for (const resource of pkg.build.extraResources) {
+      // These CLI smoke checks do not execute the Windows process supervisor.
+      // Its binary is built and required on Windows; other resources must exist everywhere.
+      if(resource.from==="dist/native"&&process.platform!=="win32")continue;
       await fs.cp(resource.from, path.join(resources, resource.to), { recursive: true });
     }
     const run = (file: string, args: string[] = []) => exec(process.execPath,

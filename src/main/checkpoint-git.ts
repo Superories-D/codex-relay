@@ -10,8 +10,10 @@ import {spawnWindowsDomain,releaseWindowsDomain,type DomainChild} from "../core/
 
 export class CheckpointGitError extends Error {constructor(readonly args:string[],readonly code:number|null,readonly details:string){super(`Git 检查点操作未完成：${details||code}`);}}
 export class CheckpointGit {
-  constructor(readonly scratch:string,private options:{signal?:AbortSignal;native?:boolean}={}){}
+  readonly scratch:string;
+  constructor(scratch:string,private options:{signal?:AbortSignal;native?:boolean}={}){this.scratch=path.resolve(scratch);}
   async run(cwd:string,args:string[],options:{input?:string;stdinFile?:string;output?:string;env?:NodeJS.ProcessEnv;metadataLimit?:number}={}):Promise<Buffer>{
+    cwd=path.resolve(cwd);
     this.options.signal?.throwIfAborted();await fs.mkdir(this.scratch,{recursive:true,mode:0o700});
     // Windows CreateProcess still bounds its cwd even when file I/O supports
     // long paths. Git receives the full repository path through -C; only its
