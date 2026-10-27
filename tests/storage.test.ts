@@ -193,3 +193,15 @@ it("preserves the primary state if the previous-generation backup cannot be writ
  expect(JSON.parse(await fs.readFile(path.join(root,"state.json"),"utf8")).settings.retrySeconds).toBe(60);
  }finally{await fs.rm(root,{recursive:true,force:true});}
 });
+it("migrates orphaned workflow checks into a verification gate without inventing passed evidence",async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),"relay-workflow-migration-"));
+ try{
+ const store=new Store(root),check={kind:"file",path:"proof.txt",label:"Proof",minBytes:1};
+ store.data.jobs=[{id:"legacy",state:"completed",deliveryChecks:[check]} as any,{id:"edited",state:"paused",deliveryChecks:[check],delivery:{revision:3,checks:[{...check,path:"new-proof.txt"}],reports:[]}} as any,{id:"unsafe",state:"completed",recoveryRequired:true,deliveryChecks:[check]} as any];
+ await store.save();const loaded=new Store(root);await loaded.load();
+ expect(loaded.data.jobs[0]).toMatchObject({state:"needs_attention",delivery:{revision:1,checks:[check],reports:[],pendingCompletion:true,blockedCompletion:true},recoveryRequired:false});
+ expect(loaded.data.jobs[2].recoveryRequired).toBe(true);expect(loaded.data.jobs[2].autoRecovery).toBeDefined();expect(loaded.data.jobs[2].delivery?.pendingCompletion).toBeUndefined();
+ expect((loaded.data.jobs[0] as any).deliveryChecks).toBeUndefined();expect(loaded.data.jobs[1].delivery?.revision).toBe(3);expect(loaded.data.jobs[1].delivery?.checks[0].path).toBe("new-proof.txt");
+ (store.data.jobs[0] as any).deliveryChecks=[{kind:"unknown"}];await store.save();await expect(new Store(root).load()).rejects.toThrow("验收条件无法读取");
+ }finally{await fs.rm(root,{recursive:true,force:true});}
+});

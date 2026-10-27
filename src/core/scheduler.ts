@@ -1642,8 +1642,9 @@ export class Scheduler extends EventEmitter {
         }
         for (const input of inputs) {
           if (!(await fs.stat(input.cwd)).isDirectory()) throw Error("工作目录不存在");
+          const {deliveryChecks,...jobInput}=input,checks=deliveryChecksSchema.parse(deliveryChecks||[]);
           const now = Date.now();
-          created.push({ ...input, interactive: true, pendingMessage: input.prompt, id: randomUUID(), state: source ? "paused" : "queued", ...(source?{stopIntent:"pause" as const}:{}), rotations: 0, createdAt: now, updatedAt: now, enqueuedAt: now,
+          created.push({ ...jobInput, ...(checks.length?{delivery:{revision:1,checks,reports:[]}}:{}),interactive: true, pendingMessage: input.prompt, id: randomUUID(), state: source ? "paused" : "queued", ...(source?{stopIntent:"pause" as const}:{}), rotations: 0, createdAt: now, updatedAt: now, enqueuedAt: now,
             workflow: {id: requestId, title, step: created.length + 1, total: inputs.length, fingerprint,...(source?{source:{id:source.id,step:source.step+created.length}}:{})},
             dependsOn: created.length ? [created.at(-1)!.id] : [] });
         }

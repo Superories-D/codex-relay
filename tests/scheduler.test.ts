@@ -2150,3 +2150,12 @@ it("persists task organization atomically and cannot archive active work",async(
  const save=vi.spyOn(store,"save").mockRejectedValueOnce(Error("disk full"));
  await expect(scheduler.metadata(job.id,{title:"Lost"})).rejects.toThrow("disk full");expect(job.title).toBe("Renamed");save.mockRestore();
 });
+it("keeps batch workflow delivery gates durable and blocks dependent stages until actual verification",async()=>{
+ await scheduler.dispatch(true);
+ const check={kind:"file" as const,path:"result.txt",label:"Required output",minBytes:1};
+ const jobs=await scheduler.addWorkflow("gated-workflow","Gated",[{...input,cwd:root,deliveryChecks:[check]},{...input,cwd:root}]);
+ expect(jobs[0].delivery).toEqual({revision:1,checks:[check],reports:[]});expect((jobs[0] as any).deliveryChecks).toBeUndefined();
+ jobs[0].state="completed";expect((scheduler as any).dependenciesBlocked(jobs[1])).toBe(true);
+ await fs.writeFile(path.join(root,"result.txt"),"verified");await scheduler.checkDelivery(jobs[0].id);expect((scheduler as any).dependenciesBlocked(jobs[1])).toBe(false);
+ const loaded=new Store(root);await loaded.load();expect(loaded.data.jobs[0].delivery?.reports.at(-1)?.status).toBe("passed");
+});

@@ -1,3 +1,4 @@
+import {deliveryChecksSchema} from "../shared/delivery";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { scheduleRecovery } from "./auto-recovery";
@@ -108,6 +109,18 @@ export class Store {
         },
       };
       for (const j of this.data.jobs) {
+        // Old batch-created workflows kept input checks on an unused field.
+        // Restore the declared gate without inheriting or fabricating evidence.
+        const legacy=(j as Job&{deliveryChecks?:unknown}).deliveryChecks;
+        if(legacy!==undefined){
+          if(!j.delivery){
+            const parsed=deliveryChecksSchema.safeParse(legacy);
+            if(!parsed.success)throw Error("旧版工作流验收条件无法读取，请检查状态文件");
+            if(parsed.data.length)j.delivery={revision:1,checks:parsed.data,reports:[],...(j.state==="completed"&&!j.recoveryRequired&&(!j.existing||j.existing.phase==="managed")?{pendingCompletion:true,blockedCompletion:true}:{})};
+          }
+          delete (j as Job&{deliveryChecks?:unknown}).deliveryChecks;
+        }
+
         for (const message of j.queuedMessages || []) message.id ||= randomUUID();
         if (j.delivery?.pendingCompletion) {
           // This marker is saved only after the worker has positively closed.
