@@ -56,6 +56,18 @@ class FakeWorker extends EventEmitter implements Worker {
   }
   respond() {}
 }
+it("persists distinct completed worker generations with reused turn IDs but does not count a stopped worker",async()=>{
+ const job=await scheduler.add({...input,cwd:root,interactive:true});await until(()=>workers[0]?.started);
+ workers[0].settle({kind:"completed"});await(scheduler as any).currentRun;
+ expect(job.completion?.revision).toBe(1);expect(job.completion?.turnId).toBe("first-turn");
+ expect(job.completion!.finishedAt).toBeGreaterThanOrEqual(job.completion!.startedAt);
+ const first={...job.completion!};await scheduler.send({id:job.id,text:"Second turn",attachments:[],action:"queue"});
+ await(scheduler as any).tick();await until(()=>workers[1]?.started);workers[1].settle({kind:"completed"});await(scheduler as any).currentRun;
+ expect(job.completion?.revision).toBe(2);expect(job.completion?.turnId).toBe(first.turnId);
+ const disk=new Store(root);await disk.load();expect(disk.data.jobs[0].completion).toEqual(job.completion);
+ await scheduler.send({id:job.id,text:"Stop this turn",attachments:[],action:"queue"});await(scheduler as any).tick();await until(()=>workers[2]?.started);
+ await scheduler.control(job.id,"pause");expect(job.state).toBe("paused");expect(job.completion?.revision).toBe(2);
+});
 it("reports real scheduler ownership and captures distinct changes before renderer snapshot coalescing",async()=>{
   scheduler.runtimeReady=()=>false;const job=await scheduler.add({...input,cwd:root,interactive:true});
   expect(scheduler.operations().cards.find(c=>c.id===job.id)?.gates.map(g=>g.code)).toContain("cli");

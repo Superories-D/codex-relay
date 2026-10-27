@@ -74,6 +74,57 @@ function transport() {
     },
   };
 }
+it.skipIf(process.platform !== "linux")("notifies another completed turn without observing running and never quotes the previous turn",async()=>{
+ const f=await setup(),t=transport();
+ try{
+ const bridge=await TelegramBridge.open(f.runtime,{...config,notify:true},[f.workspace],t.api);await bridge.initialize();
+ t.setUpdates([message(11,"/run 1 Rapid followups")]);await bridge.pollOnce();t.setUpdates([]);
+ const job:any=f.runtime.store.data.jobs[0];job.state="completed";job.threadId="thread";job.turnId="one";
+ job.completion={revision:1,startedAt:10,finishedAt:20,turnId:"one",threadId:"thread"};
+ await f.runtime.scheduler.chats.append(job.id,{id:"answer-one",role:"assistant",kind:"message",turnId:"one",text:"FIRST RESULT",at:15});
+ await bridge.pollOnce();expect(t.sent.at(-1).text).toContain("FIRST RESULT");const before=t.sent.length;
+ job.turnId="two";job.completion={revision:2,startedAt:30,finishedAt:40,turnId:"two",threadId:"thread"};
+ await f.runtime.scheduler.chats.append(job.id,{id:"answer-two",role:"assistant",kind:"message",turnId:"two",text:"SECOND RESULT",at:35});
+ for(let i=0;i<90;i++)await f.runtime.scheduler.chats.append(job.id,{id:`tool-${i}`,role:"tool",kind:"message",turnId:"two",text:"Tool record",at:36});
+ await bridge.pollOnce();expect(t.sent.length).toBe(before+1);expect(t.sent.at(-1).text).toContain("SECOND RESULT");
+ job.title="Metadata change";job.updatedAt++;await bridge.pollOnce();expect(t.sent.length).toBe(before+1);
+ job.turnId="three";job.completion={revision:3,startedAt:50,finishedAt:60,turnId:"three",threadId:"thread"};
+ await bridge.pollOnce();expect(t.sent.length).toBe(before+2);expect(t.sent.at(-1).text).not.toContain("SECOND RESULT");
+ expect(t.sent.at(-1).text).toContain("本轮没有新的助手文本");
+ }finally{await f.close();}
+});
+it.skipIf(process.platform !== "linux")("baselines legacy notification state without replaying history and hashes updated approval payloads",async()=>{
+ const f=await setup(),t=transport();
+ try{
+ let bridge=await TelegramBridge.open(f.runtime,{...config,notify:true},[f.workspace],t.api);await bridge.initialize();
+ t.setUpdates([message(11,"/run 1 Migration")]);await bridge.pollOnce();t.setUpdates([]);
+ const job=f.runtime.store.data.jobs[0];job.state="completed";job.turnId="historical";await bridge.pollOnce();
+ const file=path.join(f.runtime.store.root,"telegram-state.json"),legacy=JSON.parse(await fs.readFile(file,"utf8"));delete legacy.knownEvents;await atomicWrite(file,JSON.stringify(legacy));
+ const before=t.sent.length;bridge=await TelegramBridge.open(f.runtime,{...config,notify:true},[f.workspace],t.api);await bridge.pollOnce();expect(t.sent).toHaveLength(before);
+ job.turnId="new-turn";await bridge.pollOnce();expect(t.sent).toHaveLength(before+1);
+ const approval:any={jobId:job.id,id:"same",historyId:"same-history",method:"ask",kind:"input",params:{prompt:"First prompt"}};f.runtime.scheduler.approvals=[approval];
+ await bridge.pollOnce();expect(t.sent).toHaveLength(before+2);approval.params={prompt:"api_key: never-store-this-secret"};
+ await bridge.pollOnce();expect(t.sent).toHaveLength(before+3);await bridge.pollOnce();expect(t.sent).toHaveLength(before+3);
+ expect(await fs.readFile(file,"utf8")).not.toContain("never-store-this-secret");
+ }finally{f.runtime.scheduler.approvals=[];await f.close();}
+});
+it.skipIf(process.platform !== "linux")("queues immutable successive completion summaries during quiet hours and restores both after restart",async()=>{
+ const f=await setup(),t=transport();let now=Date.UTC(2026,9,27,23);
+ try{
+ let bridge=await TelegramBridge.open(f.runtime,{...config,notify:true},[f.workspace],t.api,atomicWrite,()=>now);await bridge.initialize();
+ t.setUpdates([message(11,"/run 1 Quiet results")]);await bridge.pollOnce();t.setUpdates([message(12,"/quiet 22-7")]);await bridge.pollOnce();t.setUpdates([]);
+ const job=f.runtime.store.data.jobs[0];job.state="completed";
+ for(let revision=1;revision<=2;revision++){
+  job.completion={revision,startedAt:revision*10,finishedAt:revision*10+5};
+  await f.runtime.scheduler.chats.append(job.id,{id:`answer-${revision}`,role:"assistant",kind:"message",text:`SAVED RESULT ${revision}`,at:revision*10+1});await bridge.pollOnce();
+ }
+ const file=path.join(f.runtime.store.root,"telegram-state.json"),state=JSON.parse(await fs.readFile(file,"utf8"));expect(state.notices).toHaveLength(2);
+ const before=t.sent.length;await bridge.pollOnce();expect(t.sent).toHaveLength(before);
+ now=Date.UTC(2026,9,28,8);bridge=await TelegramBridge.open(f.runtime,{...config,notify:true},[f.workspace],t.api,atomicWrite,()=>now);await bridge.pollOnce();
+ expect(t.sent.slice(before).map(n=>n.text.match(/SAVED RESULT \d/)?.[0])).toEqual(["SAVED RESULT 1","SAVED RESULT 2"]);
+ await bridge.pollOnce();expect(t.sent).toHaveLength(before+2);
+ }finally{await f.close();}
+});
 describe.skipIf(process.platform !== "linux")("private Telegram bridge", () => {
   it("encrypts imported configuration and refuses public-readable input", async () => {
     const fixture = await setup();

@@ -6,7 +6,9 @@ import type {
   ChatPage,
   Approval,
   QuestionRecord,
+  Job,
 } from "../shared/types";
+import {completionAssistant} from "../shared/notification-event";
 import { redact } from "./redact";
 import { questionList } from "../shared/user-questions";
 import { protocolImages, imageSafePayload } from "../shared/chat-images";
@@ -390,6 +392,14 @@ export class Chats {
       total,
       ...(start ? { before: start } : {}),
     };
+  }
+  async latestAssistant(id:string, completion?:Job["completion"]) {
+    await this.read(id);
+    // Use the complete cached journal, not just the final 80 display rows:
+    // a result followed by many tool records is still this turn's result.
+    const live = [...(this.live.get(id)?.values() || [])],
+      rows = this.cache.get(id)?.rows || [];
+    return completionAssistant({completion},live) || completionAssistant({completion},rows);
   }
   async search(id: string, query: string, offset = 0, role?: ChatItem["role"]) {
     const needle = query.trim().normalize("NFKC").toLowerCase();

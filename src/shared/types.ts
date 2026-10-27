@@ -167,6 +167,9 @@ export interface Job {
   // Distinguish later control states even after a pause/resume cycle returns to
   // the same status and no timestamp has changed.
   controlRevision?: number;
+  // A worker completion is distinct from metadata edits or a later delivery
+  // recheck. Persist its generation even if observers miss intermediate states.
+  completion?: {revision:number;startedAt:number;finishedAt:number;threadId?:string;turnId?:string};
   recoveryAttempts?: number;
   autoRecovery?: {
     reason: "process" | "interrupted" | "unknown";

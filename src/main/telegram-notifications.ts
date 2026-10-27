@@ -5,6 +5,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { atomicWrite } from "../core/store";
 import { redact } from "../core/redact";
 import type { Snapshot } from "../shared/types";
+import {notificationEvent,notificationState} from "../shared/notification-event";
 import { telegramSave, telegramToken, type TelegramSave, type TelegramEvent,
   type TelegramReceipt, type TelegramView, type TelegramCandidate } from "../shared/telegram-notifications";
 
@@ -33,7 +34,7 @@ export function createTelegramTransport(request: (url: string, init: RequestInit
  };
 }
 export const telegramTransport = createTelegramTransport();
-type Cursor = { jobs: Record<string, string>; approvals: string[] };
+type Cursor = { jobs: Record<string, string>; events?: Record<string,string>; approvals: string[] };
 type Envelope = {
   version: 1; revision: number; generation: string;
   blockedUntil?: number;
@@ -46,7 +47,8 @@ const empty = (): Envelope => ({ version: 1, revision: 0, generation: randomUUID
   cursor: { jobs: {}, approvals: [] }, receipts: [] });
 function cursor(snapshot: Pick<Snapshot, "jobs" | "approvals">): Cursor {
   return {
-    jobs: Object.fromEntries(snapshot.jobs.map(job => [job.id, job.autoRecovery ? "recovering" : job.state])),
+    jobs: Object.fromEntries(snapshot.jobs.map(job => [job.id, notificationState(job)])),
+    events: Object.fromEntries(snapshot.jobs.map(job=>[job.id,createHash("sha256").update(notificationEvent(job)).digest("hex")])),
     approvals: snapshot.approvals.map(a => createHash("sha256")
       .update(JSON.stringify([a.jobId, a.id, a.historyId, a.method, a.params])).digest("hex")),
   };
@@ -225,7 +227,9 @@ export class WindowsTelegram {
           current.approvals.forEach((a, i) => { if (!before.approvals.includes(after.approvals[i])) events.set(a.jobId, "approval"); });
           for (const job of current.jobs) {
             const state = after.jobs[job.id];
-            if (before.jobs[job.id] && before.jobs[job.id] !== state && !events.has(job.id)) {
+            const changed=before.jobs[job.id] !== state ||
+              (!!before.events?.[job.id] && before.events[job.id] !== after.events![job.id]);
+            if (before.jobs[job.id] && changed && !events.has(job.id)) {
               if (state === "completed") events.set(job.id, "completed");
               else if (state === "needs_attention") events.set(job.id, "attention");
               else if (state === "waiting") events.set(job.id, "waiting");

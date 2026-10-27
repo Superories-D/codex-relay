@@ -1022,6 +1022,7 @@ export class Scheduler extends EventEmitter {
   }
   private async run(job: Job, account: Account) {
     const active = this.active.get(job.id)!;
+    const startedAt = Date.now();
     let poll: NodeJS.Timeout | undefined;
     let outcome: Outcome | undefined;
     try {
@@ -1312,6 +1313,13 @@ export class Scheduler extends EventEmitter {
         await this.chats.flush(agent.threadId);
     }
     await this.queueWrites.get(job.id)?.catch(() => {});
+    if (outcome?.kind === "completed" && !active.failedStop && !active.reason && !job.stopIntent && !this.closing) {
+      job.completion = {
+        revision: (job.completion?.revision ?? 0) + 1,
+        startedAt, finishedAt: Date.now(),
+        threadId: job.threadId, turnId: job.turnId,
+      };
+    }
     let deliveryFailed = false;
     if (outcome?.kind === "completed" && !active.failedStop && !active.reason && !job.stopIntent && !this.closing && job.delivery?.checks.length) {
       const report = await this.recordDelivery(job, "automatic");

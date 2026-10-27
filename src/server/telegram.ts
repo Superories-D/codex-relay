@@ -5,6 +5,7 @@ import {
 } from "./notification-policy";
 import {deliveryStatus} from "./delivery-view";
 import {taskControlSignature} from "../shared/task-control";
+import {notificationEvent} from "../shared/notification-event";
 import { attachmentsSchema } from "../main/validation";
 import {
   telegramDownload,
@@ -173,6 +174,7 @@ const stateSchema = z
     identity: z.string(),
     offset: z.number().int().nonnegative(),
     known: z.record(z.string(), z.string()),
+    knownEvents: z.record(z.string(), z.string()).optional(),
     notificationPolicy: notificationPolicySchema.optional(),
     notices: z
       .array(
@@ -298,7 +300,14 @@ export class TelegramBridge {
       const state = stateSchema.parse(
         JSON.parse(await fs.readFile(bridge.file(), "utf8")),
       );
-      if (state.identity === bridge.identity) bridge.state = state;
+      if (state.identity === bridge.identity) {
+        bridge.state = state;
+        // One-time baseline prevents an upgrade from replaying historical
+        // terminal states. Tag changes while offline still notify normally.
+        if (!state.knownEvents) await bridge.commit({...state,
+          knownEvents: Object.fromEntries(bridge.jobs().map(j=>[j.id,bridge.event(j)])),
+        });
+      }
     } catch (e: any) {
       if (e.code !== "ENOENT") throw e;
     }
@@ -340,6 +349,15 @@ export class TelegramBridge {
         ? "recovering"
         : job.state;
   }
+  private event(job: Job) {
+    const approvals = this.runtime.scheduler.approvals.filter(a=>a.jobId===job.id);
+    const value = approvals.length
+      ? JSON.stringify(approvals.map(a=>JSON.stringify([a.id,a.historyId,a.reviewId,a.method,a.params])).sort())
+      : notificationEvent(job);
+    // Approval payloads and errors can contain credentials; persist only an
+    // opaque event identity, never the raw fingerprint input.
+    return createHash("sha256").update(value).digest("hex");
+  }
   async initialize() {
     if (this.state) return;
     const hook = await this.api("getWebhookInfo", {}, this.controller.signal);
@@ -371,6 +389,7 @@ export class TelegramBridge {
       identity: this.identity,
       offset: latest + 1,
       known: Object.fromEntries(this.jobs().map((j) => [j.id, this.tag(j)])),
+      knownEvents: Object.fromEntries(this.jobs().map((j) => [j.id, this.event(j)])),
     });
   }
   private async send(reply: string | TelegramReply) {
@@ -1013,6 +1032,7 @@ export class TelegramBridge {
   private async notify() {
     const jobs = this.jobs(),
       known = { ...this.state!.known },
+      knownEvents = { ...this.state!.knownEvents },
       policy = this.state!.notificationPolicy || {
         mode: this.config.notify ? ("all" as const) : ("off" as const),
         watched: [],
@@ -1022,19 +1042,19 @@ export class TelegramBridge {
     let notices = [...(this.state!.notices || [])],
       dropped = this.state!.noticeDropped || 0;
     for (const job of jobs) {
-      const tag = this.tag(job);
-      if (known[job.id] === tag) continue;
+      const tag = this.tag(job), event = this.event(job),
+        completion = job.completion && {...job.completion};
+      if (known[job.id] === tag && knownEvents[job.id] === event) continue;
       known[job.id] = tag;
+      knownEvents[job.id] = event;
       if (!wantsNotice(policy, job.id, tag)) continue;
       let text = `Relay update\n${job.id.slice(0, 8)} · ${tag.startsWith("approval:") ? "needs your answer (/approvals)" : tag} · ${job.title.slice(0, 120)}`;
       if (job.delivery?.checks.length) text += `\n交付验收: ${deliveryStatus(job.delivery)}`;
       if (tag === "completed") {
-        const page = await this.runtime.scheduler.chats.read(job.id),
-          latest = [...page.items]
-            .reverse()
-            .find((i) => i.role === "assistant" && i.text.trim());
+        const latest = await this.runtime.scheduler.chats.latestAssistant(job.id, completion);
         if (latest)
           text += `\n\n${this.safe(latest.text, 1200)}${latest.text.length > 1200 ? "…（点击最新结果查看全文）" : ""}`;
+        else if (completion) text += "\n本轮没有新的助手文本，可打开任务检查工具结果与产物。";
       } else if (tag === "needs_attention" && job.lastError)
         text += `\n${this.safe(job.lastError, 1000)}`;
       else if (tag === "recovering")
@@ -1055,6 +1075,9 @@ export class TelegramBridge {
         ...this.state!,
         known: Object.fromEntries(
           Object.entries(known).filter(([id]) => ids.has(id)),
+        ),
+        knownEvents: Object.fromEntries(
+          Object.entries(knownEvents).filter(([id]) => ids.has(id)),
         ),
         notices,
         noticeDropped: dropped,
