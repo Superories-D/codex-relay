@@ -1,3 +1,4 @@
+import {sourceVersion} from "../shared/build-info";
 import {randomUUID} from "node:crypto";
 import {ServerWorkflows} from "./workflows";
 import { Desktop } from "../core/desktop";
@@ -373,7 +374,7 @@ export class ServerRuntime {
         return this.scheduler.snapshot().accounts;
       case "job.report":
         return taskReport(this.scheduler.snapshot(), idSchema.parse(args), {
-          version: "0.6.17-source",
+          version: sourceVersion,
           platform: process.platform,
           arch: process.arch,
           node: process.versions.node,

@@ -1,3 +1,4 @@
+import {sourceVersion} from "../src/shared/build-info";
 import http from "node:http";
 import { promises as fs } from "node:fs";
 import os from "node:os";
@@ -60,6 +61,8 @@ describe.skipIf(process.platform !== "linux")(
           (await command("account.importText", { text: "secret" })).status,
         ).toBe(403);
         await expect(openHttp(runtime, 0, [root])).rejects.toThrow("overlap");
+        const meta=await (await fetch(base+"/api/meta",{headers})).json();
+        expect(meta.build.version).toBe(sourceVersion);expect(meta.serverId).toBe(runtime.installationId);
         const request = {
           requestId: randomUUID(),
           input: {
@@ -101,6 +104,7 @@ describe.skipIf(process.platform !== "linux")(
           await command("job.report", first.result.id)
         ).json();
         expect(report.result.task.id).toBe(first.result.id);
+        expect(report.result.environment.version).toBe(sourceVersion);
       } finally {
         await web.close();
         await runtime.close();

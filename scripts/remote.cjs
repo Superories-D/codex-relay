@@ -36,7 +36,7 @@ if (operation === "help") {
  profile save NAME --url ORIGIN --token-file FILE [--cwd SERVER_PATH] [--host user@server]
  profile list|show|remove [NAME] · --profile NAME selects a saved connection
  requests | recover --request-id UUID
- health | doctor | status | watch [--id UUID] | report --id UUID | approvals
+ info | health | doctor | status | watch [--id UUID] | report --id UUID | approvals
  run --cwd /server/project --prompt-file task.txt [--request-id UUID] [--detach]
  send --id UUID --prompt-file followup.txt [--request-id UUID]
  pause|resume|cancel --id UUID
@@ -370,6 +370,7 @@ async function main() {
     result = await command("workflow.add", input, true);
   } else if (["pause", "resume", "cancel"].includes(operation))
     result = await command("job.control", { id: values.id, action: operation });
+  else if (operation === "info") result = await api("/api/meta");
   else if (operation === "health") result = await command("health");
   else if (operation === "doctor") result = await command("environment.check");
   else if (operation === "approvals") result = await command("approval.list");

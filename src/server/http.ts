@@ -1,3 +1,4 @@
+import {sourceVersion} from "../shared/build-info";
 import { ServerAssets } from "./assets";
 import { UPLOAD_LIMIT } from "./uploads";
 import { prepareWorkspaces, resolveWorkspace } from "./workspaces";
@@ -136,6 +137,7 @@ export async function openHttp(
       if (req.method === "GET" && req.url === "/api/meta")
         return send(res, 200, {
           version: 1,
+          build:{version:sourceVersion},
           serverId: runtime.installationId,
           workspaces: roots,
           commands: [...allowed],

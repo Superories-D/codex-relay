@@ -63,7 +63,7 @@ function App() {
       sessionStorage.getItem("relay.remote.token") || "",
     ),
     [entry, setEntry] = useState("");
-  const [serverId,setServerId]=useState<string>();
+  const [serverId,setServerId]=useState<string>(),[serverVersion,setServerVersion]=useState("");
   const submitting=useRef(new Set<string>());
   const [snapshot, setSnapshot] = useState<Snapshot>(),
     [status, setStatus] = useState("正在连接"),
@@ -152,6 +152,7 @@ function App() {
         if(!current)return;
         bindServerIdentity(meta.serverId);
         setServerId(meta.serverId);
+        setServerVersion(typeof meta.build?.version==="string"?meta.build.version:"");
         if (current) {
           void watch(
       token,
@@ -487,7 +488,7 @@ function App() {
             className={`connection-bar ${status === "已连接" ? "online" : ""}`}
             role="status"
           >
-            {t(status)} · {t("断线只重新订阅状态，不重复提交任务。")}
+            {t(status)} · {serverVersion&&`${serverVersion} · `}{t("断线只重新订阅状态，不重复提交任务。")}
           </div>
           {error && (
             <p className="error-banner" role="alert">
