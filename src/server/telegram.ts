@@ -233,6 +233,15 @@ export class TelegramBridge {
   private state?: State;
   private controller = new AbortController();
   private loop?: Promise<void>;
+  private polling?:Promise<void>;
+  private mutations:Promise<unknown>=Promise.resolve();
+  private noticePass?:Promise<void>;
+  private noticeTicker?:ReturnType<typeof setInterval>;
+  private noticeRetryAt=0;
+  private noticeCaptureAfter=0;
+  private noticeFailures=0;
+  private noticeTimer?:ReturnType<typeof setTimeout>;
+  private noticeListener?:()=>void;
   private grants = new Map<
     string,
     {
@@ -919,23 +928,79 @@ export class TelegramBridge {
       );
     return `/send ${task} ${text}`;
   }
-  async pollOnce() {
-    await this.initialize();
-    await this.deliverPending();
-    // A durable resolved route survives lost acknowledgements, project changes and restart.
-    await this.processIncoming();
+  pollOnce() {
+    if(this.polling)return this.polling;
+    const task=this.poll();this.polling=task;
+    void task.finally(()=>{if(this.polling===task)this.polling=undefined;}).catch(()=>{});
+    return task;
+  }
+  private serial<T>(effect:()=>Promise<T>){
+    const task=this.mutations.catch(()=>{}).then(effect);this.mutations=task;return task;
+  }
+  private policy(){
+    return this.state!.notificationPolicy||{mode:this.config.notify?"all" as const:"off" as const,watched:[],quiet:null,intervalSeconds:0};
+  }
+  private hasNewNotice(){
+    if(!this.state)return false;
+    const policy=this.policy();
+    return this.jobs().some(job=>{
+      const tag=this.tag(job);
+      if(tag==="completed"&&!this.runtime.scheduler.notificationSettled(job.id))return false;
+      return wantsNotice(policy,job.id,tag)&&(this.state!.known[job.id]!==tag||this.state!.knownEvents?.[job.id]!==this.event(job));
+    });
+  }
+  private noticeDue(){
+    if(!this.state?.notices?.length)return false;
+    const policy=this.policy();
+    return !quietNow(policy,this.now())&&(this.state.lastNoticeAt===undefined||this.now()-this.state.lastNoticeAt>=policy.intervalSeconds*1000);
+  }
+  private requestNotice(onError:(error:unknown)=>void){
+    if(this.noticePass||!this.state||this.controller.signal.aborted)return;
+    const task=this.serial(async()=>{
+      if(this.controller.signal.aborted)return;
+      const budget=this.now()<this.noticeRetryAt?0:5;
+      if(budget&&this.state!.pending){
+        await this.notify(0);
+        await this.deliverPending();
+      }
+      await this.notify(budget);this.noticeCaptureAfter=0;
+      if(budget){this.noticeFailures=0;this.noticeRetryAt=0;}
+    });
+    this.noticePass=task;
+    void task.catch(error=>{
+      if(this.controller.signal.aborted)return;
+      this.noticeFailures++;
+      this.noticeRetryAt=this.now()+Math.min(60000,1000*2**Math.min(this.noticeFailures,6));
+      if(error instanceof TelegramPersistenceError)this.noticeCaptureAfter=this.noticeRetryAt;
+      onError(Error(this.safe(error instanceof Error?error.message:error)));
+    }).finally(()=>{if(this.noticePass===task)this.noticePass=undefined;}).catch(()=>{});
+  }
+  private async poll() {
+    await this.serial(async()=>{
+      this.controller.signal.throwIfAborted();
+      await this.initialize();
+      await this.deliverPending();
+      // Resolved routes survive lost acknowledgements and project changes.
+      await this.processIncoming();
+    });
     const updates = await this.api(
       "getUpdates",
       {
         offset: this.state!.offset,
         limit: 20,
-        timeout: 25,
+        timeout:25,
         allowed_updates: ["message", "callback_query"],
       },
       this.controller.signal,
     );
     if (!Array.isArray(updates))
       throw Error("Invalid Telegram update response");
+    await this.serial(async()=>{
+      this.controller.signal.throwIfAborted();
+      await this.consume(updates);
+    });
+  }
+  private async consume(updates:any[]) {
     for (const update of updates
       .slice(0, 100)
       .sort((a, b) => a.update_id - b.update_id)) {
@@ -1027,9 +1092,9 @@ export class TelegramBridge {
       });
       await this.processIncoming();
     }
-    await this.notify();
+    await this.notify(this.now()<this.noticeRetryAt?0:5);
   }
-  private async notify() {
+  private async notify(limit=5) {
     const jobs = this.jobs(),
       known = { ...this.state!.known },
       knownEvents = { ...this.state!.knownEvents },
@@ -1044,6 +1109,9 @@ export class TelegramBridge {
     for (const job of jobs) {
       const tag = this.tag(job), event = this.event(job),
         completion = job.completion && {...job.completion};
+      // Do not publish a transient terminal state while its final save or
+      // queue handoff still owns the task; leave the prior cursor untouched.
+      if(tag==="completed"&&!this.runtime.scheduler.notificationSettled(job.id))continue;
       if (known[job.id] === tag && knownEvents[job.id] === event) continue;
       known[job.id] = tag;
       knownEvents[job.id] = event;
@@ -1087,7 +1155,7 @@ export class TelegramBridge {
       await this.commit(next);
     if (quietNow(policy, this.now())) return;
     let delivered = 0;
-    while (this.state!.notices?.length && delivered < 5) {
+    while (this.state!.notices?.length && delivered < limit) {
       if (
         policy.intervalSeconds &&
         this.state!.lastNoticeAt !== undefined &&
@@ -1119,6 +1187,22 @@ export class TelegramBridge {
   }
   start(onError: (error: unknown) => void) {
     if (this.loop) return;
+    this.noticeListener=()=>{
+      if(this.noticeTimer||this.controller.signal.aborted)return;
+      this.noticeTimer=setTimeout(()=>{
+        this.noticeTimer=undefined;
+        try{if(this.now()>=this.noticeCaptureAfter&&this.hasNewNotice())this.requestNotice(onError);}
+        catch(error){onError(Error(this.safe(error instanceof Error?error.message:error)));}
+      },100);
+      this.noticeTimer.unref();
+    };
+    this.runtime.scheduler.on("operationsObserved",this.noticeListener);
+    this.noticeListener();
+    this.noticeTicker=setInterval(()=>{
+      try{if(this.now()>=this.noticeRetryAt&&this.noticeDue())this.requestNotice(onError);}
+      catch(error){onError(Error(this.safe(error instanceof Error?error.message:error)));}
+    },1000);
+    this.noticeTicker.unref();
     this.loop = (async () => {
       let failures = 0;
       while (!this.controller.signal.aborted) {
@@ -1149,7 +1233,11 @@ export class TelegramBridge {
     })();
   }
   async stop() {
+    if(this.noticeListener)this.runtime.scheduler.off("operationsObserved",this.noticeListener);
+    if(this.noticeTimer)clearTimeout(this.noticeTimer);
+    if(this.noticeTicker)clearInterval(this.noticeTicker);
     this.controller.abort();
     await this.loop;
+    await this.noticePass?.catch(()=>{});
   }
 }

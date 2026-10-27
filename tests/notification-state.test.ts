@@ -2,6 +2,11 @@ import {expect,it} from "vitest";
 import {NotificationState} from "../src/core/notification-state";
 import {completionAssistant} from "../src/shared/notification-event";
 import {taskControlSignature} from "../src/shared/task-control";
+it("waits for completion ownership to settle without making metadata controls look like another completion",()=>{
+ const job:any={id:"a",state:"running"},state=new NotificationState([job]);job.state="completed";
+ expect(state.update([job],[],()=>false)).toEqual([]);expect(state.update([job],[],()=>true)).toEqual([{id:"a",kind:"completed"}]);
+ expect(state.update([job],[],()=>false)).toEqual([]);expect(state.update([job],[],()=>true)).toEqual([]);
+});
 it("bounds result summaries by completion window and turn, including legacy turnless records",()=>{
  const row=(id:string,at:number,turnId?:string):any=>({id,at,turnId,role:"assistant",text:id});
  const completion={revision:2,startedAt:20,finishedAt:30,turnId:"turn"};

@@ -92,6 +92,9 @@ export class Scheduler extends EventEmitter {
       (run) => this.store.jobHome(run.job.id) === home,
     );
   }
+  notificationSettled(id:string){
+    return !this.familyActive(id)&&!this.jobControls.has(this.store.jobHome(id))&&!this.recoveryTasks.has(id);
+  }
   private accountActive(id: string, runningOnly = false) {
     return [...this.active.values()].some(
       (run) =>

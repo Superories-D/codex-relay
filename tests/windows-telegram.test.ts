@@ -43,6 +43,11 @@ afterEach(async () => {
   await Promise.all(managers.splice(0).map(m => m.shutdown()));
   await Promise.all(roots.splice(0).map(root => fs.rm(root, {recursive: true, force: true})));
 });
+it("waits for the saved completion cursor without reannouncing metadata controls on a completed task",async()=>{
+ const {m}=await fixture();await m.save(setup());m.observe(snap("completed"),()=>false);await m.drain();expect(m.view().receipts).toHaveLength(0);
+ m.observe(snap("completed"),()=>true);await m.drain();expect(m.view().receipts).toHaveLength(1);
+ m.observe(snap("completed"),()=>false);m.observe(snap("completed"),()=>true);await m.drain();expect(m.view().receipts).toHaveLength(1);
+});
 
 it("retains distinct completion generations in the desktop outbox and does not replay them after restart",async()=>{
   const completion=(revision:number)=>({revision,startedAt:revision*10,finishedAt:revision*10+5});

@@ -312,10 +312,10 @@ async function boot() {
       accounts.busy.add(j.accountId);
   let sleepBlocker: number | undefined;
   scheduler.on("snapshot", (snapshot) => {
-    telegram.observe(snapshot);
+    telegram.observe(snapshot,id=>scheduler.notificationSettled(id));
     if (window && !window.isDestroyed())
       window.webContents.send("relay:snapshot", snapshot);
-    const notices = notifications.update(snapshot.jobs,snapshot.approvals);
+    const notices = notifications.update(snapshot.jobs,snapshot.approvals,id=>scheduler.notificationSettled(id));
     if (desktop.data.preferences.notifications && !window?.isFocused() && Notification.isSupported()) {
       for (const event of notices) {
         const job = store.data.jobs.find(j=>j.id===event.id);
