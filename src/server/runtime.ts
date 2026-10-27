@@ -1,4 +1,5 @@
 import {sourceVersion} from "../shared/build-info";
+import {ProjectGit} from "./project-git";
 import {randomUUID} from "node:crypto";
 import {ServerWorkflows} from "./workflows";
 import { Desktop } from "../core/desktop";
@@ -55,6 +56,7 @@ export class ServerRuntime {
   get uploads() { return this.uploadStore ||= new ServerUploads(this.store.root); }
   private uploadStore?: ServerUploads;
   private remoteActions?: RemoteActions;
+  private projectGit?:ProjectGit;
   private reports?: WorkflowReports;
   private templates?: Templates;
   private closing = false;
@@ -263,6 +265,14 @@ export class ServerRuntime {
         return serviceHealth(this.scheduler.snapshot(), this.closing);
       case "snapshot":
         return this.scheduler.snapshot();
+      case "project.changes": {
+        const a=z.object({cwd:z.string().min(1).max(32767)}).strict().parse(args);
+        return (this.projectGit ||= new ProjectGit(this.store.root,this.workspaceRoots)).changes(a.cwd);
+      }
+      case "project.diff": {
+        const a=z.object({cwd:z.string().min(1).max(32767),path:z.string().min(1).max(32767),staged:z.boolean().default(false)}).strict().parse(args);
+        return (this.projectGit ||= new ProjectGit(this.store.root,this.workspaceRoots)).diff(a.cwd,a.path,a.staged);
+      }
       case "job.add": {
         const input = newJobSchema.parse(args);
         if (input.mode !== "cli") throw Error("Only CLI tasks are supported");

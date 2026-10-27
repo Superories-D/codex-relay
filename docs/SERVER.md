@@ -146,3 +146,5 @@ The selected-task view lists recorded outputs and attachments, previews text/ima
 `npm run build` 保存构建清单，覆盖源码、构建脚本、依赖锁定文件和编译产物摘要。独立服务器打包会先核对清单；源码有变化、产物被替换/增删或没有完成构建时，需重新构建后才能打包。归档内的 `BUILD.json` 记录版本、来源摘要与服务器产物哈希；这用于追踪构建内容，不代替发行签名。
 
 打包在私有暂存目录中复制、核对服务器产物并生成完整 tar.gz，完成后才替换发行输出。复制或 tar 失败不删除已有发行；归档发布失败会回滚发行目录。发布期间使用独占目录锁，避免两个打包进程交错替换。进程被强制结束后若残留 `.publishing` 或 `.previous-*` 目录，应先检查上次发布结果与备份，不盲目删除未知状态数据。
+
+Read-only Git inspection is available through `project.changes` with `{ "cwd": "/configured/project" }` and `project.diff` with `{ "cwd": "/configured/project", "path": "relative/file", "staged": false }`. The Git repository root must remain inside configured workspaces; allowing a child directory does not grant access to its parent repository. Responses expose branch/HEAD and read timestamps, with bounded inventories/previews. Custom repository filters and external diff tools are disabled, submodules are not expanded, and the original index and working files remain unchanged. The Telegram `/repo` console uses these same bounded operations.

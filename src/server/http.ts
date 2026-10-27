@@ -18,6 +18,7 @@ const allowed = new Set([
   "goal.read", "goal.update",
   "action.read", "actions.list", "models.list", "task.steer", "task.model",
   "task.control", "task.queue",
+  "project.changes", "project.diff",
   "delivery.read", "delivery.run", "delivery.repair", "delivery.save",
   "assets.list",
   "assets.read",

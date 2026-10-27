@@ -53,6 +53,7 @@ Ordinary text follows the selected task. Replying to a known task card, result p
 |---|---|
 | `/start`, `/home`, `/help` | Dashboard and complete command guide |
 | `/projects [PAGE]`, `/project NUMBER` | Browse ten allowed workspaces per page / select a workspace |
+| `/repo [PROJECT_NUMBER]` | Inspect the selected or numbered project’s Git branch, index and working changes; buttons open file diffs |
 | `/new instruction`, `/run NUMBER instruction` | Create and select an interactive CLI task |
 | `/status [STATE\|all] [PAGE]` | Browse eight tasks per page; default excludes archived tasks; pinned tasks appear first |
 | `/task TASK_ID` | Select a task and show state, project, model, queue and recovery details |
@@ -189,3 +190,9 @@ Schedule pause/enable commands carry the observed configuration revision so anot
 ### 远程操作记录
 
 `/actions` 查看最近 20 条有持久回执的远程操作，`/receipt UUID` 查看原回执。网页侧栏“远程操作记录”提供分页、刷新、回执详情及任务跳转。列表只返回操作摘要，不包含原参数、结果正文或请求指纹；损坏记录显示为不可读取。pending/uncertain 表示需要核查原任务，不会提供自动重放原生调用的按钮。
+
+### Read-only project inspection
+
+`/repo` uses the selected **project**, independently of the selected task. `/repo NUMBER` inspects a configured project without changing either selection. The listing keeps an immutable 20-minute snapshot, ten entries per page, up to 500 visible entries. Refresh is bound to the original project and creates a new snapshot; older buttons never point at newly reordered files. Staged and working-file buttons read current differences and include a read timestamp. A lost send acknowledgment retains that complete reply for delivery after restart without reading files again. Repository navigation expires on bridge restart.
+
+Reads use isolated copies of Git metadata and safe built-in configuration. Custom clean/smudge/process filters, textconv, external diffs and fsmonitor programs are not invoked; repositories depending on custom filters may therefore differ from local Git’s filtered view. Submodule contents and nested repositories are not expanded. Nested repositories can be added as separate configured projects. Working-file previews copy at most 2 MiB through a checked file descriptor; external links, hard links, non-regular files, changed reads and private server metadata are refused. Binary or non-UTF-8 new files show a notice. Git metadata output is capped and subprocess work shares a 15-second deadline. No source file, index, branch or commit is changed, no model is called and no write/apply action is exposed.

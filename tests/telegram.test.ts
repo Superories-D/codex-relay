@@ -11,6 +11,7 @@ import {
   type TelegramApi,
 } from "../src/server/telegram";
 import { atomicWrite } from "../src/core/store";
+import {CheckpointGit} from "../src/main/checkpoint-git";
 const config = {
   token: "123456789:" + "a".repeat(35),
   userId: "123456789",
@@ -637,6 +638,24 @@ describe.skipIf(process.platform !== "linux")("Telegram mobile console", () => {
       expect(f.t.sent.at(-1).text).toContain("操作已确认");
       if(kind.includes("control")){expect(control).toHaveBeenCalledTimes(1);expect(job.state).toBe("queued");}
       else {expect(queue).toHaveBeenCalledTimes(1);expect(job.queueRevision).toBe(revision);expect(job.queuedMessages?.map(message=>message.text)).toEqual(texts);}
+    }finally{await f.close();}
+  });
+  it("inspects real repository snapshots, redacts file diffs and restores an already-read reply after restart",async()=>{
+    const f=await consoleFixture(),git=new CheckpointGit(path.join(f.base,"git-qa"),{native:false});
+    try {
+      await git.run(f.workspace,["init","-b","main"]);await git.run(f.workspace,["config","user.name","QA"]);await git.run(f.workspace,["config","user.email","qa@invalid.local"]);
+      const file=path.join(f.workspace,"a.txt");await fs.writeFile(file,"base\n");await git.run(f.workspace,["add","a.txt"]);await git.run(f.workspace,["commit","-m","Base"]);await fs.writeFile(file,"staged\n");await git.run(f.workspace,["add","a.txt"]);await fs.writeFile(file,`working ${config.token}\n`);
+      await Promise.all(Array.from({length:12},(_,index)=>fs.writeFile(path.join(f.workspace,`new-${index}.txt`),"new")));
+      await f.send("/project 1");const view=await f.send("/repo");expect(view.text).toContain("变更 13");expect(view.text).toContain("分支: main");
+      const staged=buttons(view).find(button=>button.text==="暂存 1")!.callback_data,working=buttons(view).find(button=>button.text==="工作区 1")!.callback_data,next=buttons(view).find(button=>button.text==="下一页")!.callback_data,refresh=buttons(view).find(button=>button.text==="重新检查项目")!.callback_data;
+      const before=await fs.readFile(path.join(f.workspace,".git/index"));expect((await f.click(staged)).text).toContain("+staged");
+      await fs.writeFile(path.join(f.workspace,"later.txt"),"Later work");expect((await f.click(next)).text).toContain("变更 13");
+      const newer=await f.click(refresh);expect(newer.text).toContain("变更 14");expect(buttons(newer).find(button=>button.text==="工作区 1")!.callback_data).not.toBe(working);
+      const calls=vi.spyOn(f.runtime,"command");f.t.failNextSend();await expect(f.click(working)).rejects.toThrow("Simulated lost send acknowledgement");
+      expect(calls.mock.calls.filter(call=>call[0]==="project.diff")).toHaveLength(1);await f.restart();await f.bridge.pollOnce();
+      expect(f.t.sent.at(-1).text).toContain("+working");expect(f.t.sent.at(-1).text).not.toContain(config.token);expect(calls.mock.calls.filter(call=>call[0]==="project.diff")).toHaveLength(1);
+      expect((await f.click(working)).text).toContain("已过期");expect(await fs.readFile(path.join(f.workspace,".git/index"))).toEqual(before);expect(f.runtime.store.data.jobs).toHaveLength(0);
+      for(const button of buttons(view))expect(Buffer.byteLength(button.callback_data)).toBeLessThanOrEqual(64);
     }finally{await f.close();}
   });
   it("manages the real queue with revision checks and prevents repeat button execution", async () => {

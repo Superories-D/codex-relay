@@ -1,6 +1,8 @@
 import { ServerAssets } from "./assets";
 import {deliveryStatus} from "./delivery-view";
 import {taskControlSignature} from "../shared/task-control";
+import {gitStaged,gitUnstaged} from "../shared/git";
+import type {ProjectChanges} from "./project-git";
 import {deliveryChecksSchema} from "../shared/delivery";
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
@@ -70,6 +72,7 @@ export const homeKeyboard = () => [
   [button("项目 Projects", "/projects"), button("任务 Tasks", "/status")],
   [button("审批 / 提问", "/approvals"), button("服务 Health", "/health")],
   [button("工作流", "/workflows"), button("帮助 Help", "/help")],
+  [button("项目 Git", "/repo"),button("模板", "/templates")],
 ];
 const defaults: NonNullable<TelegramContext["defaults"]> = {
   model: "",
@@ -81,6 +84,30 @@ const defaults: NonNullable<TelegramContext["defaults"]> = {
 
 /** Presentation and explicit user operations. It never invokes an arbitrary runtime command. */
 export class TelegramConsole {
+  private repositories=new Map<string,{view:ProjectChanges;expires:number}>();
+  private async repository(cwd:string) {
+    const view=await this.runtime.command("project.changes",{cwd}) as ProjectChanges;
+    for(const [key,saved] of this.repositories)if(saved.expires<=this.now())this.repositories.delete(key);
+    while(this.repositories.size>=12)this.repositories.delete(this.repositories.keys().next().value!);
+    const key=randomBytes(6).toString("hex");this.repositories.set(key,{view,expires:this.now()+20*60*1000});return this.repositoryPage(key,1);
+  }
+  private repositoryPage(key:string,page:number):TelegramReply {
+    const saved=this.repositories.get(key);
+    if(!saved||saved.expires<=this.now())throw Error("项目变更快照已过期，请重新 /repo");
+    const view=saved.view,total=Math.max(1,Math.ceil(view.files.length/10));
+    if(!Number.isInteger(page)||page<1||page>total)throw Error("Invalid repository page");
+    const start=(page-1)*10,files=view.files.slice(start,start+10),keyboard=files.flatMap((file,index)=>{
+      const actions=[];
+      if(file.directory)return [];
+      if(gitStaged(file))actions.push(button(`暂存 ${start+index+1}`,`/repo_diff ${key} ${start+index} staged`));
+      if(gitUnstaged(file))actions.push(button(`工作区 ${start+index+1}`,`/repo_diff ${key} ${start+index} worktree`));
+      return actions.length?[actions]:[];
+    }),nav=[];
+    if(page>1)nav.push(button("上一页",`/repo_page ${key} ${page-1}`));
+    if(page<total)nav.push(button("下一页",`/repo_page ${key} ${page+1}`));
+    if(nav.length)keyboard.push(nav);keyboard.push([button("重新检查项目",`/repo_refresh ${key}`),button("项目列表","/projects")]);
+    return {text:`项目 Git · ${page}/${total}\n${view.root}\n分支: ${view.branch} · ${view.head.slice(0,12)||"尚无提交"}\n读取: ${new Date(view.at).toISOString()}\n变更 ${view.total}${view.truncated?"（仅展示前 500 项）":""}\n\n${files.map((file,index)=>`${start+index+1}. [${file.index}${file.worktree}] ${file.path}${file.directory?" [目录]":""}${file.original?" ← "+file.original:""}`).join("\n")||"工作区和暂存区均无变更。"}\n\n按原始文件比较；自定义过滤器不运行，子模块内容不展开。列表快照保留 20 分钟，差异在打开时重新读取。`,keyboard};
+  }
   private assetLinks = new Map<
     string,
     { jobId: string; assetId: string; expires: number }
@@ -280,10 +307,25 @@ export class TelegramConsole {
           "Codex Relay · 手机控制台\n\n" +
           "1. /projects → 点选项目\n2. /new 任务描述 → 创建并选中任务\n3. 直接发文字追问；回复任务卡片可指定该任务\n\n" +
           "/status [状态|all] [页码] · /task ID\n/result [ID] · /history [ID] · /export [ID]\n/search 关键词 · /report [ID]\n/delivery [ID] · /verify [ID] · /repair [ID]\n/notify all|errors|watched|off · /watch [ID] · /unwatch ID\n/quiet 22-7（UTC） · /throttle 秒 · /digest\n/actions · /receipt 操作UUID\n/wf preview|retry|pause|resume\n/schedules · /schedule create|run|pause|enable|remove\n/goal read|create|edit|start|pause|budget|clear\n/steer 立即补充 · /switchmodel 模型 [推理强度] · /models\n/queue [ID] · /priority high|normal|low\n/edit 消息ID 版本 新文字\n/remove 消息ID 版本 · /up 消息ID 版本 · /down 消息ID 版本\n" +
+          "/repo [项目编号] 查看 Git 变更，按按钮读取暂存/工作区差异\n" +
           "/pause [ID] · /resume [ID] · /cancel [ID]\n/rename 名称 · /pin on|off · /archive on|off\n/depends ID ID（或 none）\n\n" +
           "/workflow 标题 换行 阶段一 换行 --- 换行 阶段二\n/workflows · /handoff 工作流ID\n/templates · /template ID（或 off）\n/defaults · /model 名称（或 default）\n/effort low|medium|high|xhigh|default · /plan on|off\n\n" +
           "/approvals [页码] · /answer CODE JSON\n/dispatch pause|resume [project|all]\n/limit 1..8|auto · /health · /accounts\n/forget 清除当前任务 · /dismiss 退出答题\n\n所有操作仅接受配置的本人私聊。",
       };
+    if(command==="repo") {
+      const cwd=args&&/^\d+$/.test(args)?this.roots[Number(args)-1]:!args?context.project:undefined;
+      if(!cwd)throw Error("Use /repo PROJECT_NUMBER; /projects lists configured projects");
+      return this.repository(cwd);
+    }
+    if(command==="repo_refresh") {const saved=this.repositories.get(args);if(!saved||saved.expires<=this.now())throw Error("项目变更快照已过期，请重新 /repo");return this.repository(saved.view.root);}
+    if(command==="repo_page") {const [key,page]=args.split(/\s+/);return this.repositoryPage(key,Number(page));}
+    if(command==="repo_diff") {
+      const [key,number,kind]=args.split(/\s+/),saved=this.repositories.get(key),index=Number(number);
+      if(!saved||saved.expires<=this.now())throw Error("项目变更快照已过期，请重新 /repo");
+      const file=saved.view.files[index];if(!Number.isInteger(index)||!file||!["staged","worktree"].includes(kind))throw Error("Invalid project diff selection");
+      const diff=await this.runtime.command("project.diff",{cwd:saved.view.root,path:file.path,staged:kind==="staged"}) as any;
+      return this.paginate(`Git 差异 · ${diff.staged?"暂存区":"工作区"}\n${diff.root}\n${diff.branch} · ${diff.path}\n读取: ${new Date(diff.at).toISOString()}\n\n${diff.text||"当前内容无差异。"}\n\n只读检查；原文件和暂存区保持不变。`);
+    }
     if(command === "actions") {
       const page:any=await this.runtime.command("actions.list",{limit:20});
       return this.paginate("远程操作记录（最近20条）\n"+page.entries.map((r:any)=>`${r.id}\n${r.action||"不可读取"} · ${r.state} · ${new Date(r.updatedAt).toISOString()}${r.error?"\n"+r.error:""}`).join("\n\n")+"\n/receipt UUID 查看原回执。未知结果请检查任务，不会自动重放。");
