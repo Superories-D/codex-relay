@@ -292,7 +292,7 @@ function App() {
       const link=document.createElement("a");link.href=url;link.download=`conversation-${id.slice(0,8)}.md`;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
     } catch {}
   }
-  async function call(name: string, args?: any) {
+  async function call(name: string, args?: any, signal?:AbortSignal) {
     if (name === "workflow.report.save") {
       const preview = previews.current.get(args.previewId);
       if (!preview) throw Error("报告预览已过期，请重新生成");
@@ -312,7 +312,7 @@ function App() {
       setTimeout(() => URL.revokeObjectURL(url), 1000);
       return { saved: true };
     }
-    const result = await request(token, name, args);
+    const result = await request(token, name, args, signal);
     if (name === "workflow.report") {
       if (previews.current.size >= 5) previews.current.clear();
       previews.current.set(result.previewId, result);

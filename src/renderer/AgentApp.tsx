@@ -7,6 +7,7 @@ import { TaskTemplates } from "./TaskTemplates";
 import { TaskReport } from "./TaskReport";
 import { DeliveryDialog, DeliverySummary } from "./DeliveryDialog";
 import { readDeliveryDraft, writeDeliveryDraft, clearDeliveryDraft } from "./delivery-draft";
+import {RefreshQueue} from "../shared/refresh-queue";
 import { CopyButton } from "./CopyButton";
 import { CliSetupNotice } from "./CliSetupNotice";
 import { RecoveryNotice, RecoveryHistory } from "./RecoveryNotice";
@@ -172,6 +173,7 @@ export function AgentApp({
     schedules: [],
     preferences: { theme: "dark", notifications: true },
   });
+  const desktopReads=useRef<RefreshQueue<DesktopData>|undefined>(undefined);
   const [systemDark, setSystemDark] = useState(
     () => window.matchMedia("(prefers-color-scheme: dark)").matches,
   );
@@ -293,6 +295,8 @@ export function AgentApp({
       ].includes(name))
         setError(errorText(e));
       throw e;
+    } finally {
+      if(["schedule.save","schedule.remove","schedule.run","schedule.abandon"].includes(name))desktopReads.current?.invalidate();
     }
   };
   const action = (fn: () => Promise<unknown>) => {
@@ -325,10 +329,7 @@ export function AgentApp({
       });
   };
   const refreshDesktop = () => {
-    void window.relay
-      .command("desktop.read")
-      .then((value) => setDesktop(value as DesktopData))
-      .catch((e) => setError(String(e)));
+    desktopReads.current?.invalidate();
   };
   const openFile = (path: string) => {
     setWorkspaceTab("files");
@@ -336,7 +337,9 @@ export function AgentApp({
     setInspector(true);
   };
   useEffect(() => {
-    refreshDesktop();
+    const queue=new RefreshQueue<DesktopData>(async()=>await window.relay.command("desktop.read") as DesktopData,setDesktop,error=>setError(String(error)));
+    desktopReads.current=queue;queue.refresh();
+    return()=>{queue.dispose();if(desktopReads.current===queue)desktopReads.current=undefined;};
   }, []);
   useEffect(() => {
     setLanguage(desktop.preferences?.language || "auto");
@@ -1188,6 +1191,7 @@ export function AgentApp({
             cwd={currentCwd}
             call={call}
             refresh={refreshDesktop}
+            poll={()=>desktopReads.current?.refresh()}
             close={() => setScreen("chat")}
             select={(id) => {
               const j = snapshot?.jobs.find((j) => j.id === id);

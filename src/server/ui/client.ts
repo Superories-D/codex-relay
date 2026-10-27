@@ -7,7 +7,7 @@ export class CommandError extends Error {
     super(message);
   }
 }
-export async function request(token: string, name: string, args?: unknown) {
+export async function request(token: string, name: string, args?: unknown, signal?:AbortSignal) {
   const response = await fetch("/api/command", {
     method: "POST",
     headers: {
@@ -16,7 +16,7 @@ export async function request(token: string, name: string, args?: unknown) {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ name, args }),
-    signal: AbortSignal.timeout(60000),
+    signal: signal?AbortSignal.any([signal,AbortSignal.timeout(60000)]):AbortSignal.timeout(60000),
     redirect:"error",
   });
   const value = await response.json();

@@ -8,10 +8,14 @@ function telegramFixture(){
   window.tgQA={revision:0,configured:false,enabled:false,includeTitles:false,events:['completed','attention','approval'],chatId:'',receipts:[]};
   window.nativeSchedules=[];window.nativeScheduleSaves=[];
   window.nativeAbandoned=[];
+  window.nativeDesktopActive=0;window.nativeDesktopMax=0;
   window.tgFail=true;window.tgCalls=[];window.tgReadActive=0;window.tgReadMax=0;
   window.relay.onSnapshot=fn=>{window.tgSnapshot=fn;return()=>{};};
   window.relay.command=async(name,args)=>{
-    if(name==='desktop.read'){const desktop=await command(name,args);desktop.schedules=structuredClone(window.nativeSchedules);return desktop;}
+    if(name==='desktop.read'){
+      const desktop=await command(name,args);desktop.schedules=structuredClone(window.nativeSchedules);window.nativeDesktopActive++;window.nativeDesktopMax=Math.max(window.nativeDesktopMax,window.nativeDesktopActive);
+      try{if(window.nativeDesktopHold)await new Promise(resolve=>{window.releaseNativeDesktop=()=>{window.nativeDesktopHold=false;resolve();};});return desktop;}finally{window.nativeDesktopActive--;}
+    }
     if(name==='schedule.save'){
       const previous=window.nativeSchedules.find(t=>t.id===args.id);
       if(previous&&args.revision!==previous.revision)throw Error('定时任务已更新，请重新打开后再保存');
@@ -107,12 +111,19 @@ function telegramFixture(){
         await page.locator('.schedule-form').getByRole('button',{name:'Save schedule',exact:true}).click();await page.waitForFunction(()=>window.nativeScheduleSaves.length===1);
         assert.equal(await page.evaluate(()=>window.nativeScheduleSaves[0].deliveryChecks[0].path),'report.txt');
         await page.locator('.schedule-form').waitFor({state:'detached'});
+        await page.evaluate(()=>{window.nativeDesktopMax=window.nativeDesktopActive;window.nativeDesktopHold=true;});await page.waitForFunction(()=>!!window.releaseNativeDesktop);await page.waitForTimeout(4200);
+        assert.equal(await page.evaluate(()=>window.nativeDesktopMax),1,'Slow desktop metadata reads must not overlap');
         await page.locator('.schedule-list h3').filter({hasText:'Verified recurring work'}).click();
         await page.locator('.schedule-form').getByRole('button',{name:'Save schedule',exact:true}).click();await page.waitForFunction(()=>window.nativeScheduleSaves.length===2);
         assert.equal(await page.evaluate(()=>window.nativeScheduleSaves[1].revision),1,'Editing a saved native schedule must carry its observed revision');
         await page.locator('.schedule-form').waitFor({state:'detached'});
-        await page.evaluate(()=>{const task=window.nativeSchedules[0];task.pendingRun={id:crypto.randomUUID(),requestedAt:Date.now(),input:{title:'Original reserved work',prompt:'Original frozen instruction',cwd:task.cwd,worktree:false,deliveryChecks:task.deliveryChecks}};});
-        await page.locator('.schedule-pending > summary').waitFor();await page.locator('.schedule-pending > summary').click();
+        await page.evaluate(()=>window.releaseNativeDesktop());await page.waitForTimeout(100);
+        await page.locator('.schedule-list h3').filter({hasText:'Verified recurring work'}).click();await page.locator('.schedule-form').getByRole('button',{name:'Save schedule',exact:true}).click();await page.waitForFunction(()=>window.nativeScheduleSaves.length===3);
+        assert.equal(await page.evaluate(()=>window.nativeScheduleSaves[2].revision),2,'The old metadata reply must not erase a newer saved revision');await page.locator('.schedule-form').waitFor({state:'detached'});
+        await page.evaluate(()=>{const task=window.nativeSchedules[0];task.pendingRun={id:crypto.randomUUID(),requestedAt:Date.now(),input:{title:'Original reserved work',prompt:'Original frozen instruction '+('Long instruction '.repeat(1000)),cwd:task.cwd,worktree:false,deliveryChecks:task.deliveryChecks}};});
+        await page.locator('.schedule-pending > button').waitFor();await page.locator('.schedule-pending > button').click();
+        const pendingBounds=await page.locator('dialog[open] .modal').boundingBox();assert.ok(pendingBounds.y>=0&&pendingBounds.y+pendingBounds.height<=1001,'Long pending-run snapshots must fit the zoomed viewport');
+        await page.screenshot({path:path.join(output,'schedule-pending-en-zoom150.png'),animations:'disabled'});
         await page.getByRole('button',{name:'Abandon pending admission',exact:true}).click();assert.equal(await page.evaluate(()=>window.nativeAbandoned.length),0);
         await page.getByRole('button',{name:'Confirm abandonment',exact:true}).click();await page.waitForFunction(()=>window.nativeAbandoned.length===1);await page.locator('.schedule-pending').waitFor({state:'detached'});
       }

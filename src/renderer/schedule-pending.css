@@ -1,4 +1,5 @@
 .schedule-pending {margin:10px 0;padding:10px;border:1px solid var(--line,#555);border-radius:8px;min-width:0;overflow-wrap:anywhere}
-.schedule-pending pre {white-space:pre-wrap;overflow-wrap:anywhere;max-height:180px;overflow:auto;font:12px/1.6 ui-monospace,monospace}
-.schedule-pending code {font-size:11px;overflow-wrap:anywhere}
-.schedule-pending button {margin:5px 8px 0 0}
+.schedule-pending-view {min-width:0;overflow-wrap:anywhere}
+.schedule-pending-view pre {white-space:pre-wrap;overflow-wrap:anywhere;max-height:180px;overflow:auto;font:12px/1.6 ui-monospace,monospace}
+.schedule-pending-view code {font-size:11px;overflow-wrap:anywhere}
+.schedule-pending-view button {margin:5px 8px 0 0}

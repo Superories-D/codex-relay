@@ -1,6 +1,7 @@
 import {DeliveryDialog} from "../../renderer/DeliveryDialog";
 import type {DeliveryCheck} from "../../shared/delivery";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
+import {RefreshQueue} from "../../shared/refresh-queue";
 import { t, errorText } from "../../renderer/i18n";
 import { ActionStatus, useRemoteAction } from "./LiveControls";
 import type { ScheduledTask } from "../../core/desktop";
@@ -11,10 +12,13 @@ export function RemoteSchedules({
   open,
 }: {
   roots: string[];
-  call: (name: string, args?: any) => Promise<any>;
+  call: (name: string, args?: any, signal?:AbortSignal) => Promise<any>;
   open?:(id:string)=>void;
 }) {
   const [editingChecks,setEditingChecks]=useState(false);
+  const callRef=useRef(call);callRef.current=call;
+  const list=useRef<RefreshQueue<any>|undefined>(undefined);
+  const [refreshing,setRefreshing]=useState(false);
   const action = useRemoteAction("schedules", call, "schedules"),
     [tasks, setTasks] = useState<ScheduledTask[]>([]),
     [zone, setZone] = useState(""),
@@ -36,26 +40,15 @@ export function RemoteSchedules({
     [editing, setEditing] = useState<string>(),
     [remove, setRemove] = useState<string>();
   useEffect(() => {
-    let alive = true;
-    const refresh = () =>
-      void call("schedule.list")
-        .then((r) => {
-          if (alive) {
-            setTasks(r.tasks);
-            setZone(r.timeZone);
-            setError("");
-          }
-        })
-        .catch((e) => {
-          if (alive) setError(errorText(e));
-        });
-    refresh();
-    const timer = setInterval(refresh, 15000);
+    const queue=new RefreshQueue(signal=>callRef.current("schedule.list",undefined,signal),r=>{setTasks(r.tasks);setZone(r.timeZone);setError("");},error=>setError(errorText(error)),setRefreshing);
+    list.current=queue;queue.refresh();
+    const timer = setInterval(()=>queue.refresh(), 15000);
     return () => {
-      alive = false;
+      queue.dispose();if(list.current===queue)list.current=undefined;
       clearInterval(timer);
     };
-  }, [action.receipt]);
+  }, []);
+  useEffect(()=>{if(action.receipt)list.current?.invalidate();},[action.receipt]);
   useEffect(()=>{
     const receipt=action.receipt;
     if(receipt?.state==="succeeded" && receipt.action==="schedule.save" && receipt.result?.id===editing)
@@ -84,6 +77,8 @@ export function RemoteSchedules({
         {t("服务器时区")} · {zone}
       </p>
       <ActionStatus action={action} />
+      <button type="button" onClick={()=>list.current?.invalidate()}>{t("刷新")}</button>
+      {refreshing&&<p role="status">{t("正在刷新计划列表…")}</p>}
       {action.receipt?.state==="succeeded"&&action.receipt.action==="schedule.abandon"&&<p>{t(action.receipt.result?.abandoned?"待创建运行已放弃；计划仍按配置继续。":"任务已经创建，已恢复运行记录。")}{action.receipt.result?.jobId&&open&&<button type="button" onClick={()=>open(action.receipt!.result.jobId)}>{t("打开对应任务")}</button>}</p>}
       {error && <p role="alert">{error}</p>}
       <form

@@ -3,6 +3,9 @@ import { operationsJapanese } from "./operations";
 import {recoveryJapanese} from "./recovery";
 import {checkpointJapanese} from "./checkpoints";
 export const japanese: Record<string, string> = {
+"查看待创建运行": "作成待ちの実行を確認",
+"正在刷新计划列表…": "定期タスクを更新しています…",
+
 "待创建运行": "タスク作成待ちの実行",
 "旧记录尚无运行快照，恢复时使用当前计划。": "この旧記録には実行スナップショットがなく、復旧時は現在の計画を使用します。",
 "保留已有文件；已创建任务只恢复记录，不会停止。计划仍按配置继续运行。": "既存ファイルは保持されます。作成済みタスクは記録を復旧し、停止しません。定期実行は設定に従って継続します。",

@@ -619,6 +619,7 @@ export function SchedulesPage({
   cwd,
   call,
   refresh,
+  poll,
   close,
   select,
 }: {
@@ -626,12 +627,13 @@ export function SchedulesPage({
   cwd: string;
   call: Call;
   refresh: () => void;
+  poll?:()=>void;
   close: () => void;
   select: (id: string) => void;
 }) {
   useI18n();
-  const refreshRef = useRef(refresh);
-  refreshRef.current = refresh;
+  const refreshRef = useRef(poll||refresh);
+  refreshRef.current = poll||refresh;
   useEffect(() => {
     const timer = setInterval(() => refreshRef.current(), 3000);
     return () => clearInterval(timer);

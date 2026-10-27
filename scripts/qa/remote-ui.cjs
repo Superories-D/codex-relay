@@ -213,6 +213,17 @@ const { chromium } = require(
       if(language === "en") {
         await page.locator(".remote-schedules summary").click();
         const panel=page.locator(".remote-schedules");
+        let releaseList,readyList,heldList=true,listCalls=0;
+        const holdList=new Promise(resolve=>releaseList=resolve),listReady=new Promise(resolve=>readyList=resolve);
+        const slowList=async route=>{
+          if(route.request().postDataJSON()?.name==='schedule.list'){
+            listCalls++;
+            if(heldList){heldList=false;const response=await route.fetch();readyList();await holdList;await route.fulfill({response});return;}
+          }
+          await route.fallback();
+        };
+        await page.route('**/api/command',slowList);await panel.getByRole('button',{name:'Refresh',exact:true}).click();await listReady;
+        await panel.getByRole('button',{name:'Refresh',exact:true}).click();await panel.getByRole('button',{name:'Refresh',exact:true}).click();await page.waitForTimeout(100);assert.equal(listCalls,1,'Slow schedule refreshes must coalesce');
         await panel.locator('form input').first().fill("Remote scheduled QA");
         await panel.locator('form select').first().selectOption(workspace);
         await panel.locator('form textarea').fill("Scheduled QA without model calls");
@@ -222,7 +233,9 @@ const { chromium } = require(
         await page.locator(".delivery-check input").nth(1).fill("report.txt");
         await page.locator(".delivery-dialog").getByRole("button",{name:"Save acceptance checks",exact:true}).click();
         await panel.getByRole("button",{name:"Create schedule",exact:true}).click();
+        await panel.getByText('Operation acknowledged',{exact:true}).waitFor();releaseList();
         await panel.getByRole("heading",{name:"Remote scheduled QA",exact:true}).waitFor();
+        await page.unroute('**/api/command',slowList);
         await page.reload();await page.locator(".connection-bar.online").waitFor();
         await page.locator(".remote-schedules summary").click();
         await panel.getByRole("heading",{name:"Remote scheduled QA",exact:true}).waitFor();
@@ -252,13 +265,14 @@ const { chromium } = require(
           const saved=await command('schedule.save',{requestId:crypto.randomUUID(),id:task.id,input});if(saved.state!=='succeeded')throw Error('Could not prepare invalid Git fixture');
         });
         await panel.locator('article').getByRole('button',{name:'Run now',exact:true}).click();
-        await panel.locator('.schedule-pending > summary').waitFor();await panel.locator('.schedule-pending > summary').click();
+        await panel.locator('.schedule-pending > button').waitFor();await panel.locator('.schedule-pending > button').click();
         const pendingRun=await page.evaluate(async()=>{const r=await fetch('/api/command',{method:'POST',headers:{Authorization:`Bearer ${sessionStorage.getItem('relay.remote.token')}`,'Content-Type':'application/json'},body:JSON.stringify({name:'schedule.list'})});return(await r.json()).result.tasks[0].pendingRun;});
         assert.equal(pendingRun.input.prompt,'Changed by another client');
+        await page.setViewportSize({width:390,height:900});const pendingBounds=await page.locator('dialog[open]').boundingBox();assert.ok(pendingBounds.x>=0&&pendingBounds.x+pendingBounds.width<=391,'Pending-run preview fits a phone viewport');await page.screenshot({path:'qa-output/schedule-pending-remote-390.png',animations:'disabled'});await page.setViewportSize({width:1280,height:900});
         const preserved=path.join(data,'worktrees',pendingRun.id,'operator-note.txt');await fs.mkdir(path.dirname(preserved),{recursive:true});await fs.writeFile(preserved,'Preserve prepared files');
-        await panel.getByRole('button',{name:'Abandon pending admission',exact:true}).click();
-        assert.equal(await panel.getByRole('button',{name:'Confirm abandonment',exact:true}).count(),1);
-        await panel.getByRole('button',{name:'Confirm abandonment',exact:true}).click();
+        await page.getByRole('button',{name:'Abandon pending admission',exact:true}).click();
+        assert.equal(await page.getByRole('button',{name:'Confirm abandonment',exact:true}).count(),1);
+        await page.getByRole('button',{name:'Confirm abandonment',exact:true}).click();
         await panel.getByText('Pending admission abandoned; the schedule continues as configured.',{exact:true}).waitFor();
         await panel.locator('.schedule-pending').waitFor({state:'detached'});assert.equal(await fs.readFile(preserved,'utf8'),'Preserve prepared files');
         await page.locator(".remote-task-list button").filter({hasText:"Remote QA en"}).click();

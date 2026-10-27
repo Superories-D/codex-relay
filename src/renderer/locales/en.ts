@@ -5,6 +5,9 @@ import { operationsEnglish } from "./operations";
 import {recoveryEnglish} from "./recovery";
 import {checkpointEnglish} from "./checkpoints";
 export const english: Record<string, string> = {
+"查看待创建运行": "Inspect pending admission",
+"正在刷新计划列表…": "Refreshing schedules…",
+
 "待创建运行": "Pending task admission",
 "旧记录尚无运行快照，恢复时使用当前计划。": "This legacy record has no run snapshot; recovery uses the current plan.",
 "保留已有文件；已创建任务只恢复记录，不会停止。计划仍按配置继续运行。": "Existing files remain. Created tasks are reconciled and keep running. The schedule continues as configured.",
