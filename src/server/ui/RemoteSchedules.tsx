@@ -28,6 +28,7 @@ export function RemoteSchedules({
       enabled: true,
       worktree: false,
       deliveryChecks:[] as DeliveryCheck[],
+      revision:0,
     }),
     [editing, setEditing] = useState<string>(),
     [remove, setRemove] = useState<string>();
@@ -52,7 +53,13 @@ export function RemoteSchedules({
       clearInterval(timer);
     };
   }, [action.receipt]);
+  useEffect(()=>{
+    const receipt=action.receipt;
+    if(receipt?.state==="succeeded" && receipt.action==="schedule.save" && receipt.result?.id===editing)
+      setForm(value=>({...value,revision:receipt.result.revision||0}));
+  },[action.receipt]);
   const input = (task: ScheduledTask) => ({
+    revision:task.revision||0,
     title: task.title,
     prompt: task.prompt,
     cwd: task.cwd,
@@ -190,7 +197,7 @@ export function RemoteSchedules({
           <p>{t("计划修改只影响后续运行；已有任务的验收条件保持原样。")}</p>
           <button>{editing ? t("保存修改") : t("创建定时任务")}</button>
           {editing && (
-            <button type="button" onClick={() => setEditing(undefined)}>
+            <button type="button" onClick={() => {setEditing(undefined);setForm(value=>({...value,revision:0}));}}>
               {t("取消编辑")}
             </button>
           )}

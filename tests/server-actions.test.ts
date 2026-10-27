@@ -137,3 +137,13 @@ it("pages operation history without exposing result payloads and keeps unreadabl
  await expect(actions.list({limit:51})).rejects.toThrow();await expect(actions.list({before:{at:0,id:"../escape"}})).rejects.toThrow();
  }finally{await fs.rm(root,{recursive:true,force:true});}
 });
+it("returns the same immutable effect result that was durably recorded",async()=>{
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),"relay-action-snapshot-"));
+  try {
+    const live={revision:1,title:"Committed state"};let writes=0;
+    const actions=new RemoteActions(root,async(file,value)=>{await atomicWrite(file,value);if(++writes===2){live.revision=2;live.title="Later edit";}});
+    const receipt=await actions.run(randomUUID(),"schedule.save",randomUUID(),{},async()=>live);
+    expect(receipt.result).toEqual({revision:1,title:"Committed state"});
+    expect(await actions.read(receipt.id)).toEqual(receipt);
+  }finally{await fs.rm(root,{recursive:true,force:true});}
+});

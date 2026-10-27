@@ -156,6 +156,8 @@ Send a document or photo to stage it durably (8 MiB per file, up to 10 pending f
 
 A `getFile` rejection with HTTP 400, 413 or 422 produces a retained error reply asking the user to resend the attachment, then permits later updates to proceed. Network failures, authentication/permission errors, 404, rate limits and service failures retain the original incoming attachment for retry; they are not silently discarded. API errors expose only the method and HTTP status, without reflecting the remote error description or token. Download interruptions continue to use the existing durable retry path.
 
+Schedule pause/enable commands carry the observed configuration revision so another client's newer prompt or contract cannot be overwritten. If a reply checkpoint fails after a schedule was changed or removed, the bridge reads the original durable receipt before looking up/reconstructing the current plan. A repeated update therefore confirms the earlier operation instead of changing the plan again or failing because the deleted plan is now absent.
+
 ## Recorded output downloads (iteration 3)
 
 `/files [TASK_ID] [PAGE]` lists recorded output/input files, with 20 download buttons per page and up to 100 references inspected. Links expire after ten minutes or restart. Downloads recheck the current file revision and the opened descriptor's real path; missing, changed, oversized, multiply-linked or out-of-root files are rejected. Text is filtered for known credentials; binary downloads preserve bytes. Each file is limited to 8 MiB. This is a recorded-artifact browser, not an arbitrary server filesystem endpoint.

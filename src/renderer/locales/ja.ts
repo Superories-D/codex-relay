@@ -3,6 +3,9 @@ import { operationsJapanese } from "./operations";
 import {recoveryJapanese} from "./recovery";
 import {checkpointJapanese} from "./checkpoints";
 export const japanese: Record<string, string> = {
+"定时任务已更新，请重新打开后再保存": "この定期タスクは更新されています。開き直してから保存してください。",
+"请重新打开新建定时任务表单": "新しい定期タスクのフォームを開き直してください。",
+
 "模板总大小超过 16 MiB，请精简内容后重试": "テンプレートの合計が 16 MiB を超えています。内容を減らして再試行してください。",
 
 "模板中的验收条件只用于新任务，已有任务的条件保持不变。": "テンプレートの検証条件は新しいタスクに適用されます。既存タスクの条件は変更されません。",

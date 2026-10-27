@@ -126,6 +126,48 @@ it("does not resurrect a deleted schedule from a stale editor or start disabled 
   await expect(schedules.run(task.id)).rejects.toThrow("不存在");
   expect(desktop.data.schedules).toHaveLength(0);
 });
+it("guards stale configuration revisions inside the shared disk transaction",async()=>{
+  const task=await create(),revision=task.revision!;
+  const other=new Schedules(desktop,scheduler,()=>{},()=>now);
+  const stale={...input(),id:task.id,revision};
+  const results=await Promise.allSettled([
+    schedules.save({...stale,prompt:"Winning edit",deliveryChecks:[{kind:"file",path:"winner.txt",label:"Winner",minBytes:1}]}),
+    other.save({...stale,prompt:"Stale edit"}),
+  ]);
+  expect(results.map(result=>result.status)).toEqual(["fulfilled","rejected"]);
+  expect(task.prompt).toBe("Winning edit");expect(task.deliveryChecks?.[0].path).toBe("winner.txt");
+  expect(task.revision).toBe(revision+1);
+  const mutable={...input(),id:task.id,revision:task.revision,prompt:"Captured edit"};
+  const saving=schedules.save(mutable);mutable.prompt="Changed after dispatch";await saving;
+  expect(task.prompt).toBe("Captured edit");
+  await other.shutdown();
+});
+it("freezes reserved run inputs across edits and restart, then uses the new plan for the next run",async()=>{
+  const oldCheck={kind:"file" as const,path:"old.txt",label:"Original",minBytes:1};
+  await schedules.save({...input(),title:"Original plan",prompt:"Original instruction",deliveryChecks:[oldCheck]});
+  const task=desktop.data.schedules[0];
+  vi.spyOn(scheduler,"add").mockRejectedValueOnce(Error("Interrupted before admission"));
+  await expect(schedules.run(task.id)).rejects.toThrow("Interrupted");
+  const reservation=structuredClone(task.pendingRun!);
+  expect(reservation.input).toMatchObject({title:"Original plan",prompt:"Original instruction",cwd:root,deliveryChecks:[oldCheck]});
+  const nextCwd=path.join(root,"future-project");await fs.mkdir(nextCwd);
+  const newCheck={...oldCheck,path:"new.txt",label:"Future"};
+  await schedules.save({...input(),id:task.id,revision:task.revision,title:"Future plan",prompt:"Future instruction",cwd:nextCwd,deliveryChecks:[newCheck]});
+  expect(task.pendingRun).toEqual(reservation);
+  await schedules.shutdown();await scheduler.shutdown();
+  desktop=new Desktop(root);await desktop.load();store=new Store(root);await store.load();
+  scheduler=new Scheduler(store,{busy:new Set(),cancelLogin:async()=>{}} as any,{cli:()=>{throw Error("No model call");},desktop:()=>{throw Error("No desktop worker");}});
+  const admittedRoots:string[]=[];
+  schedules=new Schedules(desktop,scheduler,()=>{},()=>now,undefined,async plan=>{admittedRoots.push(plan.cwd);});
+  const first=(await schedules.run(task.id))!;
+  expect(first).toMatchObject({title:"Original plan",prompt:"Original instruction",cwd:root,schedule:{runId:reservation.id,sourceCwd:root},delivery:{checks:[oldCheck],reports:[]}});
+  expect(desktop.data.schedules[0]).toMatchObject({title:"Future plan",prompt:"Future instruction",cwd:nextCwd});
+  first.state="cancelled";first.stopIntent="cancel";
+  const second=(await schedules.run(task.id))!;
+  expect(second).toMatchObject({title:"Future plan",prompt:"Future instruction",cwd:nextCwd,delivery:{checks:[newCheck],reports:[]}});
+  expect(second.schedule!.runId).not.toBe(reservation.id);
+  expect(admittedRoots).toEqual([root,nextCwd]);
+});
 
 it("recovers a job admitted before the desktop bookkeeping write failed without resubmission", async () => {
   const task = await create(true);

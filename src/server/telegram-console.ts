@@ -336,6 +336,14 @@ export class TelegramConsole {
     }
     if(command === "schedule") {
       const [action,...parts]=args.split(/\s+/),value=parts.join(" ");
+      const actionName=({create:"schedule.create",pause:"schedule.save",enable:"schedule.save",run:"schedule.run",remove:"schedule.remove"} as Record<string,string>)[action];
+      if(actionName){
+        const recorded:any=await this.runtime.command("action.read",requestId);
+        if(recorded){
+          if(recorded.action!==actionName || (action==="create"?recorded.jobId!==requestId:value.length<8||!recorded.jobId.startsWith(value)))throw Error("Request ID belongs to another operation");
+          return `定时任务操作: ${recorded.state}\n/schedules 查看最新状态。`;
+        }
+      }
       if(action==="create"){
         const minutes=Number(parts.shift()),prompt=parts.join(" "),input=await this.input(context,prompt);
         const receipt:any=await this.runtime.command("schedule.create",{requestId,id:requestId,input:{title:input.title,prompt:input.prompt,cwd:input.cwd,enabled:true,cadence:"interval",minutes,hour:9,minute:0,weekday:1,worktree:false,deliveryChecks:input.deliveryChecks}});
@@ -346,7 +354,7 @@ export class TelegramConsole {
       const task=matches[0];let receipt:any;
       if(action==="pause"||action==="enable"){
         const {title,prompt,cwd,cadence,minutes,hour,minute,weekday,worktree,deliveryChecks}=task;
-        receipt=await this.runtime.command("schedule.save",{requestId,id:task.id,input:{title,prompt,cwd,cadence,minutes,hour,minute,weekday,worktree,deliveryChecks,enabled:action==="enable"}});
+        receipt=await this.runtime.command("schedule.save",{requestId,id:task.id,input:{title,prompt,cwd,cadence,minutes,hour,minute,weekday,worktree,deliveryChecks,revision:task.revision||0,enabled:action==="enable"}});
       }else if(action==="run"||action==="remove")receipt=await this.runtime.command(`schedule.${action}`,{requestId,id:task.id});
       else throw Error("Use /schedule create|run|pause|enable|remove");
       return `定时任务操作: ${receipt.state}\n/schedules 查看状态。`;

@@ -5,6 +5,9 @@ import { operationsEnglish } from "./operations";
 import {recoveryEnglish} from "./recovery";
 import {checkpointEnglish} from "./checkpoints";
 export const english: Record<string, string> = {
+"定时任务已更新，请重新打开后再保存": "This schedule changed. Reopen it before saving.",
+"请重新打开新建定时任务表单": "Reopen the new schedule form.",
+
 "模板总大小超过 16 MiB，请精简内容后重试": "Templates exceed 16 MiB in total. Shorten their content and try again.",
 
 "模板中的验收条件只用于新任务，已有任务的条件保持不变。": "Template acceptance checks apply to new tasks. Existing task checks stay unchanged.",

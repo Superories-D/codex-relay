@@ -5,6 +5,7 @@ import { idSchema } from "../main/validation";
 export const scheduleInputSchema = z
   .object({
     id: idSchema.optional(),
+    revision:z.number().int().nonnegative().optional(),
     deliveryChecks:deliveryChecksSchema.optional(),
     title: z.string().trim().min(1).max(120),
     prompt: z.string().trim().min(1).max(100000),
@@ -18,3 +19,4 @@ export const scheduleInputSchema = z
     worktree: z.boolean(),
   })
   .strict();
+export const scheduleRunInputSchema=scheduleInputSchema.pick({title:true,prompt:true,cwd:true,worktree:true,deliveryChecks:true});

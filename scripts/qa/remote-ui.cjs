@@ -228,6 +228,23 @@ const { chromium } = require(
         await panel.getByRole("heading",{name:"Remote scheduled QA",exact:true}).waitFor();
         assert.equal(await panel.locator("article").count(),1,"lost schedule acknowledgment must not duplicate schedules");
         const contract=await page.evaluate(async()=>{const r=await fetch('/api/command',{method:'POST',headers:{Authorization:`Bearer ${sessionStorage.getItem('relay.remote.token')}`,'Content-Type':'application/json'},body:JSON.stringify({name:'schedule.list'})});return(await r.json()).result.tasks[0].deliveryChecks;});assert.equal(contract[0].path,'report.txt');
+        await panel.locator('article').getByRole('button',{name:'Edit',exact:true}).click();
+        for(const revision of [2,3]){
+          await panel.getByRole('button',{name:'Save changes',exact:true}).click();
+          await page.waitForFunction(async revision=>{
+            const r=await fetch('/api/command',{method:'POST',headers:{Authorization:`Bearer ${sessionStorage.getItem('relay.remote.token')}`,'Content-Type':'application/json'},body:JSON.stringify({name:'schedule.list'})});
+            return(await r.json()).result.tasks[0].revision===revision&&!sessionStorage.getItem('relay.remote.action.schedules.schedules');
+          },revision);
+        }
+        const external=await page.evaluate(async()=>{
+          const command=async(name,args)=>{const r=await fetch('/api/command',{method:'POST',headers:{Authorization:`Bearer ${sessionStorage.getItem('relay.remote.token')}`,'Content-Type':'application/json'},body:JSON.stringify({name,args})});return(await r.json()).result;};
+          const task=(await command('schedule.list')).tasks[0],fields=['title','prompt','cwd','enabled','cadence','minutes','hour','minute','weekday','worktree','deliveryChecks','revision'];
+          const input=Object.fromEntries(fields.map(key=>[key,task[key]]));input.prompt='Changed by another client';input.deliveryChecks=[{kind:'file',path:'changed-plan.txt',label:'New contract',minBytes:1}];
+          return command('schedule.save',{requestId:crypto.randomUUID(),id:task.id,input});
+        });assert.equal(external.state,'succeeded');assert.equal(external.result.revision,4);
+        await panel.getByRole('button',{name:'Save changes',exact:true}).click();
+        await panel.getByText('This schedule changed. Reopen it before saving.',{exact:true}).waitFor();
+        const retained=await page.evaluate(async()=>{const r=await fetch('/api/command',{method:'POST',headers:{Authorization:`Bearer ${sessionStorage.getItem('relay.remote.token')}`,'Content-Type':'application/json'},body:JSON.stringify({name:'schedule.list'})});return(await r.json()).result.tasks[0];});assert.equal(retained.revision,4);assert.equal(retained.prompt,'Changed by another client');assert.equal(retained.deliveryChecks[0].path,'changed-plan.txt');
         await page.locator(".remote-task-list button").filter({hasText:"Remote QA en"}).click();
         await page.locator(".remote-schedules summary").click();
       }

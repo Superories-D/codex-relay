@@ -22,6 +22,7 @@ export interface Project {
   pinned: boolean;
 }
 export interface ScheduledTask {
+  revision?: number;
   deliveryChecks?: import("../shared/delivery").DeliveryCheck[];
   id: string;
   title: string;
@@ -38,9 +39,10 @@ export interface ScheduledTask {
   lastRun?: number;
   lastJobId?: string;
   lastError?: string;
-  pendingRun?: { id: string; requestedAt: number };
+  pendingRun?: { id: string; requestedAt: number; input?: ScheduleRunInput };
   worktree: boolean;
 }
+export type ScheduleRunInput=Pick<ScheduledTask,"title"|"prompt"|"cwd"|"worktree"|"deliveryChecks">;
 export interface DesktopData {
   projects: Project[];
   schedules: ScheduledTask[];

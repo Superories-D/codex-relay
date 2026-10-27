@@ -1,4 +1,5 @@
 import {deliveryChecksSchema} from "../shared/delivery";
+import {scheduleRunInputSchema} from "./schedule-command";
 import { randomUUID } from "node:crypto";
 import { Desktop, nextSchedule, type ScheduledTask } from "./desktop";
 import type { Scheduler } from "./scheduler";
@@ -18,7 +19,7 @@ export type ScheduleInput = Pick<
   | "minute"
   | "weekday"
   | "worktree"
-> & { id?: string };
+> & { id?: string; revision?:number };
 
 // The desktop reservation is persisted before any worktree or job is created.
 // Jobs keep that reservation's identity, allowing recovery across the two stores
@@ -55,24 +56,27 @@ export class Schedules {
     if (!task) throw new Error("定时任务不存在");
     return task;
   }
-  save(input: ScheduleInput, creationId?: string) {
+  save(value: ScheduleInput, creationId?: string) {
+    const input=structuredClone(value);
     const id = input.id || creationId || randomUUID();
     return this.serial(id, async () => {
       if (this.closing) throw new Error("客户端正在退出，请稍后再操作定时任务");
-      if (creationId && (input.id || this.desktop.data.schedules.some(t=>t.id===creationId))) throw Error("Schedule creation ID already exists");
-      const previous = input.id ? this.task(id) : undefined;
       const checks=input.deliveryChecks===undefined?undefined:deliveryChecksSchema.parse(input.deliveryChecks);
-      const task: ScheduledTask = {
-        ...previous,
-        ...input,
-        ...(checks!==undefined?{deliveryChecks:checks}:previous?.deliveryChecks?{deliveryChecks:previous.deliveryChecks}:{}),
-        id,
-        nextRun: nextSchedule(input, this.now()),
-        nextRunZone: input.cadence === "interval" ? undefined : this.timeZone(),
-      };
-      await this.desktop.changeSchedules((tasks) => previous
-        ? tasks.map((item) => item.id === id ? task : item)
-        : [...tasks, task]);
+      await this.desktop.changeSchedules((tasks) => {
+        if (creationId && (input.id || tasks.some(t=>t.id===creationId))) throw Error("Schedule creation ID already exists");
+        const previous=input.id?tasks.find(t=>t.id===id):undefined;
+        if(input.id&&!previous)throw Error("定时任务不存在");
+        if(previous && input.revision!==undefined && input.revision!==(previous.revision||0))throw Error("定时任务已更新，请重新打开后再保存");
+        if(!previous && input.revision)throw Error("请重新打开新建定时任务表单");
+        const task:ScheduledTask={
+          ...previous,...input,
+          ...(checks!==undefined?{deliveryChecks:checks}:previous?.deliveryChecks?{deliveryChecks:previous.deliveryChecks}:{}),
+          id,revision:(previous?.revision||0)+1,
+          nextRun:nextSchedule(input,this.now()),
+          nextRunZone:input.cadence==="interval"?undefined:this.timeZone(),
+        };
+        return previous?tasks.map(item=>item.id===id?task:item):[...tasks,task];
+      });
       this.changed();
       return this.desktop.data;
     });
@@ -164,9 +168,12 @@ export class Schedules {
           !["completed", "cancelled"].includes(previous.state))
       )
         throw new Error("此定时任务的上一次运行尚未结束");
-      await this.beforeRun(task);
+      const candidate=task.pendingRun?.input||task;
+      const input=scheduleRunInputSchema.parse({title:candidate.title,prompt:candidate.prompt,cwd:candidate.cwd,worktree:candidate.worktree,deliveryChecks:candidate.deliveryChecks});
+      await this.beforeRun({...task,...input});
       if (!task.pendingRun)
-        task.pendingRun = { id: randomUUID(), requestedAt: now };
+        task.pendingRun = { id: randomUUID(), requestedAt: now, input };
+      else if(!task.pendingRun.input)task.pendingRun.input=input;
       // Collapse missed intervals to one occurrence. A manual run only consumes
       // a due occurrence, and does not postpone a future scheduled execution.
       if (task.nextRun <= now) {
@@ -176,14 +183,14 @@ export class Schedules {
       task.lastError = undefined;
       await this.desktop.save();
       const reservation = task.pendingRun;
-      const cwd = task.worktree
-        ? (await this.desktop.worktree(task.cwd, "HEAD", reservation.id)).cwd
-        : task.cwd;
+      const cwd = input.worktree
+        ? (await this.desktop.worktree(input.cwd, "HEAD", reservation.id)).cwd
+        : input.cwd;
       if (this.closing) throw new Error("客户端正在退出，请稍后再操作定时任务");
       const job = await this.scheduler.add(
         {
-          title: task.title,
-          prompt: task.prompt,
+          title: input.title,
+          prompt: input.prompt,
           cwd,
           mode: "cli",
           model: "",
@@ -193,14 +200,14 @@ export class Schedules {
           sandbox: "workspaceWrite",
           interactive: true,
           multiAgent: true,
-          deliveryChecks:task.deliveryChecks,
+          deliveryChecks:input.deliveryChecks,
         },
         undefined,
         {
           taskId: id,
           runId: reservation.id,
           requestedAt: reservation.requestedAt,
-          sourceCwd: task.cwd,
+          sourceCwd: input.cwd,
         },
       );
       return await this.finish(task, job);

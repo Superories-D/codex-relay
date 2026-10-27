@@ -724,6 +724,20 @@ describe.skipIf(process.platform !== "linux")("Telegram mobile console", () => {
       expect(first.delivery?.checks).toEqual(content.deliveryChecks);
     } finally {await f.close();}
   });
+  it("recovers schedule changes and deletion from their original receipts after lost reply checkpoints",async()=>{
+    let fail=false;
+    const f=await consoleFixture(async(file,value)=>{if(fail&&JSON.parse(String(value)).pending){fail=false;throw Error("Schedule reply lost");}await atomicWrite(file,value);});
+    try{
+      await f.send("/project 1");await f.send("/schedule create 60 Scheduled intent");
+      const task=f.runtime.desktop.data.schedules[0],revision=task.revision!;
+      fail=true;await expect(f.send(`/schedule pause ${task.id}`)).rejects.toThrow("Schedule reply lost");
+      expect(task.enabled).toBe(false);expect(task.revision).toBe(revision+1);
+      await f.restart();await f.bridge.pollOnce();expect(f.t.sent.at(-1).text).toContain("succeeded");expect(task.revision).toBe(revision+1);
+      fail=true;await expect(f.send(`/schedule remove ${task.id}`)).rejects.toThrow("Schedule reply lost");
+      expect(f.runtime.desktop.data.schedules).toHaveLength(0);
+      await f.restart();await f.bridge.pollOnce();expect(f.t.sent.at(-1).text).toContain("succeeded");expect(f.runtime.desktop.data.schedules).toHaveLength(0);
+    }finally{await f.close();}
+  });
   it("answers all questions using buttons and free text, rejects stale choices and keeps answer mode safe after restart", async () => {
     const f = await consoleFixture();
     try {

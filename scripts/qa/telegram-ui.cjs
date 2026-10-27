@@ -11,7 +11,11 @@ function telegramFixture(){
   window.relay.onSnapshot=fn=>{window.tgSnapshot=fn;return()=>{};};
   window.relay.command=async(name,args)=>{
     if(name==='desktop.read'){const desktop=await command(name,args);desktop.schedules=structuredClone(window.nativeSchedules);return desktop;}
-    if(name==='schedule.save'){window.nativeScheduleSaves.push(structuredClone(args));window.nativeSchedules=[{...args,id:args.id||'native-schedule',nextRun:Date.now()+60000}];return {schedules:structuredClone(window.nativeSchedules)};}
+    if(name==='schedule.save'){
+      const previous=window.nativeSchedules.find(t=>t.id===args.id);
+      if(previous&&args.revision!==previous.revision)throw Error('定时任务已更新，请重新打开后再保存');
+      window.nativeScheduleSaves.push(structuredClone(args));window.nativeSchedules=[{...args,revision:(previous?.revision||0)+1,id:args.id||'native-schedule',nextRun:Date.now()+60000}];return {schedules:structuredClone(window.nativeSchedules)};
+    }
     if(!name.startsWith('telegram.'))return command(name,args);
     window.tgCalls.push({name,args});const s=window.tgQA;
     if(name==='telegram.read'){
@@ -97,6 +101,10 @@ function telegramFixture(){
         const formBounds=await page.locator('.schedule-form').boundingBox();assert.ok(formBounds.y>=0&&formBounds.y+formBounds.height<=1001,'Schedule editor must remain inside the viewport after closing its nested acceptance dialog');
         await page.locator('.schedule-form').getByRole('button',{name:'Save schedule',exact:true}).click();await page.waitForFunction(()=>window.nativeScheduleSaves.length===1);
         assert.equal(await page.evaluate(()=>window.nativeScheduleSaves[0].deliveryChecks[0].path),'report.txt');
+        await page.locator('.schedule-form').waitFor({state:'detached'});
+        await page.locator('.schedule-list h3').filter({hasText:'Verified recurring work'}).click();
+        await page.locator('.schedule-form').getByRole('button',{name:'Save schedule',exact:true}).click();await page.waitForFunction(()=>window.nativeScheduleSaves.length===2);
+        assert.equal(await page.evaluate(()=>window.nativeScheduleSaves[1].revision),1,'Editing a saved native schedule must carry its observed revision');
         await page.locator('.schedule-form').waitFor({state:'detached'});
       }
 

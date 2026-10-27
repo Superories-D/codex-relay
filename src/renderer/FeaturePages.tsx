@@ -732,7 +732,7 @@ export function SchedulesPage({
                   <CalendarClock size={22} />
                 </span>
                 <div>
-                  <button onClick={() => setForm(task)}>
+                  <button onClick={() => setForm({...task,revision:task.revision||0})}>
                     <h3>{task.title}</h3>
                   </button>
                   <p>
@@ -789,6 +789,7 @@ export function SchedulesPage({
                       } = task;
                       await call("schedule.save", {
                         ...saved,
+                        revision:task.revision||0,
                         enabled: !task.enabled,
                       });
                       refresh();

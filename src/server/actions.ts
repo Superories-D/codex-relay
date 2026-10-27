@@ -117,7 +117,7 @@ export class RemoteActions {
     };
     await this.write(file, JSON.stringify(receipt));
     try {
-      receipt.result = await effect();
+      receipt.result = structuredClone(await effect());
       receipt.state = "succeeded";
     } catch (error) {
       receipt.state = "uncertain";
