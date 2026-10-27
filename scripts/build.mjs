@@ -1,6 +1,8 @@
+import {buildFingerprint,writeBuildManifest} from "./build-state.mjs";
 import { build } from "esbuild";
 import { mkdir, copyFile, rm } from "node:fs/promises";
 import { buildWindowsNative } from "./build-windows-native.mjs";
+const sourceFingerprint=await buildFingerprint();
 await rm("dist", { recursive: true, force: true });
 await mkdir("dist/renderer", { recursive: true });
 await mkdir("dist/main", { recursive: true });
@@ -55,3 +57,5 @@ await build({entryPoints:["src/server/main.ts"],outfile:"dist/server/main.cjs",b
 await build({entryPoints:["src/server/ui/App.tsx"],outfile:"dist/server/ui/app.js",bundle:true,platform:"browser",target:"chrome130",format:"iife",minify:true,define:{"process.env.NODE_ENV":'"production"'}});
 await copyFile("src/server/ui/index.html","dist/server/ui/index.html");
 await build({entryPoints:["src/server/backup-main.ts"],outfile:"dist/server/backup.cjs",bundle:true,platform:"node",target:"node22",format:"cjs"});
+
+await writeBuildManifest(process.cwd(),sourceFingerprint);
