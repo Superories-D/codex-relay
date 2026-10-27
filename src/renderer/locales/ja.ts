@@ -1,8 +1,10 @@
+import {projectGitJapanese} from "./project-git";
 import { vaultJapanese } from "./vault";
 import { operationsJapanese } from "./operations";
 import {recoveryJapanese} from "./recovery";
 import {checkpointJapanese} from "./checkpoints";
 export const japanese: Record<string, string> = {
+  ...projectGitJapanese,
   "正在后台确认待处理操作，切换任务不影响恢复。": "保留中の操作をバックグラウンドで確認しています。タスクを切り替えても復旧を続けます。",
 "查看待创建运行": "作成待ちの実行を確認",
 "正在刷新计划列表…": "定期タスクを更新しています…",

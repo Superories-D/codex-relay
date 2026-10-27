@@ -1,4 +1,5 @@
 import {PendingActionRecovery} from "./ActionRecovery";
+import {RemoteRepository} from "./RemoteRepository";
 import {OperationHistory} from "./OperationHistory";
 import {usePendingRetry} from "./PendingRetry";
 import {bindServerIdentity,serverHeaders} from "./identity";
@@ -519,6 +520,7 @@ function App() {
             <aside className="remote-sidebar">
               <RemoteSchedules roots={roots} call={call} open={setSelected}/>
               <OperationHistory call={call} jobs={snapshot?.jobs||[]} open={setSelected}/>
+              <RemoteRepository key={job?.projectCwd||job?.cwd||directory} roots={roots} cwd={job?.projectCwd||job?.cwd||directory} call={call}/>
               <section className="new-task">
                 <h2>{t("新建任务")}</h2>
                 <button disabled={!!pending || busy} onClick={() => setTemplates(true)}>{t("任务模板")}</button>

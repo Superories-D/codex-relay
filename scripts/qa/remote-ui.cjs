@@ -254,7 +254,7 @@ const { chromium } = require(
           const task=(await command('schedule.list')).tasks[0],fields=['title','prompt','cwd','enabled','cadence','minutes','hour','minute','weekday','worktree','deliveryChecks','revision'];
           const input=Object.fromEntries(fields.map(key=>[key,task[key]]));input.prompt='Changed by another client';input.deliveryChecks=[{kind:'file',path:'changed-plan.txt',label:'New contract',minBytes:1}];
           return command('schedule.save',{requestId:crypto.randomUUID(),id:task.id,input});
-        });assert.equal(external.state,'succeeded');assert.equal(external.result.revision,4);
+        });assert.equal(external.state,'succeeded',external.error||JSON.stringify(external));assert.equal(external.result.revision,4);
         await panel.getByRole('button',{name:'Save changes',exact:true}).click();
         await panel.getByText('This schedule changed. Reopen it before saving.',{exact:true}).waitFor();
         const retained=await page.evaluate(async()=>{const r=await fetch('/api/command',{method:'POST',headers:{Authorization:`Bearer ${sessionStorage.getItem('relay.remote.token')}`,'Content-Type':'application/json'},body:JSON.stringify({name:'schedule.list'})});return(await r.json()).result.tasks[0];});assert.equal(retained.revision,4);assert.equal(retained.prompt,'Changed by another client');assert.equal(retained.deliveryChecks[0].path,'changed-plan.txt');
