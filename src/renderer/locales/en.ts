@@ -5,6 +5,7 @@ import { operationsEnglish } from "./operations";
 import {recoveryEnglish} from "./recovery";
 import {checkpointEnglish} from "./checkpoints";
 export const english: Record<string, string> = {
+"断线后自动恢复连接与待确认请求，不会重复创建任务。":"Reconnects and recovers pending requests automatically without creating duplicate tasks.",
 "全部":"All",
 "通知记录分页":"Notification history pages",
 "没有匹配的通知记录":"No matching notifications",

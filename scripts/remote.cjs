@@ -89,11 +89,12 @@ const durableNames = new Set([
   "schedule.run",
   "schedule.remove",
 ]);
-async function api(route, body) {
+async function api(route, body, serverId) {
   const response = await fetch(base + route, {
     method: body ? "POST" : "GET",
     headers: {
       Authorization: `Bearer ${token}`,
+      ...(serverId?{"X-Relay-Server-ID":serverId}:{}),
       ...(body ? { "Content-Type": "application/json" } : {}),
     },
     body: body ? JSON.stringify(body) : undefined,
@@ -120,7 +121,7 @@ async function command(name, args, retry = false) {
   }
   for (let attempt = 0; ; attempt++) {
     try {
-      const result = await api("/api/command", { name, args });
+      const result = await api("/api/command", { name, args },record?.serverId);
       if (record) store().finish(record, result);
       return result;
     } catch (error) {

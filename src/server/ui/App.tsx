@@ -488,7 +488,7 @@ function App() {
             className={`connection-bar ${status === "已连接" ? "online" : ""}`}
             role="status"
           >
-            {t(status)} · {serverVersion&&`${serverVersion} · `}{t("断线只重新订阅状态，不重复提交任务。")}
+            {t(status)} · {serverVersion&&`${serverVersion} · `}{t("断线后自动恢复连接与待确认请求，不会重复创建任务。")}
           </div>
           {error && (
             <p className="error-banner" role="alert">

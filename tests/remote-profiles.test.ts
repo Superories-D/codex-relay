@@ -79,7 +79,7 @@ it.skipIf(process.platform !== "linux")(
     const ready = new Promise<void>((resolve) => (accepted = resolve));
     let drop = true,
       changed = false,
-      errorAfterAcceptance = false;
+      errorAfterAcceptance = false,swapAfterMeta=false;
     const proxy = http.createServer(async (req, res) => {
       let body = "";
       for await (const c of req) body += c;
@@ -89,12 +89,14 @@ it.skipIf(process.platform !== "linux")(
           method: req.method,
           headers: {
             Authorization: req.headers.authorization!,
+            ...(req.headers["x-relay-server-id"]?{"X-Relay-Server-ID":String(req.headers["x-relay-server-id"])}:{}),
             "Content-Type": "application/json",
           },
           body: body || undefined,
         },
       );
       let text = await response.text();
+      if(req.url==="/api/meta"&&swapAfterMeta){swapAfterMeta=false;(runtime as any).installationId=randomUUID();}
       if (req.url === "/api/meta" && changed)
         text = JSON.stringify({ ...JSON.parse(text), serverId: randomUUID() });
       if (req.method === "POST" && drop) {
@@ -189,11 +191,16 @@ it.skipIf(process.platform !== "linux")(
       const second = await run(["recover", "--profile", "server", "--request-id", secondId]);
       expect(JSON.parse(second.stdout).id).toBe(runtime.store.data.jobs[1].id);
       expect(runtime.store.data.jobs).toHaveLength(2);
+      const originalServerId=runtime.installationId,raceId=randomUUID();swapAfterMeta=true;
+      await expect(run(["run","--profile","server","--prompt","Deployment race","--request-id",raceId,"--detach"])).rejects.toThrow("Server installation changed");
+      expect(store.read(raceId).state).toBe("pending");expect(runtime.store.data.jobs).toHaveLength(2);
+      (runtime as any).installationId=originalServerId;
+      await run(["recover","--profile","server","--request-id",raceId]);expect(runtime.store.data.jobs).toHaveLength(3);
       changed = true;
       await expect(
         run(["recover", "--profile", "server", "--request-id", id]),
       ).rejects.toThrow("installation differs");
-      expect(runtime.store.data.jobs).toHaveLength(2);
+      expect(runtime.store.data.jobs).toHaveLength(3);
     } finally {
       child?.kill("SIGKILL");
       proxy.closeAllConnections();

@@ -3,6 +3,7 @@ import { operationsJapanese } from "./operations";
 import {recoveryJapanese} from "./recovery";
 import {checkpointJapanese} from "./checkpoints";
 export const japanese: Record<string, string> = {
+"断线后自动恢复连接与待确认请求，不会重复创建任务。":"切断後は接続と未確認リクエストを自動復旧し、タスクを重複作成しません。",
 "全部":"すべて",
 "通知记录分页":"通知履歴のページ",
 "没有匹配的通知记录":"一致する通知はありません",
