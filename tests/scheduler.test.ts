@@ -2159,3 +2159,15 @@ it("keeps batch workflow delivery gates durable and blocks dependent stages unti
  await fs.writeFile(path.join(root,"result.txt"),"verified");await scheduler.checkDelivery(jobs[0].id);expect((scheduler as any).dependenciesBlocked(jobs[1])).toBe(false);
  const loaded=new Store(root);await loaded.load();expect(loaded.data.jobs[0].delivery?.reports.at(-1)?.status).toBe("passed");
 });
+it("counts isolated schedule worktrees against their source project's concurrency limit",async()=>{
+ await scheduler.dispatch(true);
+ const folders=["isolated-a","isolated-b","unrelated"].map(name=>path.join(root,name));for(const folder of folders)await fs.mkdir(folder);
+ const occurrence=(id:string)=>({taskId:id,runId:id,requestedAt:Date.now(),sourceCwd:root});
+ const a=await scheduler.add({...input,cwd:folders[0]},undefined,occurrence("a")),b=await scheduler.add({...input,cwd:folders[1]},undefined,occurrence("b")),c=await scheduler.add({...input,cwd:folders[2]});
+ await scheduler.projectLimit(root,1);await scheduler.dispatch(false);await (scheduler as any).tick();await until(()=>workers.length===2&&workers.every(w=>w.started));
+ expect(workers.map(w=>w.ctx.job.id)).toEqual([a.id,c.id]);expect(b.state).toBe("queued");
+ const loaded=new Store(root);await loaded.load();expect(loaded.data.jobs[1].projectCwd).toBe(root);
+ await scheduler.dispatch(true,root);
+ workers[0].settle({kind:"completed"});await until(()=>!(scheduler as any).active.has(a.id));await (scheduler as any).tick();expect(workers).toHaveLength(2);
+ await scheduler.dispatch(false,root);await (scheduler as any).tick();await until(()=>workers[2]?.started);expect(workers[2].ctx.job.id).toBe(b.id);
+});

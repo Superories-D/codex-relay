@@ -526,7 +526,7 @@ export class Scheduler extends EventEmitter {
       ...jobInput,
       ...(checks.length ? {delivery: {revision: 1, checks, reports: []}} : {}),
       ...(requestId ? {clientRequest: {id: requestId, fingerprint: fingerprint!}} : {}),
-      ...(schedule ? { schedule } : {}),
+      ...(schedule ? { schedule,...(schedule.sourceCwd?{projectCwd:schedule.sourceCwd}:{}) } : {}),
       ...(input.interactive ? { pendingMessage: input.prompt } : {}),
       id: randomUUID(),
       state: existing ? "watching" : "queued",

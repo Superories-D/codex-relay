@@ -109,6 +109,7 @@ export class Store {
         },
       };
       for (const j of this.data.jobs) {
+        if(!j.projectCwd&&j.schedule?.sourceCwd)j.projectCwd=j.schedule.sourceCwd;
         // Old batch-created workflows kept input checks on an unused field.
         // Restore the declared gate without inheriting or fabricating evidence.
         const legacy=(j as Job&{deliveryChecks?:unknown}).deliveryChecks;

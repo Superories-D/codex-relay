@@ -114,3 +114,5 @@ The task and follow-up forms accept file selection, drag/drop and clipboard file
 The selected-task view lists recorded outputs and attachments, previews text/images and downloads files. The authenticated `assets.list` / `assets.read` commands use opaque revision-bound IDs; clients cannot request arbitrary file paths. Up to 100 references are inspected and each file is capped at 8 MiB. Text exports filter known credentials; binary exports preserve their original content. The Linux service validates the opened file through `/proc/self/fd` to prevent a directory/symlink swap from escaping configured roots.
 
 隔离工作树定时任务的已记录产物也可通过网页和 Telegram 下载。每次运行持久保存原工作区路径；只有原工作区仍在当前允许范围内，且任务目录严格对应本次 worktree 预约编号、没有被软链接替换时，才读取该目录中的已记录文件。删除定时计划不会删除新运行记录的来源信息。旧运行在计划仍存在时可采用兼容来源校验。私有状态文件、其他工作树、越界链接和硬链接仍不允许下载；同一文件作为输入和产物重复出现时只列一次。
+
+隔离定时任务同时保存来源项目标识，因此同一项目的不同 Worktree 共用项目并发上限和项目调度开关；暂停该项目调度不会中断已运行任务，但会阻止其他隔离运行继续派发。旧的、已有来源路径的运行记录在加载时补齐项目归属。

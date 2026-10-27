@@ -99,7 +99,7 @@ it.skipIf(process.platform!=="linux")("delivers isolated schedule artifacts afte
  const id=randomUUID(),input={title:"Worktree",prompt:"Make output",cwd:work,enabled:false,cadence:"interval",minutes:60,hour:9,minute:0,weekday:1,worktree:true};
  await runtime.command("schedule.create",{requestId:randomUUID(),id,input});
  const receipt:any=await runtime.command("schedule.run",{requestId:randomUUID(),id});expect(receipt.state).toBe("succeeded");const job=runtime.store.data.jobs[0];
- expect(job.schedule?.sourceCwd).toBe(work);
+ expect(job.schedule?.sourceCwd).toBe(work);expect(job.projectCwd).toBe(work);
  const result=path.join(job.cwd,"result.txt");await fs.writeFile(result,"isolated result");
  await runtime.scheduler.chats.append(job.id,{id:"generated",role:"tool",kind:"fileChange",text:"Output",at:Date.now(),data:{changes:[{path:result},{path:path.join(runtime.store.root,"state.json")}]}});
  await runtime.scheduler.chats.user(job.id,"Read output",result);
