@@ -1,4 +1,5 @@
 import { ServerAssets } from "./assets";
+import {deliveryStatus} from "./delivery-view";
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import { attachmentsSchema } from "../main/validation";
@@ -150,6 +151,9 @@ export class TelegramConsole {
       ],
       [
         button("产物 / 附件", `/files ${job.id}`),
+        button("交付验收", `/delivery ${job.id}`),
+      ],
+      [
         button("任务列表", "/status"),
         button("审批 / 提问", "/approvals"),
       ],
@@ -163,6 +167,7 @@ export class TelegramConsole {
         `${job.title}\n${job.id}\n状态: ${job.state}${job.autoRecovery ? " · 自动恢复中" : ""}\n项目: ${job.cwd}\n` +
         `优先级: ${job.priority || "normal"} · 排队: ${job.queuedMessages?.length || 0}\n` +
         `模型: ${job.model || "default"} · 推理: ${job.effort || "default"}\n` +
+        (job.delivery?.checks.length ? `交付验收: ${deliveryStatus(job.delivery)}\n` : "") +
         (job.workflow
           ? `工作流: ${job.workflow.title} (${job.workflow.step}/${job.workflow.total})\n`
           : "") +
@@ -233,6 +238,10 @@ export class TelegramConsole {
       job.updatedAt,
       job.queueRevision,
       job.stopIntent,
+      job.delivery?.revision,
+      job.delivery?.reports.at(-1)?.id,
+      job.delivery?.pendingCompletion,
+      job.delivery?.staleEvidence,
     ]);
   }
   private action(label: string, job: Job, command: string, args: unknown) {
@@ -262,7 +271,7 @@ export class TelegramConsole {
         text:
           "Codex Relay · 手机控制台\n\n" +
           "1. /projects → 点选项目\n2. /new 任务描述 → 创建并选中任务\n3. 直接发文字追问；回复任务卡片可指定该任务\n\n" +
-          "/status [状态|all] [页码] · /task ID\n/result [ID] · /history [ID] · /export [ID]\n/search 关键词 · /report [ID]\n/notify all|errors|watched|off · /watch [ID] · /unwatch ID\n/quiet 22-7（UTC） · /throttle 秒 · /digest\n/actions · /receipt 操作UUID\n/wf preview|retry|pause|resume\n/schedules · /schedule create|run|pause|enable|remove\n/goal read|create|edit|start|pause|budget|clear\n/steer 立即补充 · /switchmodel 模型 [推理强度] · /models\n/queue [ID] · /priority high|normal|low\n/edit 消息ID 版本 新文字\n/remove 消息ID 版本 · /up 消息ID 版本 · /down 消息ID 版本\n" +
+          "/status [状态|all] [页码] · /task ID\n/result [ID] · /history [ID] · /export [ID]\n/search 关键词 · /report [ID]\n/delivery [ID] · /verify [ID] · /repair [ID]\n/notify all|errors|watched|off · /watch [ID] · /unwatch ID\n/quiet 22-7（UTC） · /throttle 秒 · /digest\n/actions · /receipt 操作UUID\n/wf preview|retry|pause|resume\n/schedules · /schedule create|run|pause|enable|remove\n/goal read|create|edit|start|pause|budget|clear\n/steer 立即补充 · /switchmodel 模型 [推理强度] · /models\n/queue [ID] · /priority high|normal|low\n/edit 消息ID 版本 新文字\n/remove 消息ID 版本 · /up 消息ID 版本 · /down 消息ID 版本\n" +
           "/pause [ID] · /resume [ID] · /cancel [ID]\n/rename 名称 · /pin on|off · /archive on|off\n/depends ID ID（或 none）\n\n" +
           "/workflow 标题 换行 阶段一 换行 --- 换行 阶段二\n/workflows · /handoff 工作流ID\n/templates · /template ID（或 off）\n/defaults · /model 名称（或 default）\n/effort low|medium|high|xhigh|default · /plan on|off\n\n" +
           "/approvals [页码] · /answer CODE JSON\n/dispatch pause|resume [project|all]\n/limit 1..8|auto · /health · /accounts\n/forget 清除当前任务 · /dismiss 退出答题\n\n所有操作仅接受配置的本人私聊。",
@@ -275,6 +284,36 @@ export class TelegramConsole {
       const receipt=await this.runtime.command("action.read",args);
       if(!receipt)throw Error("Receipt not found");
       return this.paginate(JSON.stringify(receipt,null,2));
+    }
+    if (command === "delivery" || command === "verify" || command === "repair") {
+      const job = this.job(args || context.task);
+      if (command === "repair") {
+        const text = await this.runtime.command("delivery.repair", job.id) as string;
+        const reply = this.paginate(`修复追问预览（尚未投递）\n${text}\n\n确认后提交修复追问：空闲任务进入队列，运行中的任务在本轮结束后处理。`, job.id);
+        reply.keyboard!.push([this.action("确认排队修复", job, "chat.submit", {requestId, input:{id:job.id, text, action:"queue", attachments:[]}})]);
+        return reply;
+      }
+      let receipt: any;
+      if (command === "verify") {
+        // Reconcile a durable receipt before deriving new expectations from a changed report.
+        receipt = await this.runtime.command("action.read", requestId);
+        if (receipt && (receipt.action !== "delivery.run" || receipt.jobId !== job.id)) throw Error("Request ID belongs to another operation");
+        if (!receipt) {
+          const state = this.runtime.scheduler.readDelivery(job.id);
+          receipt = await this.runtime.command("delivery.run", {requestId, id:job.id, revision:state.revision, reportId:state.reports.at(-1)?.id});
+        }
+      }
+      const state = this.runtime.scheduler.readDelivery(job.id), latest = state.reports.at(-1);
+      const reply = this.paginate([
+        `交付验收 · ${job.title}\n${job.id}\n版本 ${state.revision} · ${deliveryStatus(state)}`,
+        receipt ? `操作回执 ${receipt.id}: ${receipt.state}${receipt.error ? "\n"+receipt.error : ""}` : "",
+        state.checks.length ? "当前条件:\n"+state.checks.map((check,i)=>`${i+1}. ${JSON.stringify(check)}`).join("\n") : "尚未设置交付验收条件。",
+        latest ? `最新检查: 版本 ${latest.revision} · ${latest.status} · ${new Date(latest.finishedAt).toISOString()}\n`+latest.findings.map(f=>`${f.check.label} · ${f.status} · ${f.code}\n${f.check.path}${f.bytes!==undefined?" · "+f.bytes+" B":""}${f.sha256?"\nSHA256 "+f.sha256:""}`).join("\n\n") : "尚无文件检查报告。",
+        "复验读取当前产物，不执行模型或 shell；通过后沿用调度器的交付解除规则。结果是检查时的文件快照。",
+      ].filter(Boolean).join("\n\n"), job.id);
+      if (state.checks.length) reply.keyboard!.push([button("重新检查文件", `/verify ${job.id}`)]);
+      if (latest?.revision === state.revision && latest.status !== "passed") reply.keyboard!.push([button("预览修复追问", `/repair ${job.id}`)]);
+      return reply;
     }
     if(command === "wf") {
       const [action,id,extra]=args.split(/\s+/);

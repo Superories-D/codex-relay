@@ -214,6 +214,15 @@ export class ServerRuntime {
         return (this.remoteActions ||= new RemoteActions(this.store.root)).read(idSchema.parse(args));
       case "actions.list":
         return (this.remoteActions ||= new RemoteActions(this.store.root)).list(args);
+      case "delivery.read":
+        return this.scheduler.readDelivery(idSchema.parse(args));
+      case "delivery.repair":
+        return this.scheduler.deliveryPrompt(idSchema.parse(args));
+      case "delivery.run": {
+        const a=z.object({requestId:idSchema,id:idSchema,revision:z.number().int().nonnegative(),reportId:idSchema.optional()}).strict().parse(args);
+        const expected={revision:a.revision,reportId:a.reportId};
+        return (this.remoteActions ||= new RemoteActions(this.store.root)).run(a.requestId,name,a.id,expected,()=>this.scheduler.checkDelivery(a.id,"manual",undefined,expected));
+      }
       case "models.list":
         return this.store.data.accounts.filter(a=>a.enabled).map(a=>({account:a.label,ids:a.modelAccess?.ids||[],observedAt:a.modelAccess?.observedAt||0,complete:a.modelAccess?.complete||false}));
       case "task.steer": {

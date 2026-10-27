@@ -357,6 +357,65 @@ async function consoleFixture(write = atomicWrite, now = Date.now) {
   };
 }
 describe.skipIf(process.platform !== "linux")("Telegram mobile console", () => {
+  it("inspects real delivery failures, previews a repair follow-up, and rejects a stale repair confirmation", async () => {
+    const f = await consoleFixture();
+    try {
+      await f.send("/project 1");
+      await f.send("/new Delivery task");
+      const job = f.runtime.store.data.jobs[0];
+      await f.runtime.scheduler.saveDelivery(job.id, 0, [{kind:"contains", path:"report.txt", label:"Report", text:"done"}]);
+      job.state = "completed";
+      const failed = await f.send("/verify");
+      expect(failed.text).toContain("验收未通过");
+      expect(failed.text).toContain("missing");
+      expect(job.state).toBe("needs_attention");
+      const preview = await f.send("/repair");
+      expect(preview.text).toContain("尚未投递");
+      expect(preview.text).toContain("report.txt");
+      expect(job.queuedMessages || []).toHaveLength(0);
+      const confirm = buttons(preview).find(b => b.text === "确认排队修复")!.callback_data;
+      await fs.writeFile(path.join(f.workspace, "report.txt"), "done");
+      expect((await f.send("/verify")).text).toContain("最近检查通过");
+      expect((await f.click(confirm)).text).toContain("已变化");
+      expect(job.queuedMessages || []).toHaveLength(0);
+      await fs.writeFile(path.join(f.workspace, "report.txt"), "broken");
+      await f.send("/verify");
+      const repair = await f.send("/repair");
+      const key = buttons(repair).find(b => b.text === "确认排队修复")!.callback_data;
+      await f.click(key);
+      expect(job.pendingMessage).toContain("textMissing");
+      expect(job.messageReceipts).toHaveLength(1);
+      await f.click(key);
+      expect(job.messageReceipts).toHaveLength(1);
+      expect(job.queuedMessages || []).toHaveLength(0);
+      expect((await f.send("/delivery")).text).toContain("SHA256");
+    } finally { await f.close(); }
+  });
+  it("reconciles a verification after the reply checkpoint fails without reading files twice", async () => {
+    let fail = false;
+    const f = await consoleFixture(async (file,value) => {
+      if (fail && JSON.parse(String(value)).pending) { fail=false; throw Error("reply checkpoint lost"); }
+      await atomicWrite(file,value);
+    });
+    try {
+      await f.send("/project 1");
+      await f.send("/new Delivery recovery");
+      const job = f.runtime.store.data.jobs[0];
+      await f.runtime.scheduler.saveDelivery(job.id, 0, [{kind:"file", path:"report.txt", label:"Report", minBytes:1}]);
+      job.state = "completed";
+      fail = true;
+      await expect(f.send("/verify")).rejects.toThrow("reply checkpoint lost");
+      expect(job.delivery!.reports).toHaveLength(1);
+      await fs.writeFile(path.join(f.workspace, "report.txt"), "now present");
+      await f.restart();
+      await f.bridge.pollOnce();
+      expect(job.delivery!.reports).toHaveLength(1);
+      expect(f.t.sent.at(-1).text).toContain("验收未通过");
+      await f.send("/verify");
+      expect(job.delivery!.reports).toHaveLength(2);
+      expect(job.state).toBe("completed");
+    } finally { await f.close(); }
+  });
   it("selects projects, persists defaults and routes ordinary text and replies to the correct task", async () => {
     const f = await consoleFixture();
     try {

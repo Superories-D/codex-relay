@@ -3,6 +3,7 @@ import {
   quietNow,
   wantsNotice,
 } from "./notification-policy";
+import {deliveryStatus} from "./delivery-view";
 import { attachmentsSchema } from "../main/validation";
 import {
   telegramDownload,
@@ -1001,6 +1002,7 @@ export class TelegramBridge {
       known[job.id] = tag;
       if (!wantsNotice(policy, job.id, tag)) continue;
       let text = `Relay update\n${job.id.slice(0, 8)} · ${tag.startsWith("approval:") ? "needs your answer (/approvals)" : tag} · ${job.title.slice(0, 120)}`;
+      if (job.delivery?.checks.length) text += `\n交付验收: ${deliveryStatus(job.delivery)}`;
       if (tag === "completed") {
         const page = await this.runtime.scheduler.chats.read(job.id),
           latest = [...page.items]

@@ -63,6 +63,8 @@ For task creation use `job.submit` with `{ "requestId": "UUID", "input": { ...Ne
 
 Requests are capped at 1 MiB with bounded in-flight commands, status streams and buffered output. The HTTP tests exercise real loopback requests, SSE, origin/authentication rejection, symlink escape and concurrent duplicate submissions.
 
+Delivery evidence is available through `delivery.read` (task UUID) and `delivery.repair` (task UUID, generates a repair prompt only). `delivery.run` takes `{ "requestId": "UUID", "id": "TASK_UUID", "revision": 1, "reportId": "LATEST_REPORT_UUID" }`; omit `reportId` only when no prior report exists. It checks both expectations inside the scheduler before reading files and returns a durable action receipt. Retry the identical payload to recover its result; an uncertain or pending receipt is retained without replay. A succeeded receipt means the verification operation finished; inspect `result.reports` to see whether the files passed.
+
 ## Remote browser console
 
 After forwarding the HTTP port, open `http://127.0.0.1:7899/` and enter the server's HTTP token. The console has responsive phone/desktop layouts and Chinese, English and Japanese text. It supports task creation, workflow creation, realtime task states, automatic recovery notices, paged chat, follow-up queues, pause/resume/cancel, global dispatch control, and explicit approvals/input answers. Workflow reports download through the browser after preview.

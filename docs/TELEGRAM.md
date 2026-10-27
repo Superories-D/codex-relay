@@ -62,6 +62,9 @@ Ordinary text follows the selected task. Replying to a known task card, result p
 | `/search phrase` | Search the selected conversation; show up to 30 newest matching excerpts |
 | `/export [TASK_ID]` | Download a redacted Markdown conversation document |
 | `/report [TASK_ID]` | Download a redacted JSON task diagnostic report |
+| `/delivery [TASK_ID]` | Inspect acceptance conditions, current revision, latest file findings and recorded SHA256 evidence |
+| `/verify [TASK_ID]` | Read current output files and record a new acceptance report, with a durable operation receipt |
+| `/repair [TASK_ID]` | Preview a follow-up derived from failed checks; a separate confirmation submits it through normal task messaging |
 | `/queue [TASK_ID]` | Queue revision, first five messages and up/down/remove buttons |
 | `/queueall [TASK_ID]` | Paginated full queue text |
 | `/edit MESSAGE_ID REVISION new text` | Edit a queued message in the selected task |
@@ -75,6 +78,8 @@ Ordinary text follows the selected task. Replying to a known task card, result p
 Task, template, workflow and queued-message IDs accept unique prefixes of at least eight characters. Commands with `[TASK_ID]` use the selected task when omitted. Queue edits always carry a revision; old buttons or stale revisions cannot silently edit a changed queue. Queue buttons expire after five minutes, and are consumed before dispatch to avoid repeating an uncertain operation.
 
 Result/history/search pages are **immutable snapshots**, retained for 20 minutes (up to 12 snapshots per bridge). Navigation after expiry/restart asks the user to reopen the view. This prevents a new answer from shifting text between pages. Conversation exports inherit the shared export limit of the newest 5,000 messages / 4 MiB, and explicitly mark omitted older content. Individual Telegram documents/views also have an 8 Mi-character cap with an omission notice. Markdown and JSON exports are generated documents; project output files are not uploaded automatically.
+
+Delivery views distinguish pending checks, failed/unverified reports, old contract revisions and explicitly stale evidence. A historical pass describes files at the time of that check. Verification refuses active or unsafe-recovery tasks and does not invoke a model or shell. A pass follows the scheduler's existing delivery gate rules and can release dependent work; other pause/recovery gates remain authoritative. Lost reply checkpoints reconcile the original verification receipt without running the check again. Repair confirmation expires after five minutes and is invalidated by a task, queue or evidence change; it is consumed before sending. Confirming a repair can queue an idle task for execution, just like an ordinary explicit follow-up.
 
 ### Workflows and task defaults
 

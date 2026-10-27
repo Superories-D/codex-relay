@@ -16,6 +16,7 @@ const allowed = new Set([
   "schedule.list", "schedule.create", "schedule.save", "schedule.run", "schedule.remove",
   "goal.read", "goal.update",
   "action.read", "actions.list", "models.list", "task.steer", "task.model",
+  "delivery.read", "delivery.run", "delivery.repair",
   "assets.list",
   "assets.read",
   "snapshot",
