@@ -48,7 +48,11 @@ ssh -L 7899:127.0.0.1:7899 user@server
 
 Repeat `--workspace` to allow additional creation roots. Paths are resolved through symlinks; roots must not overlap the private service data directory. This is a task-admission restriction, not an OS sandbox or a multi-tenant security boundary. Existing task controls are operator-level capabilities.
 
-The HTTP endpoint binds only to loopback. It requires `Authorization: Bearer <http-token>` using the owner-only `http-token` file in the server data directory. Tokens are not accepted in URLs, and cross-origin browser calls and non-loopback Host headers are rejected. The HTTP token persists across restarts. The Unix/TCP IPC token remains a separate credential. Do not expose these operator credentials in public pages or repository files.
+The HTTP endpoint binds only to loopback. It requires `Authorization: Bearer <http-token>` using the owner-only `http-token` file in the server data directory. Tokens are not accepted in URLs. By default, only local Host headers and matching local browser origins are allowed. The HTTP token persists across restarts. The Unix/TCP IPC token remains a separate credential. Do not expose these operator credentials in public pages or repository files.
+
+For a browser console behind an HTTPS reverse proxy, set `--http-origin https://relay.example` together with `--http-port 7899`, or add `"httpOrigin": "https://relay.example"` to the version 1 server JSON config. The URL must be an exact HTTPS origin, without a path, credentials, query or fragment. Relay still listens on loopback; the reverse proxy supplies TLS. Only this configured public Host/Origin is added to the allowlist. Forwarded headers do not grant access.
+
+The proxy must preserve the browser's Origin, bearer authorization and `X-Relay-Server-ID` headers. It may preserve the public Host or rewrite it to the local upstream Host. Forward streaming responses promptly and disable caching/buffering for `/api/events`; Relay sends `Cache-Control: no-store, no-transform` and `X-Accel-Buffering: no`. No CORS wildcard is enabled. Use a trusted TLS certificate for clients.
 
 - `GET /api/meta`: configured creation roots and supported commands.
 - `GET /api/snapshot`: current scheduler state.
@@ -63,9 +67,11 @@ Requests are capped at 1 MiB with bounded in-flight commands, status streams and
 
 After forwarding the HTTP port, open `http://127.0.0.1:7899/` and enter the server's HTTP token. The console has responsive phone/desktop layouts and Chinese, English and Japanese text. It supports task creation, workflow creation, realtime task states, automatic recovery notices, paged chat, follow-up queues, pause/resume/cancel, global dispatch control, and explicit approvals/input answers. Workflow reports download through the browser after preview.
 
-The token and unsent task draft stay in this browser session; Disconnect removes them. SSE reconnects automatically without replaying mutations. A submission whose response was lost retains its request ID and can be reconciled from live snapshots or retried under that same ID. Closing the browser does not stop server tasks. Chat is plain text in this console; no model-produced HTML is executed, and a strict same-origin CSP applies.
+The token and unsent task draft stay in this browser session. Disconnect removes the token and displayed server state while preserving drafts, attachments and pending receipts. The session pins the server installation identity; a different installation requires a new tab so old pending requests cannot go to a replacement server. SSE reconnects automatically. Identified pending task/follow-up submissions automatically reconcile or retry with the original request ID after reconnection. Closing the browser does not stop server tasks. No model-produced HTML is executed, and a strict same-origin CSP applies.
 
 `RELAY_CHROMIUM_PATH=/path/to/chromium node scripts/qa/remote-ui.cjs` exercises the built browser UI against the real bundled server using synthetic account-free tasks. It covers lost creation acknowledgements, initial SSE failure/reconnection, task/chat controls, workflow submission, reload and 390/900/1280px layouts. OS-specific browser and live-subscription acceptance remain separate.
+
+Add `RELAY_QA_HTTPS=1` to run the same browser checks through a local TLS reverse proxy. This fixture requires OpenSSL and trusts its temporary self-signed certificate only inside the test browser context. It does not validate a production proxy or certificate deployment.
 
 ## Remote CLI and reliable follow-up delivery
 

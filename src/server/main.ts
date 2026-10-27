@@ -1,3 +1,4 @@
+import {publicHttpOrigin} from "./http-origin";
 import { readServerConfig } from "./config";
 import { telegramConfig, TelegramBridge } from "./telegram";
 import { openHttp } from "./http";
@@ -17,6 +18,7 @@ async function main() {
       doctor: { type: "boolean" },
       "ipc-port": { type: "string" },
       "http-port": { type: "string" },
+      "http-origin": {type:"string"},
       workspace: { type: "string", multiple: true },
       telegram: { type: "boolean" },
       "telegram-config": { type: "string" },
@@ -27,6 +29,7 @@ async function main() {
   values.cli ??= config?.cli;
   values.workspace ??= config?.workspaces;
   values["http-port"] ??= config?.httpPort?.toString();
+  values["http-origin"] ??= config?.httpOrigin;
   values["ipc-port"] ??= config?.ipcPort?.toString();
   values.telegram ??= config?.telegram;
   const root = path.resolve(
@@ -47,6 +50,7 @@ async function main() {
     (values["http-port"]?.trim() === "" || !Number.isInteger(httpPort) || httpPort < 0 || httpPort > 65535)
   )
     throw Error("Invalid HTTP port");
+  values["http-origin"]=publicHttpOrigin(values["http-origin"]);
   const runtime = await ServerRuntime.open(root, values.cli, values.workspace || []);
   let botConfig;
   try {
@@ -98,6 +102,7 @@ async function main() {
         httpPort,
         values.workspace || [],
         path.join(__dirname, "ui"),
+        values["http-origin"],
       );
   } catch (error) {
     server.close();

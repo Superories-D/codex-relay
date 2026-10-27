@@ -1,5 +1,5 @@
 // Built web UI -> authenticated HTTP -> real daemon. No accounts/model calls.
-const { spawn } = require("node:child_process"),
+const { spawn,execFileSync } = require("node:child_process"),
   { once } = require("node:events");
 const fs = require("node:fs/promises"),
   path = require("node:path"),
@@ -13,6 +13,17 @@ const { chromium } = require(
     data = path.join(base, "data"),
     workspace = path.join(base, "project");
   await fs.mkdir(workspace);
+  let proxy,publicUrl,backendPort;
+  if(process.env.RELAY_QA_HTTPS){
+    const key=path.join(base,"proxy.key"),cert=path.join(base,"proxy.crt");
+    execFileSync("openssl",["req","-x509","-newkey","rsa:2048","-nodes","-keyout",key,"-out",cert,"-days","1","-subj","/CN=localhost"],{stdio:"ignore"});
+    proxy=require("node:https").createServer({key:await fs.readFile(key),cert:await fs.readFile(cert)},(req,res)=>{
+      if(!backendPort){res.writeHead(503).end();return;}
+      const upstream=require("node:http").request({host:"127.0.0.1",port:backendPort,path:req.url,method:req.method,headers:req.headers},result=>{res.writeHead(result.statusCode,result.headers);result.pipe(res);});
+      upstream.on("error",()=>res.destroy());res.on("close",()=>upstream.destroy());req.pipe(upstream);
+    });
+    await new Promise(resolve=>proxy.listen(0,"127.0.0.1",resolve));publicUrl=`https://127.0.0.1:${proxy.address().port}`;
+  }
   const child = spawn(
     process.execPath,
     [
@@ -25,6 +36,7 @@ const { chromium } = require(
       "0",
       "--workspace",
       workspace,
+      ...(publicUrl?["--http-origin",publicUrl]:[]),
     ],
     { stdio: ["ignore", "pipe", "pipe"] },
   );
@@ -50,6 +62,7 @@ const { chromium } = require(
         }
       });
     });
+    backendPort=port;
     const token = await fs.readFile(path.join(data, "http-token"), "utf8");
     browser = await chromium.launch({
       executablePath: process.env.RELAY_CHROMIUM_PATH,
@@ -65,6 +78,7 @@ const { chromium } = require(
     ]) {
       const context = await browser.newContext({
           viewport: { width, height: 900 },
+          ignoreHTTPSErrors:!!publicUrl,
         }),
         page = await context.newPage();
       page.on("pageerror", (e) => errors.push(e.message));
@@ -128,7 +142,7 @@ const { chromium } = require(
           });
         });
       }
-      await page.goto(`http://127.0.0.1:${port}`);
+      await page.goto(publicUrl||`http://127.0.0.1:${port}`);
       await page.locator(".connect-card input").fill(token);
       await page.locator(".connect-card button").click();
       await page.locator(".connection-bar.online").waitFor();
@@ -380,6 +394,7 @@ const { chromium } = require(
       child.kill("SIGKILL");
       await stopped.catch(() => {});
     }
+    if(proxy){proxy.closeAllConnections();await new Promise(resolve=>proxy.close(resolve));}
     await fs.rm(base, { recursive: true, force: true });
   }
 })().catch((e) => {

@@ -1,3 +1,4 @@
+import {publicHttpOrigin,permittedRequestHost,permittedRequestOrigin} from "./http-origin";
 import {sourceVersion} from "../shared/build-info";
 import { ServerAssets } from "./assets";
 import { UPLOAD_LIMIT } from "./uploads";
@@ -50,7 +51,9 @@ export async function openHttp(
   port: number,
   workspaces: string[],
   uiDirectory?: string,
+  publicOrigin?:string,
 ) {
+  const origin=publicHttpOrigin(publicOrigin);
   const roots = await prepareWorkspaces(runtime.store.root, workspaces);
   const assets=new ServerAssets(runtime,roots);
   const tokenFile = path.join(runtime.store.root, "http-token");
@@ -95,9 +98,9 @@ export async function openHttp(
     let admitted = false;
     try {
       const host = req.headers.host;
-      if (!host || !/^(?:127\.0\.0\.1|localhost)(?::[0-9]{1,5})?$/.test(host))
+      if (!host || !permittedRequestHost(host,origin))
         return send(res, 403, { error: "Invalid Host header" });
-      if (req.headers.origin && req.headers.origin !== `http://${host}`)
+      if (!permittedRequestOrigin(host,req.headers.origin,origin))
         return send(res, 403, {
           error: "Cross-origin requests are not allowed",
         });
@@ -138,6 +141,7 @@ export async function openHttp(
         return send(res, 200, {
           version: 1,
           build:{version:sourceVersion},
+          publicOrigin:origin,
           serverId: runtime.installationId,
           workspaces: roots,
           commands: [...allowed],
@@ -151,6 +155,8 @@ export async function openHttp(
           return send(res, 503, { error: "Too many status streams" });
         res.writeHead(200, {
           "Content-Type": "text/event-stream",
+          "Cache-Control":"no-store, no-transform",
+          "X-Accel-Buffering":"no",
           Connection: "keep-alive",
         });
         res.flushHeaders();
