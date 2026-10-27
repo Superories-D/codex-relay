@@ -1,9 +1,11 @@
+import {deliveryChecksSchema} from "../shared/delivery";
 import { z } from "zod";
 import path from "node:path";
 import { idSchema } from "../main/validation";
 export const scheduleInputSchema = z
   .object({
     id: idSchema.optional(),
+    deliveryChecks:deliveryChecksSchema.optional(),
     title: z.string().trim().min(1).max(120),
     prompt: z.string().trim().min(1).max(100000),
     cwd: z.string().max(32700).refine(path.isAbsolute),

@@ -3,6 +3,8 @@ import { operationsJapanese } from "./operations";
 import {recoveryJapanese} from "./recovery";
 import {checkpointJapanese} from "./checkpoints";
 export const japanese: Record<string, string> = {
+"计划修改只影响后续运行；已有任务的验收条件保持原样。":"計画の変更は今後の実行に適用されます。既存タスクの検証条件は変更されません。",
+"每次运行的交付验收":"毎回の実行に適用する納品検証",
 "断线后自动恢复连接与待确认请求，不会重复创建任务。":"切断後は接続と未確認リクエストを自動復旧し、タスクを重複作成しません。",
 "全部":"すべて",
 "通知记录分页":"通知履歴のページ",

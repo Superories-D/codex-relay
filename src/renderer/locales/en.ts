@@ -5,6 +5,8 @@ import { operationsEnglish } from "./operations";
 import {recoveryEnglish} from "./recovery";
 import {checkpointEnglish} from "./checkpoints";
 export const english: Record<string, string> = {
+"计划修改只影响后续运行；已有任务的验收条件保持原样。":"Plan changes apply to future runs. Existing tasks keep their own delivery checks.",
+"每次运行的交付验收":"Delivery checks for each run",
 "断线后自动恢复连接与待确认请求，不会重复创建任务。":"Reconnects and recovers pending requests automatically without creating duplicate tasks.",
 "全部":"All",
 "通知记录分页":"Notification history pages",

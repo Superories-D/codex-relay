@@ -1,3 +1,4 @@
+import {DeliveryDialog} from "./DeliveryDialog";
 import { t, useI18n, formatDate, errorText } from "./i18n";
 import React, { useEffect, useRef, useState } from "react";
 import {
@@ -635,6 +636,7 @@ export function SchedulesPage({
     return () => clearInterval(timer);
   }, []);
 
+  const [editingScheduleChecks,setEditingScheduleChecks]=useState(false);
   const [form, setForm] = useState<Partial<ScheduledTask>>(),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
@@ -857,6 +859,7 @@ export function SchedulesPage({
               <X size={19} />
             </button>
             <h2>{form.id ? t("编辑定时任务") : t("新建定时任务")}</h2>
+            {editingScheduleChecks&&<DeliveryDialog purpose="plan" initial={form.deliveryChecks||[]} call={call} saveDraft={checks=>setForm({...form,deliveryChecks:checks})} close={()=>setEditingScheduleChecks(false)}/>}
             <label>
               {t("名称")}
               <input
@@ -982,6 +985,8 @@ export function SchedulesPage({
               />
               {t("在独立 Git Worktree 中运行")}
             </label>
+            <button type="button" disabled={busy} onClick={()=>setEditingScheduleChecks(true)}>{t("每次运行的交付验收")} · {form.deliveryChecks?.length||0}</button>
+            <p className="schedule-time-note">{t("计划修改只影响后续运行；已有任务的验收条件保持原样。")}</p>
             {error && (
               <p role="alert" className="panel-error">
                 {error}

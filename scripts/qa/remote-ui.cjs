@@ -187,12 +187,17 @@ const { chromium } = require(
         await panel.locator('form select').first().selectOption(workspace);
         await panel.locator('form textarea').fill("Scheduled QA without model calls");
         await panel.locator('form input[type=checkbox]').first().uncheck();
+        await panel.getByRole("button",{name:/^Delivery checks for each run/}).click();
+        await page.locator(".delivery-dialog").getByRole("button",{name:"Add check",exact:true}).click();
+        await page.locator(".delivery-check input").nth(1).fill("report.txt");
+        await page.locator(".delivery-dialog").getByRole("button",{name:"Save acceptance checks",exact:true}).click();
         await panel.getByRole("button",{name:"Create schedule",exact:true}).click();
         await panel.getByRole("heading",{name:"Remote scheduled QA",exact:true}).waitFor();
         await page.reload();await page.locator(".connection-bar.online").waitFor();
         await page.locator(".remote-schedules summary").click();
         await panel.getByRole("heading",{name:"Remote scheduled QA",exact:true}).waitFor();
         assert.equal(await panel.locator("article").count(),1,"lost schedule acknowledgment must not duplicate schedules");
+        const contract=await page.evaluate(async()=>{const r=await fetch('/api/command',{method:'POST',headers:{Authorization:`Bearer ${sessionStorage.getItem('relay.remote.token')}`,'Content-Type':'application/json'},body:JSON.stringify({name:'schedule.list'})});return(await r.json()).result.tasks[0].deliveryChecks;});assert.equal(contract[0].path,'report.txt');
         await page.locator(".remote-task-list button").filter({hasText:"Remote QA en"}).click();
         await page.locator(".remote-schedules summary").click();
       }

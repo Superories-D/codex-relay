@@ -1,3 +1,5 @@
+import {DeliveryDialog} from "../../renderer/DeliveryDialog";
+import type {DeliveryCheck} from "../../shared/delivery";
 import React, { useEffect, useState } from "react";
 import { t, errorText } from "../../renderer/i18n";
 import { ActionStatus, useRemoteAction } from "./LiveControls";
@@ -9,6 +11,7 @@ export function RemoteSchedules({
   roots: string[];
   call: (name: string, args?: any) => Promise<any>;
 }) {
+  const [editingChecks,setEditingChecks]=useState(false);
   const action = useRemoteAction("schedules", call, "schedules"),
     [tasks, setTasks] = useState<ScheduledTask[]>([]),
     [zone, setZone] = useState(""),
@@ -24,6 +27,7 @@ export function RemoteSchedules({
       weekday: 1,
       enabled: true,
       worktree: false,
+      deliveryChecks:[] as DeliveryCheck[],
     }),
     [editing, setEditing] = useState<string>(),
     [remove, setRemove] = useState<string>();
@@ -59,6 +63,7 @@ export function RemoteSchedules({
     weekday: task.weekday,
     enabled: task.enabled,
     worktree: task.worktree,
+    deliveryChecks:task.deliveryChecks||[],
   });
   return (
     <details className="remote-schedules">
@@ -181,6 +186,8 @@ export function RemoteSchedules({
             />
             {t("隔离工作树")}
           </label>
+          <button type="button" onClick={()=>setEditingChecks(true)}>{t("每次运行的交付验收")} · {form.deliveryChecks.length}</button>
+          <p>{t("计划修改只影响后续运行；已有任务的验收条件保持原样。")}</p>
           <button>{editing ? t("保存修改") : t("创建定时任务")}</button>
           {editing && (
             <button type="button" onClick={() => setEditing(undefined)}>
@@ -244,6 +251,7 @@ export function RemoteSchedules({
           </fieldset>
         </article>
       ))}
+      {editingChecks&&<DeliveryDialog purpose="plan" initial={form.deliveryChecks} call={call} saveDraft={checks=>setForm({...form,deliveryChecks:checks})} close={()=>setEditingChecks(false)}/>}
     </details>
   );
 }

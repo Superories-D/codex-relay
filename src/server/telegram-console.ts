@@ -302,8 +302,8 @@ export class TelegramConsole {
       if(matches.length!==1)throw Error("Schedule ID is missing or ambiguous");
       const task=matches[0];let receipt:any;
       if(action==="pause"||action==="enable"){
-        const {title,prompt,cwd,cadence,minutes,hour,minute,weekday,worktree}=task;
-        receipt=await this.runtime.command("schedule.save",{requestId,id:task.id,input:{title,prompt,cwd,cadence,minutes,hour,minute,weekday,worktree,enabled:action==="enable"}});
+        const {title,prompt,cwd,cadence,minutes,hour,minute,weekday,worktree,deliveryChecks}=task;
+        receipt=await this.runtime.command("schedule.save",{requestId,id:task.id,input:{title,prompt,cwd,cadence,minutes,hour,minute,weekday,worktree,deliveryChecks,enabled:action==="enable"}});
       }else if(action==="run"||action==="remove")receipt=await this.runtime.command(`schedule.${action}`,{requestId,id:task.id});
       else throw Error("Use /schedule create|run|pause|enable|remove");
       return `定时任务操作: ${receipt.state}\n/schedules 查看状态。`;

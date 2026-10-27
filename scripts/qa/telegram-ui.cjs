@@ -6,9 +6,12 @@ const root=path.resolve(__dirname,'../..'),output=path.join(root,'qa-output');
 function telegramFixture(){
   const command=window.relay.command;
   window.tgQA={revision:0,configured:false,enabled:false,includeTitles:false,events:['completed','attention','approval'],chatId:'',receipts:[]};
+  window.nativeSchedules=[];window.nativeScheduleSaves=[];
   window.tgFail=true;window.tgCalls=[];window.tgReadActive=0;window.tgReadMax=0;
   window.relay.onSnapshot=fn=>{window.tgSnapshot=fn;return()=>{};};
   window.relay.command=async(name,args)=>{
+    if(name==='desktop.read'){const desktop=await command(name,args);desktop.schedules=structuredClone(window.nativeSchedules);return desktop;}
+    if(name==='schedule.save'){window.nativeScheduleSaves.push(structuredClone(args));window.nativeSchedules=[{...args,id:args.id||'native-schedule',nextRun:Date.now()+60000}];return {schedules:structuredClone(window.nativeSchedules)};}
     if(!name.startsWith('telegram.'))return command(name,args);
     window.tgCalls.push({name,args});const s=window.tgQA;
     if(name==='telegram.read'){
@@ -85,6 +88,17 @@ function telegramFixture(){
 
       await p.locator('.telegram-remove').click();await p.locator('.telegram-confirm > button').first().click();
       await page.waitForFunction(()=>!window.tgQA.configured);assert.equal(await inputs.first().inputValue(),'');
+      if(language==='en'){
+        await page.getByRole('button',{name:'Scheduled tasks',exact:true}).click();await page.getByRole('button',{name:'New scheduled task',exact:true}).click();
+        await page.locator('.schedule-form input').first().fill('Verified recurring work');await page.locator('.schedule-form textarea').fill('Produce report.txt');
+        await page.locator('.schedule-form').getByRole('button',{name:/^Delivery checks for each run/}).click();
+        await page.locator('.delivery-dialog').getByRole('button',{name:'Add check',exact:true}).click();await page.locator('.delivery-check input').nth(1).fill('report.txt');
+        await page.locator('.delivery-dialog').getByRole('button',{name:'Save acceptance checks',exact:true}).click();
+        await page.locator('.schedule-form').getByRole('button',{name:'Save schedule',exact:true}).click();await page.waitForFunction(()=>window.nativeScheduleSaves.length===1);
+        assert.equal(await page.evaluate(()=>window.nativeScheduleSaves[0].deliveryChecks[0].path),'report.txt');
+        await page.locator('.schedule-form').waitFor({state:'detached'});
+      }
+
       report.layouts.push({language,theme,width,zoom,status:'passed',bounded:!bounds.overflow,draftPreserved:true,unknownRetryConfirmed:true});await context.close();
     }
     assert.deepEqual(report.errors,[]);report.status='passed';

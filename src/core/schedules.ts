@@ -1,3 +1,4 @@
+import {deliveryChecksSchema} from "../shared/delivery";
 import { randomUUID } from "node:crypto";
 import { Desktop, nextSchedule, type ScheduledTask } from "./desktop";
 import type { Scheduler } from "./scheduler";
@@ -6,6 +7,7 @@ import { redact } from "./redact";
 
 export type ScheduleInput = Pick<
   ScheduledTask,
+  | "deliveryChecks"
   | "title"
   | "prompt"
   | "cwd"
@@ -59,9 +61,11 @@ export class Schedules {
       if (this.closing) throw new Error("客户端正在退出，请稍后再操作定时任务");
       if (creationId && (input.id || this.desktop.data.schedules.some(t=>t.id===creationId))) throw Error("Schedule creation ID already exists");
       const previous = input.id ? this.task(id) : undefined;
+      const checks=input.deliveryChecks===undefined?undefined:deliveryChecksSchema.parse(input.deliveryChecks);
       const task: ScheduledTask = {
         ...previous,
         ...input,
+        ...(checks!==undefined?{deliveryChecks:checks}:previous?.deliveryChecks?{deliveryChecks:previous.deliveryChecks}:{}),
         id,
         nextRun: nextSchedule(input, this.now()),
         nextRunZone: input.cadence === "interval" ? undefined : this.timeZone(),
@@ -189,6 +193,7 @@ export class Schedules {
           sandbox: "workspaceWrite",
           interactive: true,
           multiAgent: true,
+          deliveryChecks:task.deliveryChecks,
         },
         undefined,
         {

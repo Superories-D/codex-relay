@@ -22,6 +22,7 @@ export interface Project {
   pinned: boolean;
 }
 export interface ScheduledTask {
+  deliveryChecks?: import("../shared/delivery").DeliveryCheck[];
   id: string;
   title: string;
   prompt: string;

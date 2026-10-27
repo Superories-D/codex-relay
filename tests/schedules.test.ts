@@ -426,3 +426,14 @@ it("keeps failed edits invisible while concurrent schedule and preference writes
   expect(loaded.data.schedules.map((task) => task.title)).toEqual(["Independent schedule"]);
   expect(desktop.data.schedules.map((task) => task.title)).toEqual(["Independent schedule"]);
 });
+it("applies a fresh delivery contract to every scheduled occurrence and preserves it across partial edits",async()=>{
+ const check={kind:"file" as const,path:"report.txt",label:"Report",minBytes:1};
+ await schedules.save({...input(),deliveryChecks:[check]});const task=desktop.data.schedules[0];
+ await schedules.save({...input(),id:task.id,deliveryChecks:undefined,title:"Edited"});expect(task.deliveryChecks).toEqual([check]);
+ const first=await schedules.run(task.id);expect(first?.delivery).toEqual({revision:1,checks:[check],reports:[]});
+ first!.state="completed";await scheduler.checkDelivery(first!.id);expect(first!.state).toBe("needs_attention");await expect(schedules.run(task.id)).rejects.toThrow("尚未结束");
+ await fs.writeFile(path.join(root,"report.txt"),"verified");await scheduler.checkDelivery(first!.id);expect(first!.state).toBe("completed");
+ const second=await schedules.run(task.id);expect(second?.delivery).toEqual({revision:1,checks:[check],reports:[]});
+ await schedules.save({...input(),id:task.id,deliveryChecks:[]});expect(desktop.data.schedules[0].deliveryChecks).toEqual([]);expect(second?.delivery?.checks).toEqual([check]);
+ await expect(schedules.save({...input(),id:task.id,deliveryChecks:[{...check,path:"../escape"}]})).rejects.toThrow();expect(desktop.data.schedules[0].deliveryChecks).toEqual([]);
+});
