@@ -71,6 +71,7 @@ import { History } from "../core/history";
 import { rolloutRecords } from "../core/chat";
 import { findTranscript } from "../core/transcript";
 import { chatSendSchema } from "./validation";
+import {NativeFollowups} from "./native-followups";
 import { Templates } from "../core/templates";
 import { Desktop } from "../core/desktop";
 import { Schedules } from "../core/schedules";
@@ -236,6 +237,10 @@ async function boot() {
     },
     process.platform==="win32"?new RecoveryDomains(store):undefined,
   );
+  let nativeFollowups:Promise<NativeFollowups>|undefined;
+  const followups=()=>nativeFollowups ||= NativeFollowups.open(scheduler).catch(error=>{
+    nativeFollowups=undefined;throw error;
+  });
   const workflowReports = new WorkflowReports(scheduler.chats, () => store.data.jobs);
   const telegram = new WindowsTelegram({
     root: dataRoot,
@@ -978,6 +983,9 @@ async function boot() {
           id: idSchema, messageId: z.string().uuid(), revision: z.number().int().nonnegative(),
           action: z.enum(["edit", "remove", "up", "down"]), text: z.string().trim().min(1).max(100000).optional(),
         }).strict().parse(args));
+      case "chat.submission.identity": return (await followups()).identity;
+      case "chat.submit": return (await followups()).submit(args);
+      case "chat.submission.cancel": return (await followups()).cancel(args);
       case "chat.send":
         return scheduler.send(chatSendSchema.parse(args));
       case "chat.model": {

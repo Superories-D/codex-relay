@@ -1,4 +1,5 @@
 import {projectGitEnglish} from "./project-git";
+import {nativeFollowupEnglish} from "./native-followup";
 import { legacyEnglish } from "./legacy-en";
 import { nativeEnglish } from "./native-en";
 import { vaultEnglish } from "./vault";
@@ -6,6 +7,7 @@ import { operationsEnglish } from "./operations";
 import {recoveryEnglish} from "./recovery";
 import {checkpointEnglish} from "./checkpoints";
 export const english: Record<string, string> = {
+  ...nativeFollowupEnglish,
   ...projectGitEnglish,
   "正在后台确认待处理操作，切换任务不影响恢复。": "Confirming pending operations in the background; switching tasks does not interrupt recovery.",
 "查看待创建运行": "Inspect pending admission",

@@ -55,18 +55,39 @@ export function loadDraftState(storage: Pick<Storage, "getItem">): DraftState {
   return result;
 }
 export function saveDraftState(
-  storage: Pick<Storage, "setItem">,
+  storage: Pick<Storage, "setItem"> & Partial<Pick<Storage,"getItem">>,
   state: DraftState,
 ) {
+  writeDraftState(storage,state,confirmations(storage));
+}
+function confirmations(storage:Partial<Pick<Storage,"getItem">>):Record<string,string>{
+  try{
+    const saved=JSON.parse(storage.getItem?.(storageKey)||"null"),values=saved?.nativeConfirmations;
+    if(values&&typeof values==="object"&&!Array.isArray(values))return Object.fromEntries(Object.entries(values).filter(([key,value])=>typeof value==="string"&&key.length<=200&&value.length<=100).slice(-500)) as Record<string,string>;
+  }catch{}
+  return {};
+}
+function writeDraftState(storage:Pick<Storage,"setItem">,state:DraftState,confirmed:Record<string,string>){
   const drafts = Object.fromEntries(
     Object.entries(state.drafts).filter(([, text]) => text.length),
   );
   const files = Object.fromEntries(
     Object.entries(state.files).filter(([, values]) => values.length),
   );
-  const content = JSON.stringify({ version: 2, drafts, files });
+  const content = JSON.stringify({ version: 2, drafts, files,...(Object.keys(confirmed).length?{nativeConfirmations:confirmed}:{}) });
   if (content.length > 4 * 1024 * 1024) throw Error("Draft storage is full");
   storage.setItem(storageKey, content);
+}
+export function confirmNativeDraft(storage:Pick<Storage,"getItem"|"setItem">,current:DraftState,requestId:string,key:string,text:string,attachments:ChatAttachment[]):DraftState {
+  const confirmed=confirmations(storage);if(confirmed[key]===requestId)return current;
+  const remaining=[...attachments],files=(current.files[key]||[]).filter(file=>{
+    const index=remaining.findIndex(old=>old.path===file.path&&old.name===file.name&&old.type===file.type);
+    if(index<0)return true;remaining.splice(index,1);return false;
+  });
+  const next={drafts:{...current.drafts,[key]:remainingDraft(current.drafts[key]||"",text)},files:{...current.files,[key]:files}};
+  delete confirmed[key];confirmed[key]=requestId;
+  writeDraftState(storage,next,Object.fromEntries(Object.entries(confirmed).slice(-500)));
+  return next;
 }
 // A successful request owns only the exact draft/attachments it submitted.
 export function remainingDraft(current: string, submitted: string) {
