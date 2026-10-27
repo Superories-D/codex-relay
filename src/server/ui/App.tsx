@@ -1,3 +1,4 @@
+import {PendingActionRecovery} from "./ActionRecovery";
 import {OperationHistory} from "./OperationHistory";
 import {usePendingRetry} from "./PendingRetry";
 import {bindServerIdentity,serverHeaders} from "./identity";
@@ -512,6 +513,7 @@ function App() {
               {error}
             </p>
           )}
+          {snapshot&&status==="已连接"&&<PendingActionRecovery call={call}/>}
           {center && snapshot && <TaskCenter snapshot={snapshot} call={call} close={() => setCenter(false)} open={job => {setSelected(job.id);setCenter(false);}} />}
           {!center && <main className="remote-layout">
             <aside className="remote-sidebar">

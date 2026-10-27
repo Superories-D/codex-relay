@@ -1,4 +1,4 @@
-import { CommandError } from "./client";
+import {actionRecovery,supportsActionRecovery,type PendingAction} from "./action-recovery";
 import React, { useEffect, useState, useRef } from "react";
 import { t, errorText } from "../../renderer/i18n";
 import type { Job } from "../../shared/types";
@@ -12,60 +12,42 @@ export function useRemoteAction(
     scope === "live"
       ? `relay.remote.action.${id}`
       : `relay.remote.action.${scope}.${id}`;
-  const [pending, setPending] = useState<any>(() => {
-    try {
-      return JSON.parse(sessionStorage.getItem(key) || "null");
-    } catch {
-      return null;
-    }
-  });
+  const recovery=actionRecovery();
+  const [pending,setPending]=useState<PendingAction|null>(()=>recovery.read(key));
+  const pendingRef=useRef(pending);pendingRef.current=pending;
   const callRef=useRef(call);callRef.current=call;
-  const [receipt, setReceipt] = useState<any>(),
-    [error, setError] = useState("");
-  useEffect(() => {
-    if (!pending) return;
-    let alive = true,
-      timer: ReturnType<typeof setTimeout>;
-    const send = async () => {
-      try {
-        const r = await callRef.current(pending.name, pending.args);
-        if (!alive) return;
-        sessionStorage.removeItem(key);
-        setReceipt(r);
-        setPending(null);
-        setError("");
-      } catch (e) {
-        if (alive) {
-          setError(errorText(e));
-          if (e instanceof CommandError && e.status >= 400 && e.status < 500 && ![401,403,429].includes(e.status)) {
-            // A gateway may report a persistence failure after the native effect.
-            // Check the durable intent before treating an HTTP error as rejection.
-            try {
-              const recorded=await callRef.current("action.read",pending.args.requestId);
-              if(!alive)return;
-              if(recorded)setReceipt(recorded);
-              sessionStorage.removeItem(key);setPending(null);
-            } catch { if(alive)timer=setTimeout(()=>void send(),5000); }
-          } else timer = setTimeout(() => void send(), 5000);
-        }
+  const [receipt,setReceipt]=useState<any>(()=>recovery.read(key)?undefined:recovery.latest(key)?.receipt),[error,setError]=useState(()=>{const error=recovery.read(key)?undefined:recovery.latest(key)?.error;return error?errorText(error):"";});
+  useEffect(()=>recovery.subscribe(update=>{
+    if(update.key!==key||!pendingRef.current||JSON.stringify(update.record)!==JSON.stringify(pendingRef.current))return;
+    setError(update.outcome.error?errorText(update.outcome.error):"");
+    if(update.outcome.settled){setReceipt(update.outcome.receipt);pendingRef.current=null;setPending(null);}
+  }),[key]);
+  useEffect(()=>{
+    if(!pending)return;
+    let alive=true,timer:ReturnType<typeof setTimeout>;
+    const send=async()=>{
+      const outcome=await recovery.attempt(key,(name,args)=>callRef.current(name,args));
+      if(!alive)return;
+      // Background recovery may finish between initial state and subscription.
+      if(outcome&&pendingRef.current&&JSON.stringify(pendingRef.current)===JSON.stringify(pending)) {
+        setError(outcome.error?errorText(outcome.error):"");
+        if(outcome.settled){setReceipt(outcome.receipt);pendingRef.current=null;setPending(null);}
       }
+      if(!outcome?.settled)timer=setTimeout(()=>void send(),5000);
     };
-    void send();
-    return () => {
-      alive = false;
-      clearTimeout(timer);
-    };
-  }, [pending, id]);
+    void send();return()=>{alive=false;clearTimeout(timer);};
+  },[pending,key]);
   function submit(name: string, args: any) {
-    if (pending) return false;
+    if (pendingRef.current||recovery.read(key)) return false;
     try {
+      if(!supportsActionRecovery(name))throw Error("Unsupported durable operation");
       const value = {
         name,
         args: { ...args, requestId: crypto.randomUUID() },
       };
       sessionStorage.setItem(key, JSON.stringify(value));
       setReceipt(undefined);
-      setPending(value);
+      pendingRef.current=value;setPending(value);
       setError("");
       return true;
     } catch (e) {

@@ -279,13 +279,13 @@ const { chromium } = require(
         await page.locator(".remote-schedules summary").click();
       }
 
-      let controlAttempts=[],controlDropped,lostControl;
+      let controlAttempts=[],controlDropped,lostControl,controlJobId;
       if(language==='en') {
         lostControl=new Promise(resolve=>controlDropped=resolve);
         await page.route('**/api/command',async route=>{
           const body=route.request().postDataJSON();
           if(body?.name!=='task.control')return route.fallback();
-          controlAttempts.push(body.args.requestId);const response=await route.fetch();
+          controlJobId=body.args.id;controlAttempts.push(body.args.requestId);const response=await route.fetch();
           if(controlAttempts.length===1){await route.fulfill({status:503,json:{error:'Acknowledgment lost after accepted control'}});controlDropped();}
           else await route.fulfill({response});
         });
@@ -301,11 +301,24 @@ const { chromium } = require(
         return snap.jobs.find((j) => j.title === title)?.state === "paused";
       }, `Remote QA ${language}`);
       if(language==='en') {
-        await lostControl;await page.reload();await page.locator('.connection-bar.online').waitFor();
+        await lostControl;
+        const other=await page.evaluate(async workspace=>{
+          const headers={Authorization:`Bearer ${sessionStorage.getItem('relay.remote.token')}`,'Content-Type':'application/json'};
+          const response=await fetch('/api/command',{method:'POST',headers,body:JSON.stringify({name:'job.submit',args:{requestId:crypto.randomUUID(),input:{title:'Background receipt task',prompt:'No model call',cwd:workspace,mode:'cli',model:'',effort:'',bucket:'codex',approvalPolicy:'on-request',sandbox:'workspaceWrite',interactive:true}}})});const body=await response.json();if(!response.ok)throw Error(body.error);
+          const paused=await fetch('/api/command',{method:'POST',headers,body:JSON.stringify({name:'job.control',args:{id:body.result.id,action:'pause'}})});if(!paused.ok)throw Error(await paused.text());return body.result.id;
+        },workspace);
+        assert.match(other,/^[a-f0-9-]{36}$/);
+        await page.locator('.remote-task-list button').filter({hasText:'Background receipt task'}).click();
+        await page.reload();await page.locator('.connection-bar.online').waitFor();
+        await page.waitForFunction(id=>!sessionStorage.getItem(`relay.remote.action.management.${id}`),controlJobId);
+        assert.equal(await page.locator('.conversation-header h1').innerText(),'Background receipt task','The original action must recover while a different task remains selected');
+        await page.locator('.remote-task-list button').filter({hasText:'Remote QA en'}).click();
         await page.locator('.remote-task-management').getByText('Operation acknowledged',{exact:true}).waitFor();
         assert.ok(controlAttempts.length>=2);assert.equal(new Set(controlAttempts).size,1,'Reload must recover the original control request');
         const revision=await page.evaluate(async()=>{const r=await fetch('/api/snapshot',{headers:{Authorization:`Bearer ${sessionStorage.getItem('relay.remote.token')}`}});return(await r.json()).jobs.find(job=>job.title==='Remote QA en').controlRevision;});
         assert.equal(revision,1,'An acknowledged pause must execute only once');
+        await page.evaluate(async id=>{const response=await fetch('/api/command',{method:'POST',headers:{Authorization:`Bearer ${sessionStorage.getItem('relay.remote.token')}`,'Content-Type':'application/json'},body:JSON.stringify({name:'job.metadata',args:{id,archived:true}})});if(!response.ok)throw Error(await response.text());},other);
+        await page.waitForFunction(async id=>{const response=await fetch('/api/snapshot',{headers:{Authorization:`Bearer ${sessionStorage.getItem('relay.remote.token')}`}});return(await response.json()).jobs.find(job=>job.id===id)?.archived===true;},other);
       }
       await page.waitForFunction(
         () =>
@@ -560,6 +573,14 @@ const { chromium } = require(
     console.log(
       "PASS: real HTTP login, attachment upload/preview/download, task/followup/workflow/schedule lost ACK recovery, paused workflow retry branches, task center budgets, settings, search/export and 390/900/1280px layouts; zero model calls",
     );
+  } catch(error) {
+    if(browser)for(const context of browser.contexts())for(const page of context.pages())try{
+      console.error('QA browser state',await page.evaluate(async()=>{
+        const response=await fetch('/api/snapshot',{headers:{Authorization:`Bearer ${sessionStorage.getItem('relay.remote.token')}`},signal:AbortSignal.timeout(2000)}),snapshot=await response.json();
+        return {jobs:snapshot.jobs.map(job=>({title:job.title,state:job.state,archived:job.archived})),visible:[...document.querySelectorAll('.remote-task-list strong')].map(node=>node.textContent),selected:document.querySelector('.conversation-header h1')?.textContent,pendingKeys:Object.keys(sessionStorage).filter(key=>key.startsWith('relay.remote.action.'))};
+      }));await page.screenshot({path:'qa-output/remote-failure.png',animations:'disabled'});
+    }catch{}
+    throw error;
   } finally {
     if (browser) await browser.close();
     if (child.exitCode === null) {
