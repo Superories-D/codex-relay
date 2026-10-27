@@ -56,6 +56,53 @@ class FakeWorker extends EventEmitter implements Worker {
   }
   respond() {}
 }
+it("stops for service restart without publishing a user pause or changing Goal authority",async()=>{
+ const job=await scheduler.add({...input,cwd:root,interactive:true});await until(()=>workers[0]?.started);job.goal={threadId:job.threadId!,status:"active"} as any;job.controlRevision=7;
+ workers[0].operation.mockImplementation(async()=>({goal:{...job.goal,status:"paused"}}));
+ await scheduler.shutdown({resumeOnRestart:true});expect(workers[0].operation).not.toHaveBeenCalled();expect(job.goal?.status).toBe("active");expect(job.controlRevision).toBe(7);expect(job.stopIntent).toBeUndefined();expect(job.state).toBe("queued");expect(job.goalStartRequested).toBe(true);
+});
+it("keeps the desktop's explicit shutdown pause semantics",async()=>{
+ const job=await scheduler.add({...input,cwd:root,interactive:true});await until(()=>workers[0]?.started);job.goal={threadId:job.threadId!,status:"active"} as any;workers[0].operation.mockImplementation(async()=>({goal:{...job.goal,status:"paused"}}));
+ await scheduler.shutdown();expect(job.state).toBe("paused");expect(job.stopIntent).toBe("pause");expect(job.goal?.status).toBe("paused");expect(job.controlRevision).toBeGreaterThan(0);expect(job.resumeAfterShutdown).toBeUndefined();
+});
+it.each(["pause","cancel"] as const)("keeps a later user %s authoritative during service shutdown",async(action)=>{
+ const job=await scheduler.add({...input,cwd:root,interactive:true});await until(()=>workers[0]?.started);
+ let release!:()=>void,entered!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve;}),stopping=new Promise<void>(resolve=>{entered=resolve;});workers[0].stop=async()=>{entered();await gate;workers[0].settle({kind:"interrupted"});};
+ const shutdown=scheduler.shutdown({resumeOnRestart:true});await stopping;const manual=scheduler.control(job.id,action);await until(()=>job.stopIntent===action);release();await Promise.all([manual,shutdown]);expect(job.state).toBe(action==="pause"?"paused":"cancelled");expect(job.stopIntent).toBe(action);expect(job.resumeAfterShutdown).toBeUndefined();
+});
+it("keeps a successful completion receipt when service restart begins during process cleanup",async()=>{
+ const job=await scheduler.add({...input,cwd:root,interactive:true});await until(()=>workers[0]?.started);
+ let release!:()=>void,entered!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve;}),closing=new Promise<void>(resolve=>{entered=resolve;});workers[0].close=async()=>{entered();await gate;};workers[0].settle({kind:"completed"});await closing;
+ const shutdown=scheduler.shutdown({resumeOnRestart:true});release();await shutdown;
+ expect(job.stopIntent).toBeUndefined();expect(job.completionPending).toBe(true);expect(job.completion?.revision).toBe(1);
+ const disk=new Store(root);await disk.load();expect(disk.data.jobs[0]).toMatchObject({completionPending:true,recoveryRequired:true,state:"needs_attention"});expect(workers).toHaveLength(1);
+});
+it("requeues a worker that settles while service shutdown is still draining background work",async()=>{
+ const job=await scheduler.add({...input,cwd:root,interactive:true});await until(()=>workers[0]?.started);
+ let release!:()=>void,entered!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve;}),draining=new Promise<void>(resolve=>{entered=resolve;});
+ vi.spyOn(scheduler.warmups,"shutdown").mockImplementation(async()=>{entered();await gate;});const shutdown=scheduler.shutdown({resumeOnRestart:true});await draining;workers[0].settle({kind:"interrupted"});await(scheduler as any).currentRun;
+ expect(job.resumeAfterShutdown).toBe(true);expect(job.stopIntent).toBeUndefined();release();await shutdown;expect(job.state).toBe("queued");expect(job.resumeAfterShutdown).toBeUndefined();
+});
+it.each(["goalStopped","error","incomplete"] as const)("does not turn an authoritative %s into another model turn on service restart",async(kind)=>{
+ const job=await scheduler.add({...input,cwd:root,interactive:true});await until(()=>workers[0]?.started);
+ if(kind==="goalStopped")job.goal={threadId:job.threadId!,status:"budgetLimited"} as any;
+ if(kind==="incomplete"){job.completionRetries=3;job.maxCompletionRetries=3;}
+ workers[0].stop=async()=>{workers[0].settle({kind,...(kind==="error"?{error:Error("invalid configuration")}:{})});};await scheduler.shutdown({resumeOnRestart:true});
+ expect(job.state).toBe("needs_attention");expect(job.stopIntent).toBeUndefined();expect(job.resumeAfterShutdown).toBeUndefined();expect(job.goal?.status).not.toBe("active");expect(workers).toHaveLength(1);
+});
+it("preserves a budget stop that settles while the shutdown checkpoint is awaiting storage",async()=>{
+ const job=await scheduler.add({...input,cwd:root,interactive:true});await until(()=>workers[0]?.started);job.goal={threadId:job.threadId!,status:"budgetLimited"} as any;
+ let release!:()=>void,entered!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve;}),saving=new Promise<void>(resolve=>{entered=resolve;}),save=store.save.bind(store);
+ vi.spyOn(store,"save").mockImplementationOnce(async()=>{entered();await gate;await save();});const shutdown=scheduler.shutdown({resumeOnRestart:true});await saving;workers[0].settle({kind:"goalStopped"});await(scheduler as any).currentRun;release();await shutdown;
+ expect(job.state).toBe("needs_attention");expect(job.resumeAfterShutdown).toBeUndefined();expect(job.stopIntent).toBeUndefined();expect(job.goal?.status).toBe("budgetLimited");
+});
+it("automatically finalizes a known result after the last shutdown save fails",async()=>{
+ const job=await scheduler.add({...input,cwd:root,interactive:true});await until(()=>workers[0]?.started);
+ let release!:()=>void,entered!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve;}),cleaning=new Promise<void>(resolve=>{entered=resolve;});workers[0].close=async()=>{entered();await gate;};workers[0].settle({kind:"completed"});await cleaning;
+ let finalizing=false,failed=false;vi.spyOn(scheduler.accounts,"cancelLogin").mockImplementation(async()=>{finalizing=true;});const save=store.save.bind(store);vi.spyOn(store,"save").mockImplementation(async()=>{if(finalizing&&!failed){failed=true;throw Error("Final shutdown save failed");}await save();});
+ const shutdown=scheduler.shutdown({resumeOnRestart:true});release();await expect(shutdown).rejects.toThrow("Final shutdown save failed");expect(job.completionPending).toBe(true);expect(job.autoRecovery).toBeDefined();
+ job.autoRecovery!.nextAttemptAt=0;await(scheduler as any).tick();await until(()=>job.state==="completed");expect(workers).toHaveLength(1);expect(job.completionPending).toBeUndefined();
+});
 it("recovers a successful turn after cleanup failed without starting another worker",async()=>{
  const job=await scheduler.add({...input,cwd:root,interactive:true});await until(()=>workers[0]?.started);
  workers[0].failClose=true;workers[0].settle({kind:"completed"});await(scheduler as any).currentRun;

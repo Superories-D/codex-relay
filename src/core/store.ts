@@ -123,6 +123,7 @@ export class Store {
         }
 
         for (const message of j.queuedMessages || []) message.id ||= randomUUID();
+        if(j.resumeAfterShutdown&&(j.stopIntent||["completed","cancelled"].includes(j.state)))j.resumeAfterShutdown=undefined;
         if (j.completionPending) {
           if (!j.completion) throw Error("完成回执缺少结果身份，请检查状态文件");
           j.recoveryRequired = true;
@@ -137,6 +138,9 @@ export class Store {
           j.autoRecovery = undefined;
           j.delivery.blockedCompletion = true;
           j.lastError = "交付验收中断，正在重新检查产物";
+        } else if(j.resumeAfterShutdown&&!j.stopIntent){
+          j.recoveryRequired=true;j.state="needs_attention";j.lastError="服务退出中断，正在核查原进程后自动继续";
+          if(!j.autoRecovery)scheduleRecovery(j,"process");
         } else if (j.existing && j.existing.phase !== "managed") {
           if (!["completed", "cancelled"].includes(j.state)) {
             j.state = "needs_attention";

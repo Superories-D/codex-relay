@@ -173,6 +173,9 @@ export interface Job {
   // A successful worker result saved before its owner has finished cleanup.
   // Recovery must prove ownership idle and finalize, rather than infer again.
   completionPending?: boolean;
+  // System shutdown may pause a worker without revoking the user's authority
+  // to continue. Survives a crash between process cleanup and final requeue.
+  resumeAfterShutdown?: boolean;
   recoveryAttempts?: number;
   autoRecovery?: {
     reason: "process" | "interrupted" | "unknown";

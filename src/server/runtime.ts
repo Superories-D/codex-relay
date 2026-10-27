@@ -436,32 +436,8 @@ export class ServerRuntime {
     await this.cliSetup?.shutdown();
     await Promise.allSettled([...this.inFlight]);
     await this.schedules.shutdown();
-    const resume = new Set(
-      this.store.data.jobs
-        .filter(
-          (j) =>
-            !j.stopIntent &&
-            ["queued", "waiting", "preparing", "running", "rotating"].includes(
-              j.state,
-            ),
-        )
-        .map((j) => j.id),
-    );
     try {
-      await this.scheduler.shutdown();
-      // Service shutdown is not a user Pause. Resume only work that shutdown
-      // itself stopped after process ownership was positively released.
-      for (const job of this.store.data.jobs)
-        if (
-          resume.has(job.id) &&
-          job.state === "paused" &&
-          job.stopIntent === "pause"
-        ) {
-          job.stopIntent = undefined;
-          job.state = "queued";
-          job.stage = "等待服务重启后继续";
-        }
-      await this.store.save();
+      await this.scheduler.shutdown({resumeOnRestart:true});
       await this.owner.release();
     } catch (error) {
       this.closing = false;

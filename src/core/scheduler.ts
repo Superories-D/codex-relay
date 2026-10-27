@@ -63,7 +63,7 @@ class ModelRoutingError extends Error {}
 interface ActiveRun {
   job: Job;
   worker?: Worker;
-  reason?: "pause" | "cancel";
+  reason?: "pause" | "cancel" | "shutdown";
   failedStop?: boolean;
   done?: Promise<void>;
 }
@@ -79,6 +79,7 @@ export class Scheduler extends EventEmitter {
   private tickInFlight?: Promise<void>;
   private controls: Promise<unknown> = Promise.resolve();
   private closing = false;
+  private resumeOnShutdown=false;
   private verification = new AbortController();
   private deliveryRecovery?: Promise<void>;
   private deliveryControllers = new Map<string, AbortController>();
@@ -541,7 +542,7 @@ export class Scheduler extends EventEmitter {
         state === "queued" ? "waiting" : state === "paused" || state === "cancelled" ? "interrupted" : "errored"});
     }
     clearRecovery(job);job.recoveryAttempts=0;
-    job.completionPending=undefined;
+    if(!(this.closing&&this.resumeOnShutdown&&!job.stopIntent&&job.state==="paused"))job.completionPending=undefined;
     return undo;
   }
   private async addOnce(
@@ -841,16 +842,18 @@ export class Scheduler extends EventEmitter {
             clearRecovery(job);
             if (recorded) await this.finishRecordedCompletion(job,"recovery");
             else {
+              const budgetHeld=job.resumeAfterShutdown&&job.goal?.status==="budgetLimited"&&!job.pendingMessage&&!job.review;
               job.state = job.stopIntent === "cancel" ? "cancelled"
-                : job.stopIntent || job.archived || this.closing ? "paused" : "queued";
+                : job.stopIntent || job.archived || this.closing ? "paused" : budgetHeld?"needs_attention":"queued";
               if (job.state === "queued" && job.goal?.status === "active" &&
                 !job.pendingMessage && !job.review && !job.submissionUncertain)
                 job.goalStartRequested = true;
               job.stage = job.state === "queued" ? "已恢复，等待继续原会话" : undefined;
-              job.lastError = undefined;
+              job.lastError = budgetHeld?"已达到目标 Token 预算，尚未标记目标完成":undefined;
               recordRecovery(job, job.state === "queued" ? "resumed" : "stopped");
             }
             job.updatedAt=Date.now();
+            job.resumeAfterShutdown=undefined;
             await this.store.save();
           } catch (error) {
             const stop = {stopIntent:job.stopIntent,controlRevision:job.controlRevision};
@@ -1311,7 +1314,7 @@ export class Scheduler extends EventEmitter {
         outcome = await worker.done;
         if (active.failedStop)
           throw new Error("停止确认失败，保留任务等待检查");
-        if (outcome.kind === "completed" && !active.reason && !job.stopIntent && !this.closing) {
+        if (outcome.kind === "completed" && (!active.reason||active.reason==="shutdown") && !job.stopIntent && (!this.closing||this.resumeOnShutdown)) {
           job.completion = {
             revision:(job.completion?.revision ?? 0)+1,
             startedAt,finishedAt:Date.now(),threadId:job.threadId,turnId:job.turnId,
@@ -1364,13 +1367,15 @@ export class Scheduler extends EventEmitter {
       job.completion.finishedAt=Date.now();
     const hadCompletion=!!job.completionPending;
     let undoCompletionQueue:undefined|(()=>void);
-    const stopReason = active.reason || job.stopIntent;
-    if (stopReason) {
+    const stopReason = job.stopIntent || active.reason;
+    const serviceExit=this.closing&&this.resumeOnShutdown&&!job.stopIntent;
+    const resumeSystemPause=serviceExit&&(hadCompletion||!outcome||["completed","interrupted","recoverable"].includes(outcome.kind));
+    if (stopReason&&stopReason!=="shutdown") {
       job.goalResumeAfterQuota = false;
       job.goalResumeAfterModelChange = false;
     }
     if (stopReason === "cancel" && !active.failedStop) job.state = "cancelled";
-    else if ((stopReason === "pause" || this.closing) && !active.failedStop)
+    else if ((stopReason === "pause" || this.closing&&(!serviceExit||resumeSystemPause)) && !active.failedStop)
       job.state = "paused";
     else if (active.failedStop) {
       job.recoveryRequired = true;
@@ -1477,7 +1482,10 @@ export class Scheduler extends EventEmitter {
     } else {
       job.state = "paused";
     }
-    if (!active.failedStop) job.completionPending=undefined;
+    const systemPaused=resumeSystemPause&&job.state==="paused";
+    if(systemPaused)job.resumeAfterShutdown=true;
+    else if(serviceExit&&!active.failedStop&&!["queued","waiting"].includes(job.state))job.resumeAfterShutdown=undefined;
+    if (!active.failedStop&&!systemPaused) job.completionPending=undefined;
     job.updatedAt = Date.now();
     this.syncAgentRoot(job, {
       turnId: job.turnId,
@@ -1516,7 +1524,7 @@ export class Scheduler extends EventEmitter {
   }
   controlObserved(id:string,action:"pause"|"resume"|"cancel",expected:string):Promise<{applied:boolean}> {
     const matches=()=>{const job=this.store.data.jobs.find(job=>job.id===id);return !!job&&taskControlSignature(job)===expected;};
-    if(action!=="resume"&&this.recoveryTasks.has(id)) {
+    if(action!=="resume"&&(this.recoveryTasks.has(id)||this.closing&&this.resumeOnShutdown)) {
       // Preserve the existing immediate stop-intent path while ownership is
       // checked. The observed state is checked before publishing that intent.
       if(!matches())return Promise.resolve({applied:false});
@@ -1528,12 +1536,14 @@ export class Scheduler extends EventEmitter {
     });
   }
   control(id: string, action: "pause" | "resume" | "cancel"): Promise<void> {
-    if (action !== "resume" && this.recoveryTasks.has(id)) {
+    if (action !== "resume" && (this.recoveryTasks.has(id)||this.closing&&this.resumeOnShutdown)) {
       const job = this.store.data.jobs.find((j) => j.id === id);
       if (job && !["completed", "cancelled"].includes(job.state)) {
         // Ownership checks can take time. Remember Stop immediately instead of
         // leaving it behind that check, where an app restart could lose it.
         if (job.stopIntent !== "cancel") job.stopIntent = action;
+        job.resumeAfterShutdown=undefined;
+        if(this.closing&&this.resumeOnShutdown){const active=this.active.get(id);if(active)active.reason=job.stopIntent;}
         job.controlRevision=(job.controlRevision||0)+1;
         const saved = this.store.save();
         void saved.catch(() => {}); // Observed below after the recovery control.
@@ -2519,23 +2529,27 @@ export class Scheduler extends EventEmitter {
       return result;
     });
   }
-  private async controlOnce(id: string, action: "pause" | "resume" | "cancel") {
+  private async controlOnce(id: string, action: "pause" | "resume" | "cancel",shutdown=false) {
     const job = this.store.data.jobs.find((j) => j.id === id);
     if (!job) throw new Error("任务不存在");
+    if(shutdown&&!this.active.has(id))return;
+    if(shutdown&&["completed","cancelled"].includes(job.state))return;
+    if(shutdown&&job.stopIntent){shutdown=false;action=job.stopIntent;}
     if (["completed", "cancelled"].includes(job.state))
       throw new Error("终止任务不可再次操作，请新建任务");
-    job.controlRevision=(job.controlRevision||0)+1;
+    if(!shutdown){job.controlRevision=(job.controlRevision||0)+1;job.resumeAfterShutdown=undefined;}
     if (action !== "resume") {
-      job.stopIntent = action;
-      if (job.autoRecovery) recordRecovery(job, "stopped");
+      if(shutdown)job.resumeAfterShutdown=true;else job.stopIntent = action;
+      if (!shutdown&&job.autoRecovery) recordRecovery(job, "stopped");
       const active = this.active.get(id);
-      if (active) active.reason = action;
+      if (active) {active.reason = shutdown?"shutdown":action;if(!active.failedStop)job.state="pausing";}
       this.deliveryControllers.get(id)?.abort();
       // Keep the process-check loop alive after a failed stop, but never resume
       // inference once the user has asked to pause/cancel.
       if (!job.recoveryRequired) clearRecovery(job);
       await this.store.save();
     }
+    if(shutdown&&!this.active.has(id))return;
     if (this.active.has(id) && this.active.get(id)!.failedStop) {
       await this.active.get(id)?.done;
       await this.active.get(id)?.worker?.close();
@@ -2571,14 +2585,12 @@ export class Scheduler extends EventEmitter {
       job.lastError = undefined;
       job.nextWakeAt = undefined;
     } else if (this.active.has(id)) {
-      this.active.get(id)!.reason = action;
-      job.state = "pausing";
       this.changed();
       try {
         // User pause/cancel also pauses Goal continuation. Quota-driven stops
         // bypass this path, preserving their automatic recovery authority.
         const worker = this.active.get(id)?.worker;
-        if (job.goal?.status === "active" && worker?.operation) {
+        if (!shutdown&&job.goal?.status === "active" && worker?.operation) {
           try {
             const result = (await worker.operation("thread/goal/set", {
               status: "paused",
@@ -2603,11 +2615,9 @@ export class Scheduler extends EventEmitter {
       }
     } else {
       job.state = action === "pause" ? "paused" : "cancelled";
-      job.goalStartRequested = false;
-      job.goalResumeAfterQuota = false;
-      job.goalResumeAfterModelChange = false;
+      if(!shutdown){job.goalStartRequested = false;job.goalResumeAfterQuota = false;job.goalResumeAfterModelChange = false;}
     }
-    if (!job.recoveryRequired) {clearRecovery(job);job.completionPending=undefined;}
+    if (!job.recoveryRequired) {clearRecovery(job);if(!shutdown)job.completionPending=undefined;}
     await this.store.save();
     this.changed();
   }
@@ -2660,7 +2670,26 @@ export class Scheduler extends EventEmitter {
     if(active.reason||active.failedStop||this.closing)throw Error("会话正在停止，请等待停止确认后继续");
     return structuredClone(approval);
   }
-  async shutdown() {
+  private resumeShutdownJobs(failed=false){
+    for(const job of this.store.data.jobs){
+      if(!job.resumeAfterShutdown)continue;
+      if(job.stopIntent){job.resumeAfterShutdown=undefined;continue;}
+      if(job.completionPending){
+        if(failed&&!job.autoRecovery){job.recoveryRequired=true;job.state="needs_attention";job.lastError="服务退出收尾未完成，正在核查原进程后恢复结果";scheduleRecovery(job,"process");}
+        continue;
+      }
+      if(job.goal?.status==="budgetLimited"&&!job.pendingMessage&&!job.review){
+        job.state="needs_attention";job.lastError="已达到目标 Token 预算，尚未标记目标完成";job.resumeAfterShutdown=undefined;continue;
+      }
+      if(job.state==="paused"&&!job.recoveryRequired){
+        job.state="queued";job.stage="等待服务重启后继续";
+        if(job.goal?.status==="active"&&!job.pendingMessage&&!job.review&&!job.submissionUncertain)job.goalStartRequested=true;
+      }
+      if(["queued","completed","cancelled"].includes(job.state))job.resumeAfterShutdown=undefined;
+    }
+  }
+  async shutdown(options:{resumeOnRestart?:boolean}={}) {
+    this.resumeOnShutdown=options.resumeOnRestart===true;
     this.closing = true;
     this.interruptDeliveryChecks();
     if (this.timer) clearInterval(this.timer);
@@ -2674,7 +2703,9 @@ export class Scheduler extends EventEmitter {
       const stopped = await Promise.allSettled(
         [...this.active.values()]
           .filter((run) => !["completed", "cancelled"].includes(run.job.state))
-          .map((run) => this.control(run.job.id, "pause")),
+          .map((run) => this.resumeOnShutdown&&!run.job.stopIntent
+            ? this.queueControl(run.job.id,()=>this.controlOnce(run.job.id,"pause",true))
+            : this.control(run.job.id,run.job.stopIntent==="cancel"?"cancel":"pause")),
       );
       await this.currentRun;
       if (
@@ -2684,11 +2715,13 @@ export class Scheduler extends EventEmitter {
         throw new Error("受管进程未确认停止，暂不退出");
       await this.accounts.cancelLogin();
       if (this.accounts.drain) await this.accounts.drain();
+      if(this.resumeOnShutdown)this.resumeShutdownJobs();
       await this.store.save();
     } catch (error) {
       this.closing = false;
+      if(this.resumeOnShutdown)this.resumeShutdownJobs(true);
       this.start();
       throw error;
-    }
+    }finally{this.resumeOnShutdown=false;}
   }
 }
