@@ -1550,7 +1550,7 @@ export class Scheduler extends EventEmitter {
     planMode?: boolean;
     multiAgent?: boolean;
     serviceTier?: string;
-  }, requestId?: string) {
+  }, requestId?: string, expectedControlRevision?:number) {
     return this.queueControl(input.id, async () => {
       const job = this.store.data.jobs.find((j) => j.id === input.id);
       if (this.closing) throw new Error("Scheduler is shutting down");
@@ -1558,9 +1558,12 @@ export class Scheduler extends EventEmitter {
       const fingerprint = requestId ? createHash("sha256").update(JSON.stringify(input)).digest("hex") : undefined;
       const receipt = requestId && job.messageReceipts?.find(r => r.id === requestId);
       if (receipt) {
+        // Confirming an existing acceptance must not resume or rewrite a task
+        // that the operator has since paused/cancelled.
         if (receipt.fingerprint !== fingerprint) throw Error("请求标识已用于不同消息");
         return;
       }
+      if(expectedControlRevision!==undefined&&(job.controlRevision||0)!==expectedControlRevision)throw Error("任务控制状态已变化，确认的追问未投递。");
       if (requestId && (input.action !== "queue" || (job.messageReceipts?.length || 0) >= 1000)) throw Error("可靠投递仅支持排队消息，每个会话最多保留 1000 个投递回执");
       if (
         this.active.has(job.id) &&

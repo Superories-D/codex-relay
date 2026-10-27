@@ -42,6 +42,9 @@ describe.skipIf(process.platform!=="linux")("durable task management",()=>{
       const job=await runtime.scheduler.add({title:"Serialized",prompt:"Work",cwd:root,mode:"cli",model:"",effort:"",bucket:"codex",approvalPolicy:"on-request",sandbox:"workspaceWrite",interactive:true}),expected=taskControlSignature(job);
       const first=runtime.scheduler.control(job.id,"pause"),late=runtime.scheduler.controlObserved(job.id,"cancel",expected);
       await first;expect(await late).toEqual({applied:false});expect(job.state).toBe("paused");
+      await runtime.scheduler.control(job.id,"resume");const revision=job.controlRevision||0;
+      const stop=runtime.scheduler.control(job.id,"cancel"),message=runtime.scheduler.send({id:job.id,text:"An older confirmed repair",attachments:[],action:"queue"},randomUUID(),revision),rejected=expect(message).rejects.toThrow("确认的追问未投递");
+      await stop;await rejected;expect(job.state).toBe("cancelled");expect(job.messageReceipts||[]).toHaveLength(0);
     }finally{await runtime.close();await fs.rm(root,{recursive:true,force:true});}
   });
 });

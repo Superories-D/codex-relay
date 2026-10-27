@@ -13,6 +13,10 @@ import type { conversationExport } from "../core/conversation-export";
 import type { ServerRuntime } from "./runtime";
 import { resolveWorkspace } from "./workspaces";
 
+export const confirmedFollowupSchema=z.object({
+  id:z.string().uuid(),text:z.string().trim().min(1).max(100000),attachments:z.tuple([]),action:z.literal("queue"),
+}).strict();
+export type ConfirmedFollowup=z.infer<typeof confirmedFollowupSchema>;
 export const contextSchema = z
   .object({
     project: z.string().optional(),
@@ -140,6 +144,7 @@ export class TelegramConsole {
     private clean: (text: string, limit?: number) => string,
     private save: (context: TelegramContext) => Promise<void>,
     private now: () => number,
+    private prepareFollowup:(input:ConfirmedFollowup,requestId:string,controlRevision:number)=>Promise<void>=async()=>{throw Error("Confirmed follow-up persistence is unavailable");},
   ) {}
   job(prefix?: string) {
     if (!prefix || prefix.length < 8)
@@ -342,7 +347,7 @@ export class TelegramConsole {
         const text = await this.runtime.command("delivery.repair", job.id) as string;
         if(text.length>100000) return this.paginate("修复要求超过消息上限，请精简条件或手动填写追问。\n\n"+text,job.id);
         const reply = this.paginate(`修复追问预览（尚未投递）\n${text}\n\n确认后提交修复追问：空闲任务进入队列，运行中的任务在本轮结束后处理。`, job.id);
-        reply.keyboard!.push([this.action("确认排队修复", job, "chat.submit", {requestId, input:{id:job.id, text, action:"queue", attachments:[]}})]);
+        reply.keyboard!.push([this.action("确认排队修复", job, "chat.submit", {input:{id:job.id, text, action:"queue", attachments:[]}})]);
         return reply;
       }
       let receipt: any;
@@ -791,6 +796,15 @@ export class TelegramConsole {
       const job = this.job(action.jobId);
       if (action.signature !== this.signature(job))
         throw Error("任务或队列已变化，请刷新后操作");
+      if(action.command==="chat.submit") {
+        const input=confirmedFollowupSchema.parse((action.args as {input:unknown}).input),controlRevision=job.controlRevision||0;
+        // Freeze a normal idempotent send before consuming the ephemeral grant.
+        // Restart can then continue through /send without needing that grant.
+        await this.prepareFollowup(input,requestId,controlRevision);
+        this.actions.delete(args);
+        await this.runtime.command("chat.confirmedSubmit",{requestId,input,controlRevision});
+        return this.card(job);
+      }
       // Consume before execution: an uncertain response must never replay a control.
       this.actions.delete(args);
       if(action.command==="job.control"||action.command==="chat.queue") {

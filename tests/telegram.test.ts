@@ -393,6 +393,67 @@ describe.skipIf(process.platform !== "linux")("Telegram mobile console", () => {
       expect((await f.send("/delivery")).text).toContain("SHA256");
     } finally { await f.close(); }
   });
+  it.each(["prepare-before-write","prepare-after-write","reply"])("resumes a confirmed repair without another click after %s interruption",async phase=>{
+    let armed=false;
+    const f=await consoleFixture(async(file,value)=>{
+      const state=JSON.parse(String(value)),preparing=state.incoming?.text.startsWith("/send "),fail=armed&&(phase==="reply"?!!state.pending:preparing);
+      if(fail){armed=false;if(phase==="prepare-after-write")await atomicWrite(file,value);throw Error("Confirmed repair checkpoint interrupted");}
+      await atomicWrite(file,value);
+    });
+    try {
+      await f.send("/run 1 Reliable repair");const job=f.runtime.store.data.jobs[0];await f.runtime.scheduler.saveDelivery(job.id,0,[{kind:"file",path:"missing.txt",label:"Missing output",minBytes:1}]);await f.send("/verify");
+      const expected=await f.runtime.command("delivery.repair",job.id) as string,preview=await f.send("/repair"),confirm=buttons(preview).find(button=>button.text==="确认排队修复")!.callback_data,revision=job.queueRevision||0;
+      armed=true;await expect(f.click(confirm)).rejects.toThrow("Confirmed repair checkpoint interrupted");
+      if(phase!=="reply")expect(job.messageReceipts||[]).toHaveLength(0);else expect(job.messageReceipts).toHaveLength(1);
+      if(phase!=="prepare-before-write")await f.restart();
+      await f.bridge.pollOnce();
+      expect(f.t.sent.at(-1).text).not.toContain("已过期");expect(job.messageReceipts).toHaveLength(1);expect(job.queuedMessages).toHaveLength(1);expect(job.queueRevision).toBe(revision+1);expect(job.queuedMessages![0].text).toBe(expected.trim());
+      const accepted=job.messageReceipts![0].id;await f.bridge.pollOnce();expect(job.messageReceipts![0].id).toBe(accepted);expect(job.queuedMessages).toHaveLength(1);
+      expect((await f.click(confirm)).text).toContain("已过期");expect(job.queuedMessages).toHaveLength(1);
+    }finally{await f.close();}
+  });
+  it("restores a confirmed repair after a complete runtime restart without changing its message receipt",async()=>{
+    let armed=false;
+    const write=async(file:string,value:string|Buffer)=>{if(armed&&JSON.parse(String(value)).pending){armed=false;throw Error("Repair reply interrupted");}await atomicWrite(file,value);};
+    const f=await consoleFixture(write);let reopened:ServerRuntime|undefined;
+    try {
+      await f.send("/run 1 Full restart repair");const job=f.runtime.store.data.jobs[0];await f.runtime.scheduler.saveDelivery(job.id,0,[{kind:"file",path:"missing.txt",label:"Missing",minBytes:1}]);await f.send("/verify");
+      const preview=await f.send("/repair"),confirm=buttons(preview).find(button=>button.text==="确认排队修复")!.callback_data;armed=true;await expect(f.click(confirm)).rejects.toThrow("Repair reply interrupted");
+      const receipt=structuredClone(job.messageReceipts),revision=job.queueRevision,text=job.queuedMessages![0].text;
+      await f.runtime.close();reopened=await ServerRuntime.open(f.runtime.store.root,undefined,[f.workspace]);
+      const bridge=await TelegramBridge.open(reopened,config,[f.workspace],f.t.api,write);await bridge.pollOnce();await bridge.pollOnce();
+      const restored=reopened.store.data.jobs.find(item=>item.id===job.id)!;
+      expect(restored.messageReceipts).toEqual(receipt);expect(restored.queueRevision).toBe(revision);expect(restored.queuedMessages).toHaveLength(1);expect(restored.queuedMessages![0].text).toBe(text);expect(f.t.sent.at(-1).text).toContain(`Follow-up accepted for ${job.id}`);
+    }finally{await reopened?.close();await f.close();}
+  });
+  it.each([["before-send","pause"],["before-send","cancel"],["after-send","pause"],["after-send","cancel"]] as const)("keeps a later %s/%s authoritative over a confirmed repair",async(phase,action)=>{
+    let armed=false;
+    const f=await consoleFixture(async(file,value)=>{
+      const state=JSON.parse(String(value)),fail=armed&&(phase==="before-send"?state.incoming?.text.startsWith("/send "):!!state.pending);
+      if(fail){armed=false;if(phase==="before-send")await atomicWrite(file,value);throw Error("Repair interrupted around delivery");}await atomicWrite(file,value);
+    });
+    try {
+      await f.send("/run 1 Stopped repair");const job=f.runtime.store.data.jobs[0];await f.runtime.scheduler.saveDelivery(job.id,0,[{kind:"file",path:"missing.txt",label:"Missing",minBytes:1}]);await f.send("/verify");
+      const preview=await f.send("/repair"),confirm=buttons(preview).find(button=>button.text==="确认排队修复")!.callback_data;armed=true;await expect(f.click(confirm)).rejects.toThrow("Repair interrupted around delivery");
+      await f.runtime.scheduler.control(job.id,action);const stoppedQueue=structuredClone(job.queuedMessages||[]),revision=job.queueRevision;
+      await f.restart();await f.bridge.pollOnce();
+      expect(job.state).toBe(action==="pause"?"paused":"cancelled");expect(job.stopIntent).toBe(action);expect(job.queuedMessages||[]).toEqual(stoppedQueue);expect(job.queueRevision).toBe(revision);expect(job.messageReceipts||[]).toHaveLength(phase==="before-send"?0:1);
+      if(phase==="before-send")expect(f.t.sent.at(-1).text).toContain("确认的追问未投递");else expect(f.t.sent.at(-1).text).toContain("Follow-up accepted");
+    }finally{await f.close();}
+  });
+  it("retains a prepared repair through the real drain-before-bot-stop ordering",async()=>{
+    let armed=false,drain:()=>Promise<void>=async()=>{};
+    const write=async(file:string,value:string|Buffer)=>{await atomicWrite(file,value);if(armed&&JSON.parse(String(value)).incoming?.text.startsWith("/send ")){armed=false;await drain();}};
+    const f=await consoleFixture(write);let reopened:ServerRuntime|undefined;
+    try {
+      await f.send("/run 1 Shutdown repair");const job=f.runtime.store.data.jobs[0];await f.runtime.scheduler.saveDelivery(job.id,0,[{kind:"file",path:"missing.txt",label:"Missing",minBytes:1}]);await f.send("/verify");
+      const preview=await f.send("/repair"),confirm=buttons(preview).find(button=>button.text==="确认排队修复")!.callback_data;
+      drain=async()=>{f.runtime.beginDrain();await f.bridge.stop();};armed=true;await expect(f.click(confirm)).rejects.toThrow();expect(job.messageReceipts||[]).toHaveLength(0);
+      const frozen=JSON.parse(await fs.readFile(path.join(f.runtime.store.root,"telegram-state.json"),"utf8"));expect(frozen.incoming.text).toMatch(/^\/send /);expect(frozen.pending).toBeUndefined();
+      await f.runtime.close();reopened=await ServerRuntime.open(f.runtime.store.root,undefined,[f.workspace]);const bridge=await TelegramBridge.open(reopened,config,[f.workspace],f.t.api,write);await bridge.pollOnce();
+      const restored=reopened.store.data.jobs.find(item=>item.id===job.id)!;expect(restored.messageReceipts).toHaveLength(1);expect(restored.queuedMessages).toHaveLength(1);expect(f.t.sent.at(-1).text).toContain("Follow-up accepted");
+    }finally{await reopened?.close();await f.close();}
+  });
   it("reconciles a verification after the reply checkpoint fails without reading files twice", async () => {
     let fail = false;
     const f = await consoleFixture(async (file,value) => {

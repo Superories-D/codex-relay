@@ -196,6 +196,7 @@ const stateSchema = z
         updateId: z.number().int().nonnegative(),
         text: z.string().max(110000),
         context: contextSchema,
+        confirmation:z.object({controlRevision:z.number().int().nonnegative()}).strict().optional(),
         media: z
           .object({
             fileId: z.string().min(1).max(1000),
@@ -205,6 +206,7 @@ const stateSchema = z
           .optional(),
       })
       .strict()
+      .refine(incoming=>!incoming.confirmation||!incoming.media&&/^\/send\s/.test(incoming.text),"Invalid confirmed follow-up")
       .optional(),
     pending: replySchema
       .extend({ updateId: z.number().int().nonnegative() })
@@ -265,6 +267,13 @@ export class TelegramBridge {
         await this.commit({ ...this.state!, context: selection });
       },
       now,
+      async(input,id,controlRevision)=>{
+        const incoming=this.state?.incoming;
+        if(!incoming||incoming.media||requestId(this.identity,incoming.updateId)!==id)throw Error("确认请求上下文已变化，请重新打开修复预览");
+        // Keep the original update ID and persist its exact destination/body.
+        // The existing /send path deduplicates this ID across service restarts.
+        await this.commit({...this.state!,incoming:{...incoming,text:`/send ${input.id} ${input.text}`,context:{...incoming.context,attachments:[]},confirmation:{controlRevision}}});
+      },
     );
   }
   static async open(
@@ -413,6 +422,7 @@ export class TelegramBridge {
     updateId: number,
     text: string,
     context: TelegramContext,
+    controlRevision?:number,
   ): Promise<string | TelegramReply> {
     const match = text.match(/^\/(\w+)(?:@[A-Za-z0-9_]+)?(?:\s+([\s\S]*))?$/);
     if (!match) return "Use /help for Relay commands.";
@@ -524,8 +534,9 @@ export class TelegramBridge {
       const parts = args.match(/^(\S+)\s+([\s\S]+)$/);
       if (!parts) throw Error("Use /send TASK_ID instruction");
       const job = this.findJob(parts[1]);
-      await this.runtime.command("chat.submit", {
+      await this.runtime.command(controlRevision===undefined?"chat.submit":"chat.confirmedSubmit", {
         requestId: requestId(this.identity, updateId),
+        ...(controlRevision===undefined?{}:{controlRevision}),
         input: {
           id: job.id,
           text: parts[2],
@@ -811,6 +822,7 @@ export class TelegramBridge {
             incoming.updateId,
             incoming.text,
             incoming.context,
+            incoming.confirmation?.controlRevision,
           );
       if (
         !incoming.media &&
@@ -825,7 +837,9 @@ export class TelegramBridge {
       }
       reply = typeof result === "string" ? { text: result } : result;
     } catch (e) {
-      if (e instanceof TelegramPersistenceError) throw e;
+      // Shutdown is not a definitive rejection. Retain the resolved incoming
+      // intent so a new bridge can reconcile it instead of sending an error.
+      if (this.controller.signal.aborted || e instanceof TelegramPersistenceError) throw e;
       reply = {
         text: `Error: ${this.safe(e instanceof Error ? e.message : e)}`,
       };

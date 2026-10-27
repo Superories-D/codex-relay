@@ -390,6 +390,10 @@ export class ServerRuntime {
         const a=z.object({requestId:idSchema,input:chatSendSchema}).strict().parse(args);
         return this.scheduler.send(a.input,a.requestId);
       }
+      case "chat.confirmedSubmit": {
+        const a=z.object({requestId:idSchema,controlRevision:z.number().int().nonnegative(),input:chatSendSchema.refine(input=>input.action==="queue")}).strict().parse(args);
+        return this.scheduler.send(a.input,a.requestId,a.controlRevision);
+      }
       case "chat.send":
         return this.scheduler.send(chatSendSchema.parse(args));
       case "approval.list":
