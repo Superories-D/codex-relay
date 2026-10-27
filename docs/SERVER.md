@@ -77,6 +77,8 @@ The token and unsent task draft stay in this browser session. Disconnect removes
 
 Add `RELAY_QA_HTTPS=1` to run the same browser checks through a local TLS reverse proxy. This fixture requires OpenSSL and trusts its temporary self-signed certificate only inside the test browser context. It does not validate a production proxy or certificate deployment.
 
+The browser bounds response-header waits and silent status streams to 45 seconds. Any received data, including the daemon's 15-second heartbeat comments, renews that deadline. A stalled connection reconnects with backoff and receives a fresh snapshot; it does not replay task commands. Token or installation-identity rejection remains terminal until the connection is corrected. `RELAY_CHROMIUM_PATH=/path/to/chromium node scripts/qa/stream-recovery.cjs` verifies both half-open cases through a real local proxy, using browser clock control to avoid waiting 45 seconds per case.
+
 ## Remote CLI and reliable follow-up delivery
 
 `scripts/remote.cjs` controls the HTTP service without copying its data directory or requiring Electron. Keep a private local copy of the HTTP token and use an SSH tunnel or HTTPS endpoint:

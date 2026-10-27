@@ -35,11 +35,20 @@ export async function watch(
 ) {
   let attempt = 0;
   while (!signal.aborted) {
+    const connection = new AbortController();
+    let idle: ReturnType<typeof setTimeout>;
+    // The daemon sends heartbeat comments every 15 seconds. Half-open proxies
+    // can keep a fetch alive forever, so bound both headers and stream silence.
+    const heartbeat = () => {
+      clearTimeout(idle);
+      idle = setTimeout(() => connection.abort(), 45000);
+    };
+    heartbeat();
     try {
       onStatus(attempt ? "重新连接中" : "正在连接");
       const response = await fetch("/api/events", {
         headers: { Authorization: `Bearer ${token}`, ...serverHeaders() },
-        signal,
+        signal: AbortSignal.any([signal, connection.signal]),
         redirect:"error",
       });
       if (response.status === 409) {
@@ -59,6 +68,7 @@ export async function watch(
         while (!signal.aborted) {
           const { value, done } = await reader.read();
           if (done) break;
+          heartbeat();
           buffer += decoder.decode(value, { stream: true });
           if (buffer.length > 32 * 1024 * 1024)
             throw Error("Status frame too large");
@@ -80,6 +90,9 @@ export async function watch(
       }
     } catch {
       if (signal.aborted) return;
+    } finally {
+      clearTimeout(idle!);
+      connection.abort();
     }
     if (signal.aborted) return;
     onStatus("重新连接中");
