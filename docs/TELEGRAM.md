@@ -172,3 +172,7 @@ Send a document or photo to stage it durably (8 MiB per file, up to 10 pending f
 | 从阶段返工 | `/wf preview WORKFLOW_ID STAGE`，审阅后 `/wf retry PREVIEW_ID`；分支默认暂停，原历史保留 |
 
 实时控制、Goal、定时和工作流操作在服务器先记意图，再执行。普通网络中断按同一请求编号确认；原生调用结果无法确定时返回未知状态，避免双重执行。修改 Goal 正文、立即执行定时任务和启动目标均需用户明确发出对应命令。工作流返工预览有效期十分钟。
+
+### 远程操作记录
+
+`/actions` 查看最近 20 条有持久回执的远程操作，`/receipt UUID` 查看原回执。网页侧栏“远程操作记录”提供分页、刷新、回执详情及任务跳转。列表只返回操作摘要，不包含原参数、结果正文或请求指纹；损坏记录显示为不可读取。pending/uncertain 表示需要核查原任务，不会提供自动重放原生调用的按钮。

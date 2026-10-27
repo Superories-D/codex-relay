@@ -121,3 +121,19 @@ it.skipIf(process.platform !== "linux")(
     }
   },
 );
+it("pages operation history without exposing result payloads and keeps unreadable receipts visible",async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),"relay-actions-list-"));
+ try{
+ const actions=new RemoteActions(root),job=randomUUID();expect((await actions.list()).entries).toEqual([]);
+ const ids=[randomUUID(),randomUUID(),randomUUID()];
+ for(let i=0;i<ids.length;i++){
+  await actions.run(ids[i],"test.action",job,{prompt:"private input"},async()=>({prompt:"private result"}));
+  await fs.utimes(path.join(root,"remote-actions",ids[i]+".json"),100+i,100+i);
+ }
+ const first=await actions.list({limit:2});expect(first.entries.map(e=>e.id)).toEqual([ids[2],ids[1]]);expect(JSON.stringify(first)).not.toContain("private");expect(JSON.stringify(first)).not.toContain("fingerprint");
+ const second=await actions.list({limit:2,before:first.next});expect(second.entries.map(e=>e.id)).toEqual([ids[0]]);expect(second.next).toBeUndefined();
+ await fs.writeFile(path.join(root,"remote-actions",ids[0]+".json"),"broken");
+ const corrupt=await actions.list({limit:1});expect(corrupt.entries[0]).toMatchObject({id:ids[0],state:"unavailable"});
+ await expect(actions.list({limit:51})).rejects.toThrow();await expect(actions.list({before:{at:0,id:"../escape"}})).rejects.toThrow();
+ }finally{await fs.rm(root,{recursive:true,force:true});}
+});

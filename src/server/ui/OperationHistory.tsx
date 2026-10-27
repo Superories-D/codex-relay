@@ -1,0 +1,11 @@
+import React,{useState,useRef} from "react";
+import {t,errorText} from "../../renderer/i18n";
+import type {Job} from "../../shared/types";
+export function OperationHistory({call,jobs,open}:{call:(name:string,args?:any)=>Promise<any>;jobs:Job[];open:(id:string)=>void}){
+ const [entries,setEntries]=useState<any[]>([]),[next,setNext]=useState<any>(),[busy,setBusy]=useState(false),[error,setError]=useState(""),[detail,setDetail]=useState<any>();
+ const alive=useRef(true);React.useEffect(()=>()=>{alive.current=false;},[]);
+ async function load(more=false){if(busy)return;setBusy(true);setError("");try{const page=await call("actions.list",{limit:20,...(more&&next?{before:next}:{})});if(alive.current){setEntries(old=>more?[...old.filter(e=>!page.entries.some((n:any)=>n.id===e.id)),...page.entries]:page.entries);setNext(page.next);}}catch(e){if(alive.current)setError(errorText(e));}finally{if(alive.current)setBusy(false);}}
+ async function inspect(id:string){setBusy(true);setError("");try{const receipt=await call("action.read",id);if(alive.current)setDetail(receipt);}catch(e){if(alive.current)setError(errorText(e));}finally{if(alive.current)setBusy(false);}}
+ const labels:Record<string,string>={pending:t("结果待确认"),succeeded:t("操作已确认"),uncertain:t("结果未知"),unavailable:t("回执不可读取")};
+ return <details className="operation-history" onToggle={e=>{if(e.currentTarget.open&&!entries.length)void load();}}><summary>{t("远程操作记录")}</summary><p>{t("待确认和未知结果不会自动重复执行，请检查对应任务。")}</p><button type="button" disabled={busy} onClick={()=>void load()}>{t("刷新")}</button>{entries.map(entry=><article key={entry.id}><strong>{labels[entry.state]} · {entry.action||entry.id.slice(0,8)}</strong><time>{new Date(entry.updatedAt).toLocaleString()}</time><code>{entry.id}</code>{entry.error&&<p>{entry.error}</p>}<button type="button" disabled={busy} onClick={()=>void inspect(entry.id)}>{t("查看回执")}</button>{jobs.some(j=>j.id===entry.jobId)&&<button type="button" onClick={()=>open(entry.jobId)}>{t("打开对应任务")}</button>}</article>)}{next&&<button type="button" disabled={busy} onClick={()=>void load(true)}>{t("加载更多")}</button>}{detail&&<section><h3>{detail.id}</h3><pre>{JSON.stringify(detail,null,2).slice(0,12000)}</pre><button type="button" onClick={()=>setDetail(undefined)}>{t("关闭")}</button></section>}{error&&<p role="alert">{error}</p>}</details>;
+}

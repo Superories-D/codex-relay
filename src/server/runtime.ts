@@ -211,6 +211,8 @@ export class ServerRuntime {
 
       case "action.read":
         return (this.remoteActions ||= new RemoteActions(this.store.root)).read(idSchema.parse(args));
+      case "actions.list":
+        return (this.remoteActions ||= new RemoteActions(this.store.root)).list(args);
       case "models.list":
         return this.store.data.accounts.filter(a=>a.enabled).map(a=>({account:a.label,ids:a.modelAccess?.ids||[],observedAt:a.modelAccess?.observedAt||0,complete:a.modelAccess?.complete||false}));
       case "task.steer": {

@@ -5,6 +5,13 @@ import { operationsEnglish } from "./operations";
 import {recoveryEnglish} from "./recovery";
 import {checkpointEnglish} from "./checkpoints";
 export const english: Record<string, string> = {
+"加载更多":"Load more",
+"打开对应任务":"Open task",
+"查看回执":"View receipt",
+"待确认和未知结果不会自动重复执行，请检查对应任务。":"Pending and unknown operations are not executed again automatically. Check the corresponding task.",
+"回执不可读取":"Receipt unavailable",
+"结果待确认":"Awaiting confirmation",
+"远程操作记录":"Remote operation history",
 "提交结果尚未确认，正在自动使用原请求编号恢复。":"Submission is unconfirmed. Recovering automatically with the original request ID.",
 "服务器身份已变化，请在新标签页连接；本页保留原服务器的待确认请求。":"The server installation changed. Connect in a new tab; pending requests for the original server remain here.",
 "服务器缺少安装标识，请更新服务器后重连。":"The server has no installation ID. Update it and reconnect.",

@@ -1,3 +1,4 @@
+import {OperationHistory} from "./OperationHistory";
 import {usePendingRetry} from "./PendingRetry";
 import {bindServerIdentity,serverHeaders} from "./identity";
 import {WorkflowOperations} from "./WorkflowOperations";
@@ -497,6 +498,7 @@ function App() {
           {!center && <main className="remote-layout">
             <aside className="remote-sidebar">
               <RemoteSchedules roots={roots} call={call}/>
+              <OperationHistory call={call} jobs={snapshot?.jobs||[]} open={setSelected}/>
               <section className="new-task">
                 <h2>{t("新建任务")}</h2>
                 <button disabled={!!pending || busy} onClick={() => setTemplates(true)}>{t("任务模板")}</button>

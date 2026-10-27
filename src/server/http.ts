@@ -13,7 +13,7 @@ const allowed = new Set([
   "workflow.previewRetry", "workflow.retry", "workflow.control",
   "schedule.list", "schedule.create", "schedule.save", "schedule.run", "schedule.remove",
   "goal.read", "goal.update",
-  "action.read", "models.list", "task.steer", "task.model",
+  "action.read", "actions.list", "models.list", "task.steer", "task.model",
   "assets.list",
   "assets.read",
   "snapshot",

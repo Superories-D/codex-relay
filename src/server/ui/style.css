@@ -400,3 +400,5 @@ label input[type="checkbox"] {width:auto;margin:0}
 .task-summary button {display:flex;justify-content:center;align-items:center;gap:.5rem}
 .task-summary button[aria-pressed="true"] {border-color:#71cabd;background:#19322f}
 .remote-attachments{border:1px dashed var(--line,#596574);border-radius:10px;padding:10px;margin:8px 0;min-width:0}.remote-attachments input{max-width:100%}.remote-attachments>div{display:flex;align-items:center;gap:8px;justify-content:space-between}.remote-attachments span{overflow-wrap:anywhere;min-width:0}.remote-attachments button{flex-shrink:0}
+
+.operation-history{margin:1rem 0}.operation-history article{display:grid;gap:.5rem;border-bottom:1px solid var(--line);padding:1rem 0;overflow-wrap:anywhere}.operation-history time{font-size:12px;color:var(--muted)}.operation-history pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:40vh;overflow:auto}

@@ -298,6 +298,13 @@ const { chromium } = require(
         assert.equal(fork.length,2);assert.ok(fork.every(j=>j.state==="paused"),"retry branch must await an explicit start");
         await page.reload();await page.locator(".connection-bar.online").waitFor();
         assert.equal(await page.locator(".remote-task-list button").count(),5);
+        await page.locator(".operation-history > summary").click();
+        const history=page.locator(".operation-history");await history.locator("article").first().waitFor();
+        await history.getByRole("button",{name:"View receipt",exact:true}).first().click();await history.locator("pre").waitFor();
+        assert.match(await history.locator("pre").textContent(),/"state": "succeeded"/);
+        await page.setViewportSize({width:390,height:900});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),"operation history mobile overflow");
+        await page.screenshot({path:"qa-output/remote-operations-390.png",fullPage:true});await page.setViewportSize({width:1280,height:900});
+        await history.getByRole("button",{name:"Close",exact:true}).click();await page.locator(".operation-history > summary").click();
         await page.locator(".remote-header").getByRole("button",{name:"Task center",exact:true}).click();
         await page.locator(".task-center").waitFor();
         await page.locator(".task-filters select").selectOption(workspace);
