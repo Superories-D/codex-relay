@@ -13,8 +13,8 @@ beforeEach(async () => {
 });
 afterEach(async () => fs.rm(root, { recursive: true, force: true }));
 describe("crash recovery refuses duplicate writers", () => {
-  it("keeps a persisted Goal budget stop held after checking a service shutdown owner",async()=>{
-    const store=new Store(root);store.data.settings.resetWarmupEnabled=false;store.data.jobs=[{id:"budget",mode:"cli",state:"paused",resumeAfterShutdown:true,threadId:"thread",goal:{status:"budgetLimited"}} as any];await store.save();
+  it.each(["budgetLimited","usageLimited"])("keeps a persisted Goal budget stop held after checking a service shutdown owner (%s)",async(status)=>{
+    const store=new Store(root);store.data.settings.resetWarmupEnabled=false;store.data.jobs=[{id:"budget",mode:"cli",state:"paused",resumeAfterShutdown:true,threadId:"thread",goal:{status,tokenBudget:100,tokensUsed:100}} as any];await store.save();
     const disk=new Store(root);await disk.load();const job=disk.data.jobs[0];job.autoRecovery!.nextAttemptAt=0;const factory=vi.fn(),recover=vi.fn(async()=>{}),scheduler=new Scheduler(disk,{busy:new Set(),cancelLogin:async()=>{}} as any,{cli:factory,desktop:factory},recover);
     try{await(scheduler as any).tick();await Promise.all([...(scheduler as any).recoveryTasks.values()]);expect(recover).toHaveBeenCalledOnce();expect(job.state).toBe("needs_attention");expect(job.lastError).toContain("预算");expect(job.resumeAfterShutdown).toBeUndefined();expect(job.autoRecovery).toBeUndefined();expect(factory).not.toHaveBeenCalled();}finally{await scheduler.shutdown();}
   });

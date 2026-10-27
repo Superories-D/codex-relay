@@ -56,6 +56,25 @@ not automatically answered. Configuration errors and invalid account credentials
 retain their existing handling. Recovery does not infer that silence during a long
 model/tool operation is a crash.
 
+Native `usageLimited` is handled separately from a Token budget stop. At a turn
+boundary Relay reads live account limits. Between Goal rounds it also probes
+limits before settling the owned worker. Actual exhausted limits use normal
+account rotation; an available or unverified account reconnects under the
+existing 2–60 second recovery backoff instead of asking for a Continue click.
+The replacement worker reads the saved Goal while its thread is unloaded and
+requires both quota evidence and verified remaining Goal budget before restoring
+only `status: active` with automatic provenance. It preserves the objective,
+Token/time counters and budget, then uses native Goal admission without inventing
+a user turn. Missing budget/quota metadata retries inspection without inference.
+
+A `usageLimited` status can coexist with an already reached numeric Token budget;
+that remains held, including across service restart. Later paused/blocked/budget
+stops observed during child cleanup override a queued reconnect. User Goal
+mutations serialize with automatic activation, and newer Goal notifications take
+precedence over a delayed activation reply. The server applies its native budget
+enforcement again when status is restored. Existing tasks already awaiting manual
+attention are not automatically reauthorized by this change.
+
 ## Validation
 
 - Unit and scheduler coverage: exponential backoff, same-thread continuation,

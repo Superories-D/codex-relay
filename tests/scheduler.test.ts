@@ -1275,6 +1275,18 @@ it("keeps a Goal budget stop unfinished without rotating accounts or draining qu
   expect(job.queuedMessages).toHaveLength(1);
   expect(job.lastError).toContain("预算");
 });
+it.each(["quota","recoverable","interrupted"] as const)("keeps a later native Goal pause authoritative over %s during cleanup",async(kind)=>{
+  const job=await scheduler.add({...input,cwd:root,interactive:true});await until(()=>workers[0]?.started);
+  job.goal={threadId:job.threadId!,status:"paused"} as any;
+  workers[0].settle({kind});await(scheduler as any).currentRun;
+  expect(job.state).toBe("paused");expect(job.autoRecovery).toBeUndefined();expect(workers).toHaveLength(1);expect(job.rotations).toBe(0);
+});
+it("recognizes a masked budget stop without rotating accounts or sending another turn",async()=>{
+  const job=await scheduler.add({...input,cwd:root,interactive:true});await until(()=>workers[0]?.started);
+  job.goal={threadId:job.threadId!,status:"usageLimited",tokenBudget:100,tokensUsed:100} as any;
+  workers[0].settle({kind:"recoverable"});await(scheduler as any).currentRun;
+  expect(job.state).toBe("needs_attention");expect(job.lastError).toContain("预算");expect(job.autoRecovery).toBeUndefined();expect(job.rotations).toBe(0);
+});
 it("pauses Goal continuation before stopping the user's task and cancels automatic quota recovery", async () => {
   const job = await scheduler.add({ ...input, cwd: root, interactive: true });
   await until(() => job.state === "running");

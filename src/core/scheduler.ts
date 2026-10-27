@@ -1,5 +1,6 @@
 import { dispatchHeld, projectKey, projectHasCapacity } from "../shared/dispatch";
 import {taskControlSignature} from "../shared/task-control";
+import { goalBudgetState } from "../shared/goal";
 import { operationCard, accountGateReasons,indexOperations, type AccountGateCode } from "./operations";
 import { operationObservation } from "./operations-observation";
 import {RecoveryDomains,captureWindowsDomain} from "./recovery-domains";
@@ -842,7 +843,8 @@ export class Scheduler extends EventEmitter {
             clearRecovery(job);
             if (recorded) await this.finishRecordedCompletion(job,"recovery");
             else {
-              const budgetHeld=job.resumeAfterShutdown&&job.goal?.status==="budgetLimited"&&!job.pendingMessage&&!job.review;
+              const budgetHeld=job.resumeAfterShutdown&&job.goal&&
+                (job.goal.status==="budgetLimited"||goalBudgetState(job.goal)==="limited")&&!job.pendingMessage&&!job.review;
               job.state = job.stopIntent === "cancel" ? "cancelled"
                 : job.stopIntent || job.archived || this.closing ? "paused" : budgetHeld?"needs_attention":"queued";
               if (job.state === "queued" && job.goal?.status === "active" &&
@@ -1368,6 +1370,12 @@ export class Scheduler extends EventEmitter {
     const hadCompletion=!!job.completionPending;
     let undoCompletionQueue:undefined|(()=>void);
     const stopReason = job.stopIntent || active.reason;
+    // A later native/user Goal stop also governs a reconnect already waiting
+    // for child cleanup. Never turn it into an ordinary continuation prompt.
+    if (outcome && ["quota", "recoverable", "interrupted"].includes(outcome.kind) &&
+        !job.pendingMessage && !job.review && !job.submissionUncertain && job.goal &&
+        (["paused", "blocked", "budgetLimited"].includes(job.goal.status) || goalBudgetState(job.goal)==="limited"))
+      outcome = {kind:"goalStopped"};
     const serviceExit=this.closing&&this.resumeOnShutdown&&!job.stopIntent;
     const resumeSystemPause=serviceExit&&(hadCompletion||!outcome||["completed","interrupted","recoverable"].includes(outcome.kind));
     if (stopReason&&stopReason!=="shutdown") {
@@ -1420,6 +1428,8 @@ export class Scheduler extends EventEmitter {
     } else if (outcome?.kind === "goalStopped") {
       job.state = job.goal?.status === "paused" ? "paused" : "needs_attention";
       job.lastError =
+        job.goal && goalBudgetState(job.goal) === "limited"
+          ? "已达到目标 Token 预算，尚未标记目标完成" :
         (
           {
             paused: "目标已暂停，保留原会话",
@@ -2678,7 +2688,7 @@ export class Scheduler extends EventEmitter {
         if(failed&&!job.autoRecovery){job.recoveryRequired=true;job.state="needs_attention";job.lastError="服务退出收尾未完成，正在核查原进程后恢复结果";scheduleRecovery(job,"process");}
         continue;
       }
-      if(job.goal?.status==="budgetLimited"&&!job.pendingMessage&&!job.review){
+      if(job.goal&&(job.goal.status==="budgetLimited"||goalBudgetState(job.goal)==="limited")&&!job.pendingMessage&&!job.review){
         job.state="needs_attention";job.lastError="已达到目标 Token 预算，尚未标记目标完成";job.resumeAfterShutdown=undefined;continue;
       }
       if(job.state==="paused"&&!job.recoveryRequired){
