@@ -1,4 +1,5 @@
-import {bindServerIdentity} from "./identity";
+import {usePendingRetry} from "./PendingRetry";
+import {bindServerIdentity,serverHeaders} from "./identity";
 import {WorkflowOperations} from "./WorkflowOperations";
 import {RemoteSchedules} from "./RemoteSchedules";
 import {RemoteGoal} from "./RemoteGoal";
@@ -28,7 +29,8 @@ import { WorkflowReport } from "../../renderer/WorkflowReport";
 import { RemoteApproval } from "./Approvals";
 import { request, watch, CommandError } from "./client";
 import "./style.css";
-type Submission = { requestId: string; input: NewJob };
+type Submission = { requestId: string; input: NewJob;serverId?:string };
+type PendingMessage={id:string;requestId:string;text:string;attachments?:ChatAttachment[];serverId?:string};
 const readPending = () => {
   try {
     return JSON.parse(
@@ -60,6 +62,8 @@ function App() {
       sessionStorage.getItem("relay.remote.token") || "",
     ),
     [entry, setEntry] = useState("");
+  const [serverId,setServerId]=useState<string>();
+  const submitting=useRef(new Set<string>());
   const [snapshot, setSnapshot] = useState<Snapshot>(),
     [status, setStatus] = useState("正在连接"),
     [roots, setRoots] = useState<string[]>([]);
@@ -78,12 +82,7 @@ function App() {
   const [newUploading,setNewUploading]=useState(false),[followUploading,setFollowUploading]=useState(false);
   useEffect(()=>setFollowAttachments(readAttachments(selected)),[selected]);
   function clearAttachments(id:string,used:ChatAttachment[]=[]){const paths=new Set(used.map(a=>a.path));const next=readAttachments(id).filter(a=>!paths.has(a.path));saveAttachments(id,next);if(id==="new")setNewAttachments(next);else if(selection.current===id)setFollowAttachments(next);}
-  const [pendingMessage, setPendingMessage] = useState<{
-    id: string;
-    requestId: string;
-    text: string;
-    attachments?: ChatAttachment[];
-  } | null>(() => {
+  const [pendingMessage, setPendingMessage] = useState<PendingMessage|null>(() => {
     try {
       return JSON.parse(
         sessionStorage.getItem("relay.remote.message") || "null",
@@ -151,6 +150,7 @@ function App() {
         const meta = await r.json();
         if(!current)return;
         bindServerIdentity(meta.serverId);
+        setServerId(meta.serverId);
         if (current) {
           void watch(
       token,
@@ -221,14 +221,14 @@ function App() {
       setError(errorText(e));
     }
   }
-  function acknowledgeMessage(message: { id: string; text: string; attachments?: ChatAttachment[] }) {
+  function acknowledgeMessage(message: { id: string; text: string; attachments?: ChatAttachment[];requestId:string }) {
     clearAttachments(message.id,message.attachments);
     if (followupDrafts.current[message.id] === message.text) {
       delete followupDrafts.current[message.id];
       saveFollowups();
       if (selection.current === message.id) setFollowup("");
     }
-    setPendingMessage(null);
+    setPendingMessage(current=>current?.requestId===message.requestId?null:current);
   }
   useEffect(() => {
     if (
@@ -239,14 +239,17 @@ function App() {
     )
       acknowledgeMessage(pendingMessage);
   }, [snapshot, pendingMessage]);
-  async function submitFollowup() {
-    if (!job || (pendingMessage && pendingMessage.id !== job.id)) return;
-    const message = pendingMessage || {
-      id: job.id,
+  async function submitFollowup(retry?:PendingMessage) {
+    if (!retry&&!pendingMessage&&!job) return;
+    const message = retry || pendingMessage || {
+      id: job!.id,
+      serverId:serverHeaders()["X-Relay-Server-ID"],
       text: followup,
       attachments:followAttachments,
       requestId: crypto.randomUUID(),
     };
+    if(submitting.current.has(message.requestId))return;
+    submitting.current.add(message.requestId);
     setPendingMessage(message);
     try {
       sessionStorage.setItem("relay.remote.message", JSON.stringify(message));
@@ -262,9 +265,9 @@ function App() {
       acknowledgeMessage(message);
     } catch (e) {
       setError(errorText(e));
-      if (e instanceof CommandError && [400, 401, 403, 422].includes(e.status))
-        setPendingMessage(null);
-    }
+      if (e instanceof CommandError && [400, 422].includes(e.status))
+        setPendingMessage(current=>current?.requestId===message.requestId?null:current);
+    }finally{submitting.current.delete(message.requestId);}
   }
   async function exportChat(id:string) {
     try {
@@ -315,8 +318,9 @@ function App() {
   const run = (name: string, args?: unknown) => {
     void action(name, args).catch(() => {});
   };
-  async function submit() {
-    const payload = pending || {
+  async function submit(retry?:Submission) {
+    const payload = retry || pending || {
+      serverId:serverHeaders()["X-Relay-Server-ID"],
       requestId: crypto.randomUUID(),
       input: {
         title: prompt.trim().split("\n")[0].slice(0, 120),
@@ -332,20 +336,24 @@ function App() {
         attachments:newAttachments,
       },
     };
+    if(submitting.current.has(payload.requestId))return;
+    submitting.current.add(payload.requestId);
     setPending(payload);
     try {
       sessionStorage.setItem("relay.remote.pending", JSON.stringify(payload));
-      const accepted = await action("job.submit", payload);
+      const accepted = await action("job.submit", {requestId:payload.requestId,input:payload.input});
       clearAttachments("new",payload.input.attachments);
       setSelected(accepted.id);
-      setPending(null);
+      setPending(current=>current?.requestId===payload.requestId?null:current);
       setPrompt((current) => (current === payload.input.prompt ? "" : current));
     } catch (e) {
       setError(errorText(e));
-      if (e instanceof CommandError && [400, 401, 403, 422].includes(e.status))
-        setPending(null); /* Keep the request ID on transport failures. */
-    }
+      if (e instanceof CommandError && [400, 422].includes(e.status))
+        setPending(current=>current?.requestId===payload.requestId?null:current);
+    }finally{submitting.current.delete(payload.requestId);}
   }
+  usePendingRetry(pending,serverId,!!token&&status==="已连接",submit);
+  usePendingRetry(pendingMessage,serverId,!!token&&status==="已连接",submitFollowup);
   useEffect(() => {
     if (!selected || !token) {
       setChat([]);
@@ -536,7 +544,7 @@ function App() {
                     {t(pending ? "重试同一提交" : "创建并排队")}
                   </button>
                   {pending && (
-                    <p>{t("提交结果尚未确认，重试会沿用同一请求编号。")}</p>
+                    <p>{t(pending?.serverId?"提交结果尚未确认，正在自动使用原请求编号恢复。":"提交结果尚未确认，重试会沿用同一请求编号。")}</p>
                   )}
                 </form>
                 <button
@@ -731,7 +739,7 @@ function App() {
                       {t(pendingMessage ? "重试同一提交" : "加入待发送队列")}
                     </button>
                     {pendingMessage && (
-                      <p>{t("提交结果尚未确认，重试会沿用同一请求编号。")}</p>
+                      <p>{t(pendingMessage?.serverId?"提交结果尚未确认，正在自动使用原请求编号恢复。":"提交结果尚未确认，重试会沿用同一请求编号。")}</p>
                     )}
                     <span>
                       {t("待发送队列")} · {job.queuedMessages?.length || 0}

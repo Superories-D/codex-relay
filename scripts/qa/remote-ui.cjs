@@ -248,6 +248,16 @@ const { chromium } = require(
               ?.length === 1
           );
         });
+        let heldFollowup=true;
+        await page.route("**/api/command",async route=>{const b=route.request().postDataJSON();if(heldFollowup&&b?.name==="chat.submit"&&b.args.input.text==="Recover follow-up after reload"){heldFollowup=false;await route.abort();}else await route.fallback();});
+        await page.locator(".remote-followup textarea").fill("Recover follow-up after reload");
+        await page.locator(".remote-followup > button").click();
+        await page.waitForFunction(()=>!!sessionStorage.getItem("relay.remote.message"));
+        await page.reload();await page.locator(".connection-bar.online").waitFor();
+        await page.waitForFunction(()=>!sessionStorage.getItem("relay.remote.message"));
+        await page.locator(".remote-task-list button").filter({hasText:"Remote QA en"}).click();
+        const followupReceipts=await page.evaluate(async()=>{const r=await fetch("/api/snapshot",{headers:{Authorization:`Bearer ${sessionStorage.getItem("relay.remote.token")}`}});return (await r.json()).jobs.find(j=>j.title==="Remote QA en").messageReceipts.length;});
+        assert.equal(followupReceipts,2,"followup must automatically resume once without selecting its task");
         await page.locator(".remote-workflow").click();
         await page
           .locator(".workflow-builder input")
@@ -310,9 +320,10 @@ const { chromium } = require(
         const download=page.waitForEvent("download");
         await page.locator(".conversation-header").getByRole("button",{name:"Export Markdown",exact:true}).click();
         assert.match((await download).suggestedFilename(),/^conversation-.*\.md$/);
+        let holdNewSubmission=true;
         await page.route("**/api/command",async route=>{
           const body=route.request().postDataJSON();
-          if(body?.name==="job.submit"&&body.args.input.prompt==="Keep pending on disconnect")await route.abort();
+          if(holdNewSubmission&&body?.name==="job.submit"&&body.args.input.prompt==="Keep pending on disconnect")await route.abort();
           else await route.fallback();
         });
         await page.locator(".new-task textarea").fill("Keep pending on disconnect");
@@ -324,9 +335,16 @@ const { chromium } = require(
         await page.reload();await page.locator(".connect-card input").fill(token);await page.locator(".connect-card button").click();
         await page.locator(".connection-bar.online").waitFor();
         assert.equal(await page.evaluate(()=>sessionStorage.getItem("relay.remote.pending")),pendingBefore);
+        holdNewSubmission=false;
+        await page.waitForFunction(()=>!sessionStorage.getItem("relay.remote.pending"));
+        await page.waitForFunction(()=>document.querySelector(".conversation-header h1")?.textContent==="Keep pending on disconnect");
+        holdNewSubmission=true;
+        await page.locator(".new-task textarea").fill("Keep pending on disconnect");await page.locator(".new-task button[type=submit]").click();
+        await page.waitForFunction(()=>!!sessionStorage.getItem("relay.remote.pending"));
+        const pendingForOtherServer=await page.evaluate(()=>sessionStorage.getItem("relay.remote.pending"));
         await page.route("**/api/meta",async route=>{const r=await route.fetch();await route.fulfill({response:r,json:{...(await r.json()),serverId:"00000000-0000-4000-8000-000000000001"}});});
         await page.reload();await page.getByText("The server installation changed. Connect in a new tab; pending requests for the original server remain here.",{exact:true}).waitFor();
-        assert.equal(await page.evaluate(()=>sessionStorage.getItem("relay.remote.pending")),pendingBefore);
+        assert.equal(await page.evaluate(()=>sessionStorage.getItem("relay.remote.pending")),pendingForOtherServer);
         assert.equal(await page.locator(".connection-bar.online").count(),0);
 
 

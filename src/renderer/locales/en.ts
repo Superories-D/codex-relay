@@ -5,6 +5,7 @@ import { operationsEnglish } from "./operations";
 import {recoveryEnglish} from "./recovery";
 import {checkpointEnglish} from "./checkpoints";
 export const english: Record<string, string> = {
+"提交结果尚未确认，正在自动使用原请求编号恢复。":"Submission is unconfirmed. Recovering automatically with the original request ID.",
 "服务器身份已变化，请在新标签页连接；本页保留原服务器的待确认请求。":"The server installation changed. Connect in a new tab; pending requests for the original server remain here.",
 "服务器缺少安装标识，请更新服务器后重连。":"The server has no installation ID. Update it and reconnect.",
 "正在验证服务器身份，请稍后重试。":"Verifying server identity. Please try again shortly.",
