@@ -7,6 +7,7 @@ function telegramFixture(){
   const command=window.relay.command;
   window.tgQA={revision:0,configured:false,enabled:false,includeTitles:false,events:['completed','attention','approval'],chatId:'',receipts:[]};
   window.nativeSchedules=[];window.nativeScheduleSaves=[];
+  window.nativeAbandoned=[];
   window.tgFail=true;window.tgCalls=[];window.tgReadActive=0;window.tgReadMax=0;
   window.relay.onSnapshot=fn=>{window.tgSnapshot=fn;return()=>{};};
   window.relay.command=async(name,args)=>{
@@ -15,6 +16,10 @@ function telegramFixture(){
       const previous=window.nativeSchedules.find(t=>t.id===args.id);
       if(previous&&args.revision!==previous.revision)throw Error('定时任务已更新，请重新打开后再保存');
       window.nativeScheduleSaves.push(structuredClone(args));window.nativeSchedules=[{...args,revision:(previous?.revision||0)+1,id:args.id||'native-schedule',nextRun:Date.now()+60000}];return {schedules:structuredClone(window.nativeSchedules)};
+    }
+    if(name==='schedule.abandon'){
+      const task=window.nativeSchedules.find(t=>t.id===args.id);if(task?.pendingRun?.id!==args.runId)throw Error('待创建运行已变化，请刷新后再操作');
+      window.nativeAbandoned.push(args);delete task.pendingRun;return {abandoned:true,runId:args.runId};
     }
     if(!name.startsWith('telegram.'))return command(name,args);
     window.tgCalls.push({name,args});const s=window.tgQA;
@@ -106,6 +111,10 @@ function telegramFixture(){
         await page.locator('.schedule-form').getByRole('button',{name:'Save schedule',exact:true}).click();await page.waitForFunction(()=>window.nativeScheduleSaves.length===2);
         assert.equal(await page.evaluate(()=>window.nativeScheduleSaves[1].revision),1,'Editing a saved native schedule must carry its observed revision');
         await page.locator('.schedule-form').waitFor({state:'detached'});
+        await page.evaluate(()=>{const task=window.nativeSchedules[0];task.pendingRun={id:crypto.randomUUID(),requestedAt:Date.now(),input:{title:'Original reserved work',prompt:'Original frozen instruction',cwd:task.cwd,worktree:false,deliveryChecks:task.deliveryChecks}};});
+        await page.locator('.schedule-pending > summary').waitFor();await page.locator('.schedule-pending > summary').click();
+        await page.getByRole('button',{name:'Abandon pending admission',exact:true}).click();assert.equal(await page.evaluate(()=>window.nativeAbandoned.length),0);
+        await page.getByRole('button',{name:'Confirm abandonment',exact:true}).click();await page.waitForFunction(()=>window.nativeAbandoned.length===1);await page.locator('.schedule-pending').waitFor({state:'detached'});
       }
 
       report.layouts.push({language,theme,width,zoom,status:'passed',bounded:!bounds.overflow,draftPreserved:true,unknownRetryConfirmed:true});await context.close();

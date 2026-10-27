@@ -245,6 +245,22 @@ const { chromium } = require(
         await panel.getByRole('button',{name:'Save changes',exact:true}).click();
         await panel.getByText('This schedule changed. Reopen it before saving.',{exact:true}).waitFor();
         const retained=await page.evaluate(async()=>{const r=await fetch('/api/command',{method:'POST',headers:{Authorization:`Bearer ${sessionStorage.getItem('relay.remote.token')}`,'Content-Type':'application/json'},body:JSON.stringify({name:'schedule.list'})});return(await r.json()).result.tasks[0];});assert.equal(retained.revision,4);assert.equal(retained.prompt,'Changed by another client');assert.equal(retained.deliveryChecks[0].path,'changed-plan.txt');
+        await page.evaluate(async()=>{
+          const command=async(name,args)=>{const r=await fetch('/api/command',{method:'POST',headers:{Authorization:`Bearer ${sessionStorage.getItem('relay.remote.token')}`,'Content-Type':'application/json'},body:JSON.stringify({name,args})});return(await r.json()).result;};
+          const task=(await command('schedule.list')).tasks[0],fields=['title','prompt','cwd','enabled','cadence','minutes','hour','minute','weekday','worktree','deliveryChecks','revision'];
+          const input=Object.fromEntries(fields.map(key=>[key,task[key]]));input.worktree=true;
+          const saved=await command('schedule.save',{requestId:crypto.randomUUID(),id:task.id,input});if(saved.state!=='succeeded')throw Error('Could not prepare invalid Git fixture');
+        });
+        await panel.locator('article').getByRole('button',{name:'Run now',exact:true}).click();
+        await panel.locator('.schedule-pending > summary').waitFor();await panel.locator('.schedule-pending > summary').click();
+        const pendingRun=await page.evaluate(async()=>{const r=await fetch('/api/command',{method:'POST',headers:{Authorization:`Bearer ${sessionStorage.getItem('relay.remote.token')}`,'Content-Type':'application/json'},body:JSON.stringify({name:'schedule.list'})});return(await r.json()).result.tasks[0].pendingRun;});
+        assert.equal(pendingRun.input.prompt,'Changed by another client');
+        const preserved=path.join(data,'worktrees',pendingRun.id,'operator-note.txt');await fs.mkdir(path.dirname(preserved),{recursive:true});await fs.writeFile(preserved,'Preserve prepared files');
+        await panel.getByRole('button',{name:'Abandon pending admission',exact:true}).click();
+        assert.equal(await panel.getByRole('button',{name:'Confirm abandonment',exact:true}).count(),1);
+        await panel.getByRole('button',{name:'Confirm abandonment',exact:true}).click();
+        await panel.getByText('Pending admission abandoned; the schedule continues as configured.',{exact:true}).waitFor();
+        await panel.locator('.schedule-pending').waitFor({state:'detached'});assert.equal(await fs.readFile(preserved,'utf8'),'Preserve prepared files');
         await page.locator(".remote-task-list button").filter({hasText:"Remote QA en"}).click();
         await page.locator(".remote-schedules summary").click();
       }

@@ -168,6 +168,33 @@ it("freezes reserved run inputs across edits and restart, then uses the new plan
   expect(second.schedule!.runId).not.toBe(reservation.id);
   expect(admittedRoots).toEqual([root,nextCwd]);
 });
+it("abandons only the exact unadmitted occurrence, keeps files, and preserves the next plan",async()=>{
+  const task=await create();
+  vi.spyOn(scheduler,"add").mockRejectedValueOnce(Error("Admission interrupted"));
+  await expect(schedules.run(task.id)).rejects.toThrow("interrupted");
+  const run=task.pendingRun!,nextRun=task.nextRun,revision=task.revision;
+  const prepared=path.join(root,"worktrees",run.id,"operator-note.txt");await fs.mkdir(path.dirname(prepared),{recursive:true});await fs.writeFile(prepared,"Keep this file");
+  await expect(schedules.abandonPending(task.id,randomUUID())).rejects.toThrow("已变化");
+  const writes=vi.spyOn(desktop,"changeSchedules").mockRejectedValueOnce(Error("Abandon checkpoint failed"));
+  await expect(schedules.abandonPending(task.id,run.id)).rejects.toThrow("checkpoint failed");
+  expect(task.pendingRun?.id).toBe(run.id);writes.mockRestore();
+  expect(await schedules.abandonPending(task.id,run.id)).toEqual({abandoned:true,runId:run.id});
+  expect(task.pendingRun).toBeUndefined();expect(task.nextRun).toBe(nextRun);expect(task.revision).toBe(revision);
+  expect(await fs.readFile(prepared,"utf8")).toBe("Keep this file");
+  expect(store.data.jobs).toHaveLength(0);
+  const restored=new Desktop(root);await restored.load();expect(restored.data.schedules[0].pendingRun).toBeUndefined();
+  const next=await schedules.run(task.id);expect(next!.schedule!.runId).not.toBe(run.id);
+});
+it("reconciles an already admitted occurrence instead of abandoning or stopping its task",async()=>{
+  const task=await create(),save=desktop.save.bind(desktop);let writes=0;
+  vi.spyOn(desktop,"save").mockImplementation(()=>++writes===2?Promise.reject(Error("Bookkeeping failed")):save());
+  await expect(schedules.run(task.id)).rejects.toThrow("Bookkeeping failed");
+  const job=store.data.jobs[0],state=job.state,runId=task.pendingRun!.id;
+  expect(await schedules.abandonPending(task.id,runId)).toEqual({abandoned:false,runId,jobId:job.id});
+  expect(task.pendingRun).toBeUndefined();expect(task.lastJobId).toBe(job.id);
+  expect(job.state).toBe(state);expect(store.data.jobs).toHaveLength(1);
+  expect((await schedules.abandonPending(task.id,runId)).jobId).toBe(job.id);
+});
 
 it("recovers a job admitted before the desktop bookkeeping write failed without resubmission", async () => {
   const task = await create(true);

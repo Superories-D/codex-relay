@@ -3,7 +3,7 @@ import {randomUUID} from "node:crypto";
 import {ServerWorkflows} from "./workflows";
 import { Desktop } from "../core/desktop";
 import { Schedules } from "../core/schedules";
-import { scheduleInputSchema } from "../core/schedule-command";
+import { scheduleInputSchema, scheduleAbandonSchema } from "../core/schedule-command";
 import { prepareWorkspaces, resolveWorkspace } from "./workspaces";
 import {goalUpdateSchema,updateGoal} from "../core/goal-command";
 import { RemoteActions } from "./actions";
@@ -200,6 +200,10 @@ export class ServerRuntime {
       case "schedule.run": {
         const a=z.object({requestId:idSchema,id:idSchema}).strict().parse(args);
         return (this.remoteActions ||= new RemoteActions(this.store.root)).run(a.requestId,name,a.id,{},async()=>name==="schedule.run"?this.schedules.run(a.id):this.schedules.remove(a.id).then(()=>({removed:true})));
+      }
+      case "schedule.abandon": {
+        const a=scheduleAbandonSchema.extend({requestId:idSchema}).parse(args);
+        return (this.remoteActions ||= new RemoteActions(this.store.root)).run(a.requestId,name,a.id,{runId:a.runId},()=>this.schedules.abandonPending(a.id,a.runId));
       }
 
       case "goal.read": {

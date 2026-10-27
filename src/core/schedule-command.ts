@@ -20,3 +20,4 @@ export const scheduleInputSchema = z
   })
   .strict();
 export const scheduleRunInputSchema=scheduleInputSchema.pick({title:true,prompt:true,cwd:true,worktree:true,deliveryChecks:true});
+export const scheduleAbandonSchema=z.object({id:idSchema,runId:idSchema}).strict();

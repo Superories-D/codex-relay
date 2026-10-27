@@ -91,6 +91,25 @@ export class Schedules {
       return this.desktop.data;
     });
   }
+  abandonPending(id:string,runId:string) {
+    return this.serial(id,async()=>{
+      if(this.closing)throw Error("客户端正在退出，请稍后再操作定时任务");
+      const task=this.task(id),admitted=this.scheduler.store.data.jobs.find(job=>job.schedule?.taskId===id&&job.schedule.runId===runId);
+      if(admitted){
+        await this.scheduler.store.save();
+        if(task.pendingRun?.id===runId)await this.finish(task,admitted);
+        return {abandoned:false,runId,jobId:admitted.id};
+      }
+      await this.desktop.changeSchedules(tasks=>{
+        const current=tasks.find(task=>task.id===id);
+        if(!current||current.pendingRun?.id!==runId)throw Error("待创建运行已变化，请刷新后再操作");
+        const next={...current,lastError:undefined,pendingRun:undefined};
+        return tasks.map(task=>task.id===id?next:task);
+      });
+      this.changed();
+      return {abandoned:true,runId};
+    });
+  }
   run(id: string, automatic = false): Promise<Job | undefined> {
     const pending = this.running.get(id);
     if (pending)

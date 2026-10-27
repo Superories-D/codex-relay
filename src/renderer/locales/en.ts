@@ -5,6 +5,16 @@ import { operationsEnglish } from "./operations";
 import {recoveryEnglish} from "./recovery";
 import {checkpointEnglish} from "./checkpoints";
 export const english: Record<string, string> = {
+"待创建运行": "Pending task admission",
+"旧记录尚无运行快照，恢复时使用当前计划。": "This legacy record has no run snapshot; recovery uses the current plan.",
+"保留已有文件；已创建任务只恢复记录，不会停止。计划仍按配置继续运行。": "Existing files remain. Created tasks are reconciled and keep running. The schedule continues as configured.",
+"放弃待创建运行": "Abandon pending admission",
+"确认放弃这一次尚未创建的运行？": "Abandon this occurrence if no task has been created?",
+"确认放弃": "Confirm abandonment",
+"待创建运行已变化，请刷新后再操作": "The pending occurrence changed. Refresh before trying again.",
+"待创建运行已放弃；计划仍按配置继续。": "Pending admission abandoned; the schedule continues as configured.",
+"任务已经创建，已恢复运行记录。": "The task was already created; its schedule record has been restored.",
+
 "定时任务已更新，请重新打开后再保存": "This schedule changed. Reopen it before saving.",
 "请重新打开新建定时任务表单": "Reopen the new schedule form.",
 

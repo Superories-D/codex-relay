@@ -14,6 +14,7 @@ const allowed = new Set([
   "cli.status", "cli.ensure",
   "workflow.previewRetry", "workflow.retry", "workflow.control",
   "schedule.list", "schedule.create", "schedule.save", "schedule.run", "schedule.remove",
+  "schedule.abandon",
   "goal.read", "goal.update",
   "action.read", "actions.list", "models.list", "task.steer", "task.model",
   "delivery.read", "delivery.run", "delivery.repair", "delivery.save",

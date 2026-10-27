@@ -514,7 +514,7 @@ function App() {
           {center && snapshot && <TaskCenter snapshot={snapshot} call={call} close={() => setCenter(false)} open={job => {setSelected(job.id);setCenter(false);}} />}
           {!center && <main className="remote-layout">
             <aside className="remote-sidebar">
-              <RemoteSchedules roots={roots} call={call}/>
+              <RemoteSchedules roots={roots} call={call} open={setSelected}/>
               <OperationHistory call={call} jobs={snapshot?.jobs||[]} open={setSelected}/>
               <section className="new-task">
                 <h2>{t("新建任务")}</h2>

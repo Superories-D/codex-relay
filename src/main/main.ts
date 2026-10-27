@@ -1,4 +1,4 @@
-import {scheduleInputSchema} from "../core/schedule-command";
+import {scheduleInputSchema,scheduleAbandonSchema} from "../core/schedule-command";
 import { deliverySaveSchema } from "./validation";
 import {updateGoal} from "../core/goal-command";
 import { conversationExport } from "../core/conversation-export";
@@ -759,6 +759,9 @@ async function boot() {
       }
       case "schedule.save":
         return schedules.save(scheduleInputSchema.parse(args));
+      case "schedule.abandon": {
+        const a=scheduleAbandonSchema.parse(args);return schedules.abandonPending(a.id,a.runId);
+      }
       case "schedule.remove":
         return schedules.remove(idSchema.parse(args));
       case "schedule.run":

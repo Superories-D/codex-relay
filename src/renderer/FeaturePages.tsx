@@ -1,4 +1,5 @@
 import {DeliveryDialog} from "./DeliveryDialog";
+import {SchedulePending} from "./SchedulePending";
 import { t, useI18n, formatDate, errorText } from "./i18n";
 import React, { useEffect, useRef, useState } from "react";
 import {
@@ -764,6 +765,11 @@ export function SchedulesPage({
                   {task.lastError && (
                     <p className="panel-error">{t(task.lastError)}</p>
                   )}
+                  <SchedulePending task={task} busy={busy} abandon={async runId=>{
+                    setBusy(true);setError("");
+                    try{const result=await call("schedule.abandon",{id:task.id,runId});refresh();if(result.jobId)select(result.jobId);}
+                    catch(error){setError(errorText(error));}finally{setBusy(false);}
+                  }}/>
                   {task.lastJobId && (
                     <button
                       className="text-link"

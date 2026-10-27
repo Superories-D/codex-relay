@@ -98,6 +98,14 @@ export class TelegramConsole {
       args: unknown;
     }
   >();
+  private scheduleGrants=new Map<string,{id:string;runId:string;expires:number}>();
+  private scheduleReceipt(receipt:any):TelegramReply {
+    const text=`定时任务操作: ${receipt.state}\n${receipt.id}${receipt.error?"\n"+receipt.error:""}\n/schedules 查看最新状态。`;
+    const jobId=receipt.result?.jobId||(receipt.action==="schedule.run"?receipt.result?.id:undefined);
+    const job=this.runtime.store.data.jobs.find(job=>job.id===jobId);
+    if(job)return {...this.card(job),text:`${text}\n${receipt.action==="schedule.abandon"?"任务已经创建，已恢复运行记录。":"本次运行已创建任务。"}\n${this.card(job).text}`};
+    return {text:text+(receipt.result?.abandoned?"\n待创建运行已放弃；原文件保留，计划仍按配置继续。":""),keyboard:[[button("定时任务","/schedules")]]};
+  }
   constructor(
     private runtime: ServerRuntime,
     private roots: string[],
@@ -332,16 +340,25 @@ export class TelegramConsole {
     }
     if(command === "schedules") {
       const list:any=await this.runtime.command("schedule.list");
-      return this.paginate(`定时任务 · ${list.timeZone}\n`+list.tasks.map((task:any)=>`${task.id}\n${task.title} · ${task.enabled?"启用":"暂停"} · ${task.cadence}\n下一次: ${new Date(task.nextRun).toISOString()}\n${task.lastError||""}`).join("\n\n")+"\n/schedule create MINUTES 任务描述\n/schedule run|pause|enable|remove ID");
+      return this.paginate(`定时任务 · ${list.timeZone}\n`+list.tasks.map((task:any)=>`${task.id}\n${task.title} · ${task.enabled?"启用":"暂停"} · ${task.cadence}\n下一次: ${new Date(task.nextRun).toISOString()}\n${task.lastError||""}${task.pendingRun?`\n待创建运行: ${task.pendingRun.id}\n/schedule pending ${task.id}`:""}`).join("\n\n")+"\n/schedule create MINUTES 任务描述\n/schedule run|pause|enable|remove ID\n/schedule pending ID 查看并处理待创建运行");
     }
     if(command === "schedule") {
       const [action,...parts]=args.split(/\s+/),value=parts.join(" ");
-      const actionName=({create:"schedule.create",pause:"schedule.save",enable:"schedule.save",run:"schedule.run",remove:"schedule.remove"} as Record<string,string>)[action];
+      if(action==="discard"){
+        const recorded:any=await this.runtime.command("action.read",requestId);
+        if(recorded){if(recorded.action!=="schedule.abandon")throw Error("Request ID belongs to another operation");return this.scheduleReceipt(recorded);}
+        const grant=this.scheduleGrants.get(value);
+        if(!grant||grant.expires<=this.now())throw Error("确认已过期，请重新查看 /schedule pending ID");
+        this.scheduleGrants.delete(value);
+        return this.scheduleReceipt(await this.runtime.command("schedule.abandon",{requestId,id:grant.id,runId:grant.runId}));
+      }
+      const target=action==="abandon"?parts[0]||"":value;
+      const actionName=({create:"schedule.create",pause:"schedule.save",enable:"schedule.save",run:"schedule.run",remove:"schedule.remove",abandon:"schedule.abandon"} as Record<string,string>)[action];
       if(actionName){
         const recorded:any=await this.runtime.command("action.read",requestId);
         if(recorded){
-          if(recorded.action!==actionName || (action==="create"?recorded.jobId!==requestId:value.length<8||!recorded.jobId.startsWith(value)))throw Error("Request ID belongs to another operation");
-          return `定时任务操作: ${recorded.state}\n/schedules 查看最新状态。`;
+          if(recorded.action!==actionName || (action==="create"?recorded.jobId!==requestId:target.length<8||!recorded.jobId.startsWith(target)))throw Error("Request ID belongs to another operation");
+          return this.scheduleReceipt(recorded);
         }
       }
       if(action==="create"){
@@ -349,15 +366,26 @@ export class TelegramConsole {
         const receipt:any=await this.runtime.command("schedule.create",{requestId,id:requestId,input:{title:input.title,prompt:input.prompt,cwd:input.cwd,enabled:true,cadence:"interval",minutes,hour:9,minute:0,weekday:1,worktree:false,deliveryChecks:input.deliveryChecks}});
         return `定时任务: ${receipt.state} · ${requestId}\n/schedules 查看；时间为服务器时区。`;
       }
-      const tasks:any=await this.runtime.command("schedule.list"),matches=tasks.tasks.filter((task:any)=>value.length>=8&&task.id.startsWith(value));
+      const tasks:any=await this.runtime.command("schedule.list"),matches=tasks.tasks.filter((task:any)=>target.length>=8&&task.id.startsWith(target));
       if(matches.length!==1)throw Error("Schedule ID is missing or ambiguous");
       const task=matches[0];let receipt:any;
+      if(action==="pending"){
+        if(!task.pendingRun)return "此计划没有待创建运行。";
+        const reply=this.paginate(`待创建运行\n${JSON.stringify(task.pendingRun,null,2)}\n\n放弃只影响这一次尚未创建的运行，保留所有文件，计划仍按配置继续。若任务已经创建，只恢复记录并返回任务卡，不会停止任务。确认按钮保留 5 分钟。`);
+        for(const [key,grant] of this.scheduleGrants)if(grant.expires<=this.now())this.scheduleGrants.delete(key);
+        while(this.scheduleGrants.size>=200)this.scheduleGrants.delete(this.scheduleGrants.keys().next().value!);
+        const code=randomBytes(6).toString("hex");this.scheduleGrants.set(code,{id:task.id,runId:task.pendingRun.id,expires:this.now()+5*60*1000});
+        reply.keyboard!.push([button("确认放弃待创建运行",`/schedule discard ${code}`)]);return reply;
+      }
       if(action==="pause"||action==="enable"){
         const {title,prompt,cwd,cadence,minutes,hour,minute,weekday,worktree,deliveryChecks}=task;
         receipt=await this.runtime.command("schedule.save",{requestId,id:task.id,input:{title,prompt,cwd,cadence,minutes,hour,minute,weekday,worktree,deliveryChecks,revision:task.revision||0,enabled:action==="enable"}});
       }else if(action==="run"||action==="remove")receipt=await this.runtime.command(`schedule.${action}`,{requestId,id:task.id});
-      else throw Error("Use /schedule create|run|pause|enable|remove");
-      return `定时任务操作: ${receipt.state}\n/schedules 查看状态。`;
+      else if(action==="abandon"){
+        if(parts.length!==2)throw Error("Use /schedule abandon SCHEDULE_ID RUN_UUID");
+        receipt=await this.runtime.command("schedule.abandon",{requestId,id:task.id,runId:parts[1]});
+      }else throw Error("Use /schedule create|run|pause|enable|remove|pending|abandon");
+      return this.scheduleReceipt(receipt);
     }
     if(command === "goal") {
       const job=this.job(context.task),match=args.match(/^(\S+)(?:\s+([\s\S]*))?$/),action=match?.[1]||"read",value=match?.[2]||"";

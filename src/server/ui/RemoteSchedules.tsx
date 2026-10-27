@@ -4,12 +4,15 @@ import React, { useEffect, useState } from "react";
 import { t, errorText } from "../../renderer/i18n";
 import { ActionStatus, useRemoteAction } from "./LiveControls";
 import type { ScheduledTask } from "../../core/desktop";
+import {SchedulePending} from "../../renderer/SchedulePending";
 export function RemoteSchedules({
   roots,
   call,
+  open,
 }: {
   roots: string[];
   call: (name: string, args?: any) => Promise<any>;
+  open?:(id:string)=>void;
 }) {
   const [editingChecks,setEditingChecks]=useState(false);
   const action = useRemoteAction("schedules", call, "schedules"),
@@ -81,6 +84,7 @@ export function RemoteSchedules({
         {t("服务器时区")} · {zone}
       </p>
       <ActionStatus action={action} />
+      {action.receipt?.state==="succeeded"&&action.receipt.action==="schedule.abandon"&&<p>{t(action.receipt.result?.abandoned?"待创建运行已放弃；计划仍按配置继续。":"任务已经创建，已恢复运行记录。")}{action.receipt.result?.jobId&&open&&<button type="button" onClick={()=>open(action.receipt!.result.jobId)}>{t("打开对应任务")}</button>}</p>}
       {error && <p role="alert">{error}</p>}
       <form
         onSubmit={(e) => {
@@ -214,6 +218,7 @@ export function RemoteSchedules({
           </p>
           <p>{task.cwd}</p>
           {task.lastError && <p role="alert">{task.lastError}</p>}
+          <SchedulePending task={task} busy={!!action.pending} abandon={runId=>action.submit("schedule.abandon",{id:task.id,runId})}/>
           <fieldset disabled={!!action.pending}>
             <button
               type="button"

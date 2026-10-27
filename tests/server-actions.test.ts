@@ -140,10 +140,10 @@ it("pages operation history without exposing result payloads and keeps unreadabl
 it("returns the same immutable effect result that was durably recorded",async()=>{
   const root=await fs.mkdtemp(path.join(os.tmpdir(),"relay-action-snapshot-"));
   try {
-    const live={revision:1,title:"Committed state"};let writes=0;
+    const live={revision:1,title:"Committed state",at:new Date(0),omitted:undefined};let writes=0;
     const actions=new RemoteActions(root,async(file,value)=>{await atomicWrite(file,value);if(++writes===2){live.revision=2;live.title="Later edit";}});
     const receipt=await actions.run(randomUUID(),"schedule.save",randomUUID(),{},async()=>live);
-    expect(receipt.result).toEqual({revision:1,title:"Committed state"});
+    expect(receipt.result).toEqual({revision:1,title:"Committed state",at:"1970-01-01T00:00:00.000Z"});
     expect(await actions.read(receipt.id)).toEqual(receipt);
   }finally{await fs.rm(root,{recursive:true,force:true});}
 });

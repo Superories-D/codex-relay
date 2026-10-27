@@ -738,6 +738,39 @@ describe.skipIf(process.platform !== "linux")("Telegram mobile console", () => {
       await f.restart();await f.bridge.pollOnce();expect(f.t.sent.at(-1).text).toContain("succeeded");expect(f.runtime.desktop.data.schedules).toHaveLength(0);
     }finally{await f.close();}
   });
+  it("confirms pending-run abandonment once and restores its receipt after restart",async()=>{
+    let fail=false;
+    const f=await consoleFixture(async(file,value)=>{if(fail&&JSON.parse(String(value)).pending){fail=false;throw Error("Abandon reply lost");}await atomicWrite(file,value);});
+    try{
+      await f.send("/project 1");await f.send("/schedule create 60 Frozen occurrence");
+      const task=f.runtime.desktop.data.schedules[0];
+      vi.spyOn(f.runtime.scheduler,"add").mockRejectedValueOnce(Error("Admission interrupted"));
+      await f.send(`/schedule run ${task.id}`);expect(task.pendingRun).toBeDefined();
+      const view=await f.send(`/schedule pending ${task.id}`);
+      expect(view.text).toContain("Frozen occurrence");
+      const confirm=buttons(view).find(button=>button.text==="确认放弃待创建运行")!.callback_data;
+      expect(task.pendingRun).toBeDefined();fail=true;
+      await expect(f.click(confirm)).rejects.toThrow("Abandon reply lost");expect(task.pendingRun).toBeUndefined();
+      await f.restart();await f.bridge.pollOnce();expect(f.t.sent.at(-1).text).toContain("待创建运行已放弃");
+      expect(f.runtime.store.data.jobs).toHaveLength(0);
+      expect((await f.click(confirm)).text).toContain("已过期");
+    }finally{await f.close();}
+  });
+  it("returns the admitted task card when pending-run handling only needs bookkeeping recovery",async()=>{
+    const f=await consoleFixture();
+    try{
+      await f.send("/project 1");await f.send("/schedule create 60 Existing admission");
+      const task=f.runtime.desktop.data.schedules[0],save=f.runtime.desktop.save.bind(f.runtime.desktop);let writes=0;
+      vi.spyOn(f.runtime.desktop,"save").mockImplementation(()=>++writes===2?Promise.reject(Error("Bookkeeping failed")):save());
+      await f.send(`/schedule run ${task.id}`);
+      const job=f.runtime.store.data.jobs[0],state=job.state;
+      const pending=await f.send(`/schedule pending ${task.id}`),confirm=buttons(pending).find(button=>button.text==="确认放弃待创建运行")!.callback_data;
+      const card=await f.click(confirm);expect(card.text).toContain("任务已经创建");
+      expect(buttons(card).some(button=>button.callback_data===`/task ${job.id}`)).toBe(true);
+      expect(task.pendingRun).toBeUndefined();expect(task.lastJobId).toBe(job.id);
+      expect(job.state).toBe(state);expect(f.runtime.store.data.jobs).toHaveLength(1);
+    }finally{await f.close();}
+  });
   it("answers all questions using buttons and free text, rejects stale choices and keeps answer mode safe after restart", async () => {
     const f = await consoleFixture();
     try {
