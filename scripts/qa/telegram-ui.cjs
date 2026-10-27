@@ -6,12 +6,15 @@ const root=path.resolve(__dirname,'../..'),output=path.join(root,'qa-output');
 function telegramFixture(){
   const command=window.relay.command;
   window.tgQA={revision:0,configured:false,enabled:false,includeTitles:false,events:['completed','attention','approval'],chatId:'',receipts:[]};
-  window.tgFail=true;window.tgCalls=[];
+  window.tgFail=true;window.tgCalls=[];window.tgReadActive=0;window.tgReadMax=0;
   window.relay.onSnapshot=fn=>{window.tgSnapshot=fn;return()=>{};};
   window.relay.command=async(name,args)=>{
     if(!name.startsWith('telegram.'))return command(name,args);
     window.tgCalls.push({name,args});const s=window.tgQA;
-    if(name==='telegram.read')return structuredClone(s);
+    if(name==='telegram.read'){
+      const copy=structuredClone(s);window.tgReadActive++;window.tgReadMax=Math.max(window.tgReadMax,window.tgReadActive);
+      try{if(window.tgHoldRead)await new Promise(resolve=>{window.tgReleaseRead=()=>{window.tgHoldRead=false;resolve();};});return copy;}finally{window.tgReadActive--;}
+    }
     if(name==='telegram.discover')return[{id:'123456',name:'Local owner'}];
     if(name==='telegram.save'){
       await new Promise(r=>setTimeout(r,100));
@@ -53,7 +56,16 @@ function telegramFixture(){
       await p.locator('.telegram-actions > button').first().click();await page.waitForFunction(()=>window.tgQA.revision===1);
       await page.waitForFunction(()=>document.querySelector('.telegram-fields input')?.value==='');
       assert.equal(await p.locator('.telegram-actions > button').nth(1).isEnabled(),true);
+      if(language==='en'){
+        await page.evaluate(()=>{window.tgHoldRead=true;});await page.waitForFunction(()=>!!window.tgReleaseRead);
+        await page.waitForTimeout(4200);assert.equal(await page.evaluate(()=>window.tgReadMax),1,'Slow polling must not overlap reads');
+      }
       await p.locator('.telegram-actions > button').nth(1).click();await p.locator('.telegram-receipt.is-uncertain').waitFor();
+      if(language==='en'){
+        await page.evaluate(async()=>{window.tgReleaseRead();await new Promise(resolve=>setTimeout(resolve,40));});
+        assert.equal(await p.locator('.telegram-receipt.is-uncertain').count(),1,'A stale poll must not erase a newly queued receipt');
+      }
+
       await p.locator('.telegram-receipt > button').first().click();assert.equal(await p.locator('.telegram-confirm').count(),1);
       assert.equal(await page.evaluate(()=>window.tgCalls.filter(c=>c.name==='telegram.receipt').length),0,'Unknown result requires explicit confirmation');
       await p.locator('.telegram-confirm > button').last().click();
@@ -62,6 +74,15 @@ function telegramFixture(){
       await page.screenshot({path:path.join(output,`telegram-${language}-${theme}.png`)});
       await p.locator('.telegram-receipt > button').first().click();await p.locator('.telegram-confirm > button').first().click();
       await p.locator('.telegram-receipt.is-sent').waitFor();
+      if(language==='en'){
+        await page.evaluate(()=>{window.tgQA.receipts=Array.from({length:85},(_,i)=>({id:'history-'+i,event:'test',text:i===84?'Archived searchable notification':'Notification '+i,status:i===84?'uncertain':'sent',createdAt:Date.now()-i*1000,updatedAt:Date.now(),dueAt:Date.now(),attempts:1}));});
+        await p.locator('.telegram-actions > button').nth(2).click();await page.waitForFunction(()=>document.querySelectorAll('.telegram-receipt').length===20);
+        await p.locator('.telegram-history-tools input').fill('Archived searchable');assert.equal(await p.locator('.telegram-receipt').count(),1);
+        await p.locator('.telegram-history-tools input').fill('');await p.locator('.telegram-history-tools select').selectOption('unresolved');assert.equal(await p.locator('.telegram-receipt.is-uncertain').count(),1);
+        await p.locator('.telegram-history-tools select').selectOption('all');await p.locator('.telegram-history-pages button').last().click();
+        assert.match(await p.locator('.telegram-receipt pre').first().textContent(),/Notification 20/);assert.equal(await p.locator('.telegram-receipt').count(),20);
+      }
+
       await p.locator('.telegram-remove').click();await p.locator('.telegram-confirm > button').first().click();
       await page.waitForFunction(()=>!window.tgQA.configured);assert.equal(await inputs.first().inputValue(),'');
       report.layouts.push({language,theme,width,zoom,status:'passed',bounded:!bounds.overflow,draftPreserved:true,unknownRetryConfirmed:true});await context.close();

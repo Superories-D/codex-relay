@@ -112,3 +112,7 @@ are required release gates, including readback of all complete attachments.
 Primary references: [Telegram Bot API](https://core.telegram.org/bots/api),
 [Electron safeStorage](https://www.electronjs.org/docs/latest/api/safe-storage),
 [Electron networking/system proxies](https://www.electronjs.org/docs/latest/api/net).
+
+## 2026-10-27 源码续迭代
+
+发送记录新增文字搜索、全部/待处理/各状态筛选，每页最多 20 条，并显示匹配数量和待处理数量。记录仍保存在原加密出站文件中；筛选、翻页不触发发送。慢速 IPC 读取不会堆叠轮询，用户保存/测试/重试后的迟到轮询结果不会覆盖新状态。四语言生产渲染器验收通过（含英文 150% 缩放、85 条记录、慢读取与迟到回包），18 项通知状态机测试和 i18n 检查通过；本轮未重新打包 Windows 安装程序。

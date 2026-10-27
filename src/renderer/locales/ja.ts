@@ -3,6 +3,12 @@ import { operationsJapanese } from "./operations";
 import {recoveryJapanese} from "./recovery";
 import {checkpointJapanese} from "./checkpoints";
 export const japanese: Record<string, string> = {
+"全部":"すべて",
+"通知记录分页":"通知履歴のページ",
+"没有匹配的通知记录":"一致する通知はありません",
+"待处理通知":"未処理の通知",
+"通知状态":"通知の状態",
+"搜索通知记录":"通知履歴を検索",
 "加载更多":"さらに読み込む",
 "打开对应任务":"タスクを開く",
 "查看回执":"受領記録を表示",

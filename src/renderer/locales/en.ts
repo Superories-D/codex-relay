@@ -5,6 +5,12 @@ import { operationsEnglish } from "./operations";
 import {recoveryEnglish} from "./recovery";
 import {checkpointEnglish} from "./checkpoints";
 export const english: Record<string, string> = {
+"全部":"All",
+"通知记录分页":"Notification history pages",
+"没有匹配的通知记录":"No matching notifications",
+"待处理通知":"Unresolved notifications",
+"通知状态":"Notification status",
+"搜索通知记录":"Search notifications",
 "加载更多":"Load more",
 "打开对应任务":"Open task",
 "查看回执":"View receipt",
