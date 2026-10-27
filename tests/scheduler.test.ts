@@ -56,6 +56,64 @@ class FakeWorker extends EventEmitter implements Worker {
   }
   respond() {}
 }
+it("recovers a successful turn after cleanup failed without starting another worker",async()=>{
+ const job=await scheduler.add({...input,cwd:root,interactive:true});await until(()=>workers[0]?.started);
+ workers[0].failClose=true;workers[0].settle({kind:"completed"});await(scheduler as any).currentRun;
+ expect(job.recoveryRequired).toBe(true);workers[0].failClose=false;job.autoRecovery!.nextAttemptAt=0;
+ await(scheduler as any).tick();await until(()=>!job.recoveryRequired);await until(()=>!(scheduler as any).recoveryTasks.size);
+ await(scheduler as any).tick();expect(job.state).toBe("completed");expect(workers).toHaveLength(1);expect(job.completion?.revision).toBe(1);
+});
+it.each([true,false])("recovers the saved success then rechecks delivery (artifact exists: %s) without inference",async(exists)=>{
+ const job=await scheduler.add({...input,cwd:root,interactive:true,deliveryChecks:[{kind:"file",path:"artifact",label:"Artifact",minBytes:1}]});await until(()=>workers[0]?.started);
+ if(exists)await fs.writeFile(path.join(root,"artifact"),"done");workers[0].failClose=true;workers[0].settle({kind:"completed"});await(scheduler as any).currentRun;
+ expect(job.delivery?.reports).toHaveLength(0);workers[0].failClose=false;job.autoRecovery!.nextAttemptAt=0;
+ await(scheduler as any).tick();await until(()=>!(scheduler as any).recoveryTasks.size);await(scheduler as any).tick();
+ expect(job.state).toBe(exists?"completed":"needs_attention");expect(job.delivery?.reports.at(-1)).toMatchObject({source:"recovery",status:exists?"passed":"failed"});expect(workers).toHaveLength(1);
+ expect(job.completionPending).toBeUndefined();expect(job.completion?.revision).toBe(1);
+});
+it.each(["pause","cancel"] as const)("keeps a later %s authoritative while recovering a saved completion",async(action)=>{
+ const job=await scheduler.add({...input,cwd:root,interactive:true});await until(()=>workers[0]?.started);
+ workers[0].failClose=true;workers[0].settle({kind:"completed"});await(scheduler as any).currentRun;workers[0].failClose=false;
+ let release!:()=>void,entered!:()=>void;const blocked=new Promise<void>(r=>{release=r;}),checking=new Promise<void>(r=>{entered=r;});
+ (scheduler as any).recover=async()=>{entered();await blocked;};job.autoRecovery!.nextAttemptAt=0;await(scheduler as any).tick();await checking;
+ const stopped=scheduler.control(job.id,action);await until(()=>job.stopIntent===action);release();await stopped;
+ await until(()=>!(scheduler as any).recoveryTasks.size);await(scheduler as any).tick();expect(job.state).toBe(action==="pause"?"paused":"cancelled");expect(workers).toHaveLength(1);expect(job.completionPending).toBeUndefined();
+});
+it("lets an explicit resume finalize a saved success after failed cleanup without another worker",async()=>{
+ const job=await scheduler.add({...input,cwd:root,interactive:true});await until(()=>workers[0]?.started);workers[0].failClose=true;workers[0].settle({kind:"completed"});await(scheduler as any).currentRun;
+ workers[0].failClose=false;await scheduler.control(job.id,"resume");await(scheduler as any).tick();expect(job.state).toBe("completed");expect(workers).toHaveLength(1);
+});
+it("retains the completion receipt after final state persistence fails",async()=>{
+ const job=await scheduler.add({...input,cwd:root,interactive:true});await until(()=>workers[0]?.started);
+ const original=store.save.bind(store);let failed=false;vi.spyOn(store,"save").mockImplementation(async()=>{if(!failed&&job.state==="completed"&&!job.completionPending){failed=true;throw Error("final state interrupted");}await original();});
+ workers[0].settle({kind:"completed"});await(scheduler as any).currentRun;expect(failed).toBe(true);expect(job.completionPending).toBe(true);
+ job.autoRecovery!.nextAttemptAt=0;await(scheduler as any).tick();await until(()=>!(scheduler as any).recoveryTasks.size);await(scheduler as any).tick();expect(job.state).toBe("completed");expect(workers).toHaveLength(1);
+});
+it("rolls back a failed completion handoff while preserving a newly accepted queue message",async()=>{
+ const job=await scheduler.add({...input,cwd:root,interactive:true});await until(()=>workers[0]?.started);
+ await scheduler.send({id:job.id,text:"NEXT INPUT",attachments:[],action:"queue"});const nextId=job.queuedMessages![0].id;
+ const original=store.save.bind(store);let failed=false,release!:()=>void,entered!:()=>void;
+ const blocked=new Promise<void>(r=>{release=r;}),writing=new Promise<void>(r=>{entered=r;});
+ vi.spyOn(store,"save").mockImplementation(async()=>{if(!failed&&job.state==="queued"&&!job.completionPending&&job.pendingMessage==="NEXT INPUT"){failed=true;entered();await blocked;throw Error("handoff state interrupted");}await original();});
+ workers[0].settle({kind:"completed"});await writing;
+ await scheduler.send({id:job.id,text:"LATER INPUT",attachments:[],action:"queue"},crypto.randomUUID());release();await(scheduler as any).currentRun;
+ expect(job.completionPending).toBe(true);expect(job.pendingMessage).toBeUndefined();expect(job.queuedMessages?.map(m=>m.text)).toEqual(["NEXT INPUT","LATER INPUT"]);expect(job.queuedMessages?.[0].id).toBe(nextId);expect(job.messageReceipts).toHaveLength(1);
+ job.autoRecovery!.nextAttemptAt=0;await(scheduler as any).tick();await until(()=>!(scheduler as any).recoveryTasks.size);await(scheduler as any).tick();await until(()=>workers[1]?.started);
+ expect(workers).toHaveLength(2);expect(workers[1].submitted).toBe("NEXT INPUT");expect(job.queuedMessages?.map(m=>m.text)).toEqual(["LATER INPUT"]);expect(job.completion?.revision).toBe(1);
+});
+it("persists a completion receipt before cleanup so a restart only finalizes the known result",async()=>{
+ const job=await scheduler.add({...input,cwd:root,interactive:true});await until(()=>workers[0]?.started);
+ let release!:()=>void,entered!:()=>void;const gate=new Promise<void>(r=>{release=r;}),closing=new Promise<void>(r=>{entered=r;});
+ workers[0].close=async()=>{entered();await gate;};workers[0].settle({kind:"completed"});
+ let saved:string;
+ try{await closing;saved=await fs.readFile(path.join(root,"state.json"),"utf8");expect(JSON.parse(saved).jobs[0].completionPending).toBe(true);}
+ finally{release();await(scheduler as any).currentRun;}
+ await fs.writeFile(path.join(root,"state.json"),saved!);const disk=new Store(root);await disk.load();store.data=disk.data;
+ const restored=store.data.jobs[0];expect(restored.recoveryRequired).toBe(true);restored.autoRecovery!.nextAttemptAt=0;
+ const recover=vi.fn(async()=>{});(scheduler as any).recover=recover;await(scheduler as any).tick();await until(()=>!restored.recoveryRequired);await until(()=>!(scheduler as any).recoveryTasks.size);
+ await(scheduler as any).tick();expect(recover).toHaveBeenCalledOnce();expect(restored.state).toBe("completed");expect(restored.completionPending).toBeUndefined();expect(workers).toHaveLength(1);
+ const verified=new Store(root);await verified.load();expect(verified.data.jobs[0].state).toBe("completed");
+});
 it("persists distinct completed worker generations with reused turn IDs but does not count a stopped worker",async()=>{
  const job=await scheduler.add({...input,cwd:root,interactive:true});await until(()=>workers[0]?.started);
  workers[0].settle({kind:"completed"});await(scheduler as any).currentRun;

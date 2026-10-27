@@ -6,6 +6,7 @@ import { expect, it, vi } from "vitest";
 import { Store } from "../src/core/store";
 import { Scheduler } from "../src/core/scheduler";
 import { CliWorker } from "../src/core/cli-worker";
+import {recoverJob} from "../src/core/recovery";
 import { ExistingSessions } from "../src/core/existing-sessions";
 import { randomUUID } from "node:crypto";
 import type { Job } from "../src/shared/types";
@@ -41,6 +42,28 @@ vi.mock("../src/core/process", async (importOriginal) => {
       ),
   };
 });
+it("restores a real JSONL completion after a lost cleanup acknowledgement without another turn/start",async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),"relay-completed-recovery-")),store=new Store(root);
+ store.data.settings.resetWarmupEnabled=false;
+ store.data.accounts=[{id:"b",identity:"b",label:"test",email:"",plan:"test",enabled:true,status:"ready",failureCount:0,blockedUntil:null,
+  quotas:{codex:{limitId:"codex",reached:false,observedAt:Date.now(),primary:{usedPercent:10,windowDurationMins:300,resetsAt:Date.now()+3600000},secondary:null}}}];
+ const accounts:any={busy:new Set(),cancelLogin:async()=>{},inspect:async()=>({auth:{tokens:{access_token:"synthetic"}},models:[],quotas:store.data.accounts[0].quotas})};
+ let starts=0,closeFailed=false;
+ const factories={cli:(ctx:any)=>{starts++;const worker=new CliWorker(ctx),close=worker.close.bind(worker);worker.close=async()=>{await close();if(!closeFailed){closeFailed=true;throw Error("Lost cleanup acknowledgement");}};return worker;},desktop:()=>{throw Error("not used");}};
+ const original=new Scheduler(store,accounts,factories);let restored:Scheduler|undefined;
+ try{
+  const job=await original.add({title:"Known success",prompt:"Finish once",cwd:root,interactive:true,mode:"cli",model:"",effort:"",bucket:"codex",approvalPolicy:"on-request",sandbox:"workspaceWrite"});
+  await vi.waitFor(()=>expect(job.completionPending).toBe(true),{timeout:5000});await(original as any).currentRun;expect(job.recoveryRequired).toBe(true);await store.save();
+  const saved=await fs.readFile(path.join(root,"state.json")),journalPath=path.join(store.jobHome(job.id),"synthetic-journal.jsonl");
+  const first=JSON.parse((await fs.readFile(journalPath,"utf8")).trim());expect(()=>process.kill(first.pid,0)).toThrow();
+  await original.shutdown();await fs.writeFile(path.join(root,"state.json"),saved);
+  const disk=new Store(root);await disk.load();const pending=disk.data.jobs[0];pending.autoRecovery!.nextAttemptAt=0;
+  restored=new Scheduler(disk,accounts,factories,j=>recoverJob(j,disk,accounts,root));restored.start();
+  await vi.waitFor(()=>expect(pending.state).toBe("completed"),{timeout:5000});await(restored as any).currentRun;
+  expect(starts).toBe(1);expect((await fs.readFile(journalPath,"utf8")).trim().split("\n")).toHaveLength(1);
+  expect(pending.completionPending).toBeUndefined();expect(pending.completion?.revision).toBe(1);expect(pending.recoveryRequired).toBe(false);
+ }finally{await restored?.shutdown();await original.shutdown();await fs.rm(root,{recursive:true,force:true});}
+},15000);
 it.each([false, true])(
   "real JSONL processes confirm shutdown before same-thread quota relay (missing interrupt event: %s)",
   async (missingEvent) => {

@@ -123,7 +123,13 @@ export class Store {
         }
 
         for (const message of j.queuedMessages || []) message.id ||= randomUUID();
-        if (j.delivery?.pendingCompletion) {
+        if (j.completionPending) {
+          if (!j.completion) throw Error("完成回执缺少结果身份，请检查状态文件");
+          j.recoveryRequired = true;
+          j.state = "needs_attention";
+          j.lastError = "本轮已确认完成，正在核查原进程并恢复结果收尾；不会重复执行本轮";
+          if (!j.autoRecovery) scheduleRecovery(j,"process");
+        } else if (j.delivery?.pendingCompletion) {
           // This marker is saved only after the worker has positively closed.
           // Resume read-only verification rather than sending another model turn.
           j.state = j.stopIntent === "cancel" ? "cancelled" : j.stopIntent === "pause" ? "paused" : "needs_attention";

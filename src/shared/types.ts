@@ -170,6 +170,9 @@ export interface Job {
   // A worker completion is distinct from metadata edits or a later delivery
   // recheck. Persist its generation even if observers miss intermediate states.
   completion?: {revision:number;startedAt:number;finishedAt:number;threadId?:string;turnId?:string};
+  // A successful worker result saved before its owner has finished cleanup.
+  // Recovery must prove ownership idle and finalize, rather than infer again.
+  completionPending?: boolean;
   recoveryAttempts?: number;
   autoRecovery?: {
     reason: "process" | "interrupted" | "unknown";

@@ -56,10 +56,11 @@ describe("crash recovery refuses duplicate writers", () => {
       }
     },
   );
-  it("keeps checking a live owner after restart and automatically releases the gate only once it is idle", async () => {
+  it.each([false,true])("keeps checking a live owner after restart and releases only once idle (known completion: %s)", async (completed) => {
     const s = new Store(root);
     s.data.jobs = [
-      { id: "a", mode: "cli", state: "running", threadId: "original" } as any,
+      { id: "a", mode: "cli", state: "running", threadId: "original",
+        ...(completed?{completionPending:true,completion:{revision:1,startedAt:1,finishedAt:2}}:{}) } as any,
     ];
     const home = s.jobHome("a");
     await fs.mkdir(home, { recursive: true });
@@ -93,7 +94,7 @@ describe("crash recovery refuses duplicate writers", () => {
       await (scheduler as any).tick();
       await Promise.all([...(scheduler as any).recoveryTasks.values()]);
       expect(job).toMatchObject({
-        state: "queued",
+        state: completed ? "completed" : "queued",
         recoveryRequired: false,
         threadId: "original",
       });
