@@ -311,6 +311,7 @@ export class TelegramConsole {
         text:
           "Codex Relay · 手机控制台\n\n" +
           "1. /projects → 点选项目\n2. /new 任务描述 → 创建并选中任务\n3. 直接发文字追问；回复任务卡片可指定该任务\n\n" +
+          "图片/文档说明可写 /new、/run、/send；/follow 指令发送到所选或所回复的任务。相册请等附件到齐后再发指令。\n\n" +
           "/status [状态|all] [页码] · /task ID\n/result [ID] · /history [ID] · /export [ID]\n/search 关键词 · /report [ID]\n/delivery [ID] · /verify [ID] · /repair [ID]\n/notify all|errors|watched|off · /watch [ID] · /unwatch ID\n/quiet 22-7（UTC） · /throttle 秒 · /digest\n/actions · /receipt 操作UUID\n/wf preview|retry|pause|resume\n/schedules · /schedule create|run|pause|enable|remove\n/goal read|create|edit|start|pause|budget|clear\n/steer 立即补充 · /switchmodel 模型 [推理强度] · /models\n/queue [ID] · /priority high|normal|low\n/edit 消息ID 版本 新文字\n/remove 消息ID 版本 · /up 消息ID 版本 · /down 消息ID 版本\n" +
           "/repo [项目编号] 查看 Git 变更，按按钮读取暂存/工作区差异\n" +
           "/pause [ID] · /resume [ID] · /cancel [ID]\n/rename 名称 · /pin on|off · /archive on|off\n/depends ID ID（或 none）\n\n" +

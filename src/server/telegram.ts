@@ -21,7 +21,7 @@ import { atomicWrite } from "../core/store";
 import { redact } from "../core/redact";
 import { prepareWorkspaces, resolveWorkspace } from "./workspaces";
 import type { ServerRuntime } from "./runtime";
-import type { Approval, Job } from "../shared/types";
+import type { Approval, Job, ChatAttachment } from "../shared/types";
 import {
   questionList,
   validateQuestionAnswers,
@@ -204,11 +204,13 @@ const stateSchema = z
             fileId: z.string().min(1).max(1000),
             name: z.string().max(200),
             size: z.number().nonnegative().max(UPLOAD_LIMIT).optional(),
+            grouped: z.boolean().optional(),
           })
           .optional(),
       })
       .strict()
-      .refine(incoming=>!incoming.confirmation||!incoming.media&&/^\/send\s/.test(incoming.text),"Invalid confirmed follow-up")
+      .refine(incoming=>!incoming.confirmation||/^\/send\s/.test(incoming.text),"Invalid confirmed follow-up")
+      .refine(incoming=>!incoming.media||incoming.text==="/upload"||/^\/(?:new|send)(?:@[A-Za-z0-9_]+)?(?:\s|$)/i.test(incoming.text),"Invalid attachment command")
       .optional(),
     pending: replySchema
       .extend({ updateId: z.number().int().nonnegative() })
@@ -754,7 +756,7 @@ export class TelegramBridge {
   }
   private async stageMedia(
     incoming: NonNullable<State["incoming"]>,
-  ): Promise<TelegramReply> {
+  ): Promise<{reply:TelegramReply;attachment:ChatAttachment}> {
     const uploads = this.runtime.uploads,
       id = requestId(this.identity, incoming.updateId),
       media = incoming.media!;
@@ -802,10 +804,12 @@ export class TelegramBridge {
         ...this.state!,
         inbox: [...inbox, result.attachment],
       });
-    return {
-      text: `附件已暂存: ${result.attachment.name}（${result.size} bytes）\n发送下一条任务指令一起提交；/inbox 查看或清空。文件说明不会自动执行。`,
+    return {attachment:result.attachment,reply:{
+      text: `附件已暂存: ${result.attachment.name}（${result.size} bytes）\n`+
+        (media.grouped?"相册附件逐张暂存，说明中的指令不会提前执行；等所有附件到齐后再发送任务指令。":"发送下一条任务指令一起提交；单个附件的说明可直接写 /new、/run、/send 或 /follow 指令，普通说明不会自动执行。")+
+        "\n/inbox 查看或清空。",
       keyboard: [[button("查看附件", "/inbox")]],
-    };
+    }};
   }
   private currentGrant(code: string) {
     const grant = this.grants.get(code);
@@ -840,13 +844,25 @@ export class TelegramBridge {
     });
   }
   private async processIncoming() {
-    const incoming = this.state!.incoming;
+    let incoming = this.state!.incoming;
     if (!incoming) return;
     let reply: TelegramReply;
     try {
-      const result = incoming.media
-        ? await this.stageMedia(incoming)
-        : await this.execute(
+      let staged:TelegramReply|undefined;
+      if(incoming.media){
+        const uploaded=await this.stageMedia(incoming);
+        if(incoming.text==="/upload")staged=uploaded.reply;
+        else {
+          // Save the exact instruction + attachment snapshot before admission.
+          // On restart this becomes the ordinary UUID-deduplicated command path,
+          // without redownloading or picking up a later inbox/project selection.
+          const attachments=[...(incoming.context.attachments||[])];
+          if(!attachments.some(file=>file.path===uploaded.attachment.path))attachments.push(uploaded.attachment);
+          const next={...incoming,media:undefined,context:{...incoming.context,attachments}};
+          await this.commit({...this.state!,incoming:next});incoming=next;
+        }
+      }
+      const result = staged ?? await this.execute(
             incoming.updateId,
             incoming.text,
             incoming.context,
@@ -854,7 +870,7 @@ export class TelegramBridge {
           );
       if (
         !incoming.media &&
-        /^\/(new|run|send)\b/.test(incoming.text) &&
+        /^\/(new|run|send)\b/i.test(incoming.text) &&
         incoming.context.attachments?.length
       ) {
         const used = new Set(incoming.context.attachments.map((a) => a.path));
@@ -868,8 +884,11 @@ export class TelegramBridge {
       // Shutdown is not a definitive rejection. Retain the resolved incoming
       // intent so a new bridge can reconcile it instead of sending an error.
       if (this.controller.signal.aborted || e instanceof TelegramPersistenceError) throw e;
+      if(incoming.media&&["ENOSPC","EDQUOT","EMFILE","ENFILE","EIO","EBUSY"].includes((e as NodeJS.ErrnoException)?.code||""))
+        throw new TelegramPersistenceError("Telegram attachment storage unavailable; retrying",{cause:e});
       reply = {
-        text: `Error: ${this.safe(e instanceof Error ? e.message : e)}`,
+        text: `Error: ${this.safe(e instanceof Error ? e.message : e)}`+
+          (incoming.context.attachments?.length?"\n附件保留在 /inbox，可修正指令后继续。":""),
       };
     }
     reply.text = this.safe(reply.text);
@@ -909,11 +928,17 @@ export class TelegramBridge {
       context.project = project;
       return `/new ${run[2]}`;
     }
+    if(/^\/run(?:@[A-Za-z0-9_]+)?(?:\s|$)/i.test(text))throw Error("Use /run PROJECT_NUMBER instruction; list roots with /projects");
+    const follow=text.match(/^\/follow(?:@[A-Za-z0-9_]+)?(?:\s+([\s\S]+))?$/i);
+    if(follow){if(!follow[1]?.trim())throw Error("Use /follow instruction; select a task or reply to its card");return this.routeTask(follow[1].trim(),message,context);}
     if (text.startsWith("/")) return text;
     if (this.state!.answerCode) {
       // Persisted answer mode fails closed after restart; it must not become a task instruction.
       return `/answertext ${this.state!.answerCode} ${this.wizard?.index || 0} ${text}`;
     }
+    return this.routeTask(text,message,context);
+  }
+  private routeTask(text:string,message:any,context:TelegramContext){
     let task = context.task;
     if (message.reply_to_message) {
       task = this.state!.routes?.[String(message.reply_to_message.message_id)];
@@ -1042,6 +1067,7 @@ export class TelegramBridge {
         attachments: this.state!.inbox || [],
       });
       let routed: string;
+      let confirmation:NonNullable<State["incoming"]>["confirmation"];
       let media: NonNullable<State["incoming"]>["media"];
       const source =
         !callback &&
@@ -1064,6 +1090,7 @@ export class TelegramBridge {
               -200,
             ),
             size: source.file_size,
+            ...(message.media_group_id?{grouped:true}:{}),
           };
         }
         if (!media && typeof text !== "string")
@@ -1072,9 +1099,18 @@ export class TelegramBridge {
           );
         if (typeof text === "string" && text.length > 100000)
           throw Error("Message is too large");
-        routed = media
-          ? "/upload"
-          : this.route(text.trim(), callback ? {} : message, context);
+        if(media){
+          const caption=typeof message.caption==="string"?message.caption.trim():"";
+          if(caption.length>100000)throw Error("Message is too large");
+          routed=!media.grouped&&/^\/(?:new|run|send|follow)(?:@[A-Za-z0-9_]+)?(?:\s|$)/i.test(caption)
+            ? this.route(caption,message,context) : "/upload";
+          const follow=routed.match(/^\/send(?:@[A-Za-z0-9_]+)?\s+(\S+)\s+([\s\S]+)$/i);
+          if(follow){
+            const job=this.findJob(follow[1]);
+            routed=`/send ${job.id} ${follow[2]}`;
+            confirmation={controlRevision:job.controlRevision||0};
+          }
+        }else routed=this.route(text.trim(),callback?{}:message,context);
       } catch (e) {
         await this.commit({
           ...this.state!,
@@ -1088,7 +1124,7 @@ export class TelegramBridge {
       }
       await this.commit({
         ...this.state!,
-        incoming: { updateId: update.update_id, text: routed, context, media },
+        incoming: { updateId: update.update_id, text: routed, context, media, confirmation },
       });
       await this.processIncoming();
     }

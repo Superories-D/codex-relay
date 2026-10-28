@@ -58,6 +58,7 @@ Ordinary text follows the selected task. Replying to a known task card, result p
 | `/status [STATE\|all] [PAGE]` | Browse eight tasks per page; default excludes archived tasks; pinned tasks appear first |
 | `/task TASK_ID` | Select a task and show state, project, model, queue and recovery details |
 | `/send TASK_ID instruction` | Explicitly enqueue a follow-up without changing selection |
+| `/follow instruction` | Enqueue to the selected task, or the task whose card you reply to; also works in a single attachment's caption |
 | `/result [TASK_ID]` | Latest recorded assistant response, paginated |
 | `/history [TASK_ID]` | Paginated exported conversation |
 | `/search phrase` | Search the selected conversation; show up to 30 newest matching excerpts |
@@ -153,9 +154,15 @@ The dated implementation and acceptance record is available in [Telegram console
 
 ## Incoming files (iteration 1)
 
-Send a document or photo to stage it durably (8 MiB per file, up to 10 pending files). `/inbox` lists staged files; `/inbox clear` clears the selection without deleting files already referenced by tasks. The next `/new`, `/run` or task follow-up includes that attachment snapshot. Captions do not execute instructions automatically. Files are downloaded only from Telegram's official file endpoint with streaming size limits, saved under an opaque upload ID with checksum receipts, and reused across lost replies/restarts. Workflows require an empty inbox; attach files to individual stages instead.
+Send a document or photo to stage it durably (8 MiB per file, up to 10 pending files). `/inbox` lists staged files; `/inbox clear` clears the selection without deleting files already referenced by tasks. The next `/new`, `/run` or task follow-up includes that attachment snapshot. Ordinary captions only describe the file. A single photo/document can carry an explicit `/new`, `/run`, `/send` or `/follow` command in its caption to submit the file and instruction together. Files are downloaded only from Telegram's official file endpoint with streaming size limits, saved under an opaque upload ID with checksum receipts, and reused across lost replies/restarts. Workflows require an empty inbox; attach files to individual stages instead.
+
+For example, send a screenshot with `/run 1 Fix the layout shown here`, or reply to a task card with a document captioned `/follow Check this evidence`. `/new` uses the selected project; `/send TASK_ID instruction` names a task explicitly. A reply with an unknown task-message mapping fails without falling back to the selected task. Follow-up captions freeze the task ID and its control version before downloading: a later pause/cancel prevents an unaccepted old input from restarting work, while an existing acceptance receipt is still recognized.
+
+Before admission, the bridge persists the resolved instruction, original project/task, and exact attachment snapshot. Failures around upload staging, command handoff, inbox cleanup or reply persistence reuse the same update-derived request ID; successful admission does not download or enqueue the input again. Already staged files remain available when a command is rejected. Albums continue staging each file and explicitly ask for a separate instruction after all files arrive, so a caption on the first album item cannot run with an incomplete attachment set. Unsupported caption commands are not executed.
 
 A `getFile` rejection with HTTP 400, 413 or 422 produces a retained error reply asking the user to resend the attachment, then permits later updates to proceed. Network failures, authentication/permission errors, 404, rate limits and service failures retain the original incoming attachment for retry; they are not silently discarded. API errors expose only the method and HTTP status, without reflecting the remote error description or token. Download interruptions continue to use the existing durable retry path.
+
+Temporary upload storage failures (`ENOSPC`, `EDQUOT`, `EMFILE`, `ENFILE`, `EIO`, `EBUSY`) retain the incoming intent too. If its checksum receipt was already saved, retry reads the original file instead of downloading it again. Permanent receipt/content validation errors remain explicit failures.
 
 Schedule pause/enable commands carry the observed configuration revision so another client's newer prompt or contract cannot be overwritten. If a reply checkpoint fails after a schedule was changed or removed, the bridge reads the original durable receipt before looking up/reconstructing the current plan. A repeated update therefore confirms the earlier operation instead of changing the plan again or failing because the deleted plan is now absent.
 
@@ -181,7 +188,7 @@ Schedule pause/enable commands carry the observed configuration revision so anot
 
 | 操作 | 命令 / 交互 |
 | --- | --- |
-| 上传任务文件 | 发送照片或文档，`/inbox` 检查，下一条 `/new` 或追问附带文件；字幕不自动执行 |
+| 上传任务文件 | 单个图片/文档说明可写 `/new`、`/run`、`/send` 或 `/follow`；普通说明仅暂存，相册到齐后另发指令；`/inbox` 检查 |
 | 下载已记录结果 | `/files [任务ID] [页码]`，点文件按钮；单文件最多 8 MiB |
 | 立即干预运行 | `/steer 补充指令`，作用于当前选中且正在运行的任务 |
 | 模型等待恢复 | `/models` 查看缓存；`/switchmodel MODEL [EFFORT]` 切换并恢复模型等待任务 |
