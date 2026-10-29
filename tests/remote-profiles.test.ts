@@ -14,6 +14,26 @@ const { RemoteStore, endpoint } = createRequire(import.meta.url)(
     "../scripts/remote-store.cjs",
   ),
   exec = promisify(execFile);
+it.each(["task.control","task.queue","delivery.save","delivery.run","schedule.abandon"])("retains %s for recovery after an ambiguous response",async name=>{
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),"relay-command-recovery-")),serverId=randomUUID(),id=randomUUID(),requests:any[]=[];
+  const server=http.createServer(async(req,res)=>{
+    res.setHeader("Content-Type","application/json");
+    if(req.url==="/api/meta"){res.end(JSON.stringify({serverId}));return;}
+    let body="";for await(const chunk of req)body+=chunk;requests.push(JSON.parse(body));
+    if(requests.length===1){res.writeHead(409);res.end(JSON.stringify({error:"Acknowledgment lost after acceptance"}));}
+    else res.end(JSON.stringify({result:{id,state:"succeeded",result:{applied:true}}}));
+  });
+  server.listen(0,"127.0.0.1");await once(server,"listening");
+  try {
+    const token=path.join(root,"token"),command=path.join(root,"command.json"),url=`http://127.0.0.1:${(server.address() as any).port}`,env={...process.env,RELAY_REMOTE_HOME:path.join(root,"client")};
+    const payload={name,args:{requestId:id,id:randomUUID(),input:{text:"Original frozen input"}}};
+    await fs.writeFile(token,"a".repeat(64),{mode:0o600});await fs.writeFile(command,JSON.stringify(payload));
+    const run=(args:string[])=>exec(process.execPath,["scripts/remote.cjs",...args,"--url",url,"--token-file",token],{env});
+    await expect(run(["command","--file",command])).rejects.toThrow("Acknowledgment lost");
+    const store=new RemoteStore(env.RELAY_REMOTE_HOME);expect(store.read(id)).toMatchObject({state:"pending",serverId,name,args:payload.args});
+    await run(["recover","--request-id",id]);expect(store.read(id).state).toBe("confirmed");expect(requests).toEqual([payload,payload]);
+  }finally{await new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve()));await fs.rm(root,{recursive:true,force:true});}
+});
 it("stores private profiles and binds immutable requests to server identity", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "relay-profiles-"));
   try {
@@ -78,7 +98,8 @@ it.skipIf(process.platform !== "linux")(
     let accepted!: () => void;
     const ready = new Promise<void>((resolve) => (accepted = resolve));
     let drop = true,
-      changed = false;
+      changed = false,
+      errorAfterAcceptance = false,swapAfterMeta=false;
     const proxy = http.createServer(async (req, res) => {
       let body = "";
       for await (const c of req) body += c;
@@ -88,18 +109,26 @@ it.skipIf(process.platform !== "linux")(
           method: req.method,
           headers: {
             Authorization: req.headers.authorization!,
+            ...(req.headers["x-relay-server-id"]?{"X-Relay-Server-ID":String(req.headers["x-relay-server-id"])}:{}),
             "Content-Type": "application/json",
           },
           body: body || undefined,
         },
       );
       let text = await response.text();
+      if(req.url==="/api/meta"&&swapAfterMeta){swapAfterMeta=false;(runtime as any).installationId=randomUUID();}
       if (req.url === "/api/meta" && changed)
         text = JSON.stringify({ ...JSON.parse(text), serverId: randomUUID() });
       if (req.method === "POST" && drop) {
         drop = false;
         accepted();
         res.destroy();
+        return;
+      }
+      if (req.method === "POST" && errorAfterAcceptance) {
+        errorAfterAcceptance = false;
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Lost persistence acknowledgement" }));
         return;
       }
       res.writeHead(response.status, { "Content-Type": "application/json" });
@@ -168,11 +197,30 @@ it.skipIf(process.platform !== "linux")(
       );
       expect(runtime.store.data.jobs).toHaveLength(1);
       expect(store.read(id).state).toBe("confirmed");
+      // Older clients marked even an ambiguous 4xx as rejected. Explicit
+      // recovery upgrades that receipt without changing its identity.
+      store.finish({ ...store.read(id), state: "pending" }, undefined, "old error");
+      await run(["recover", "--profile", "server", "--request-id", id]);
+      expect(store.read(id).state).toBe("confirmed");
+      expect(runtime.store.data.jobs).toHaveLength(1);
+      const secondId = randomUUID();
+      errorAfterAcceptance = true;
+      await expect(run(["run", "--profile", "server", "--prompt", "Accepted before error", "--request-id", secondId, "--detach"])).rejects.toThrow("Lost persistence acknowledgement");
+      expect(store.read(secondId).state).toBe("pending");
+      expect(runtime.store.data.jobs).toHaveLength(2);
+      const second = await run(["recover", "--profile", "server", "--request-id", secondId]);
+      expect(JSON.parse(second.stdout).id).toBe(runtime.store.data.jobs[1].id);
+      expect(runtime.store.data.jobs).toHaveLength(2);
+      const originalServerId=runtime.installationId,raceId=randomUUID();swapAfterMeta=true;
+      await expect(run(["run","--profile","server","--prompt","Deployment race","--request-id",raceId,"--detach"])).rejects.toThrow("Server installation changed");
+      expect(store.read(raceId).state).toBe("pending");expect(runtime.store.data.jobs).toHaveLength(2);
+      (runtime as any).installationId=originalServerId;
+      await run(["recover","--profile","server","--request-id",raceId]);expect(runtime.store.data.jobs).toHaveLength(3);
       changed = true;
       await expect(
         run(["recover", "--profile", "server", "--request-id", id]),
       ).rejects.toThrow("installation differs");
-      expect(runtime.store.data.jobs).toHaveLength(1);
+      expect(runtime.store.data.jobs).toHaveLength(3);
     } finally {
       child?.kill("SIGKILL");
       proxy.closeAllConnections();

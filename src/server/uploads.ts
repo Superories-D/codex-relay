@@ -28,11 +28,20 @@ export class ServerUploads {
       );
     if (receipt.id !== id || path.basename(receipt.name) !== receipt.name)
       throw Error("Invalid upload receipt");
-    const file = path.join(folder, receipt.name),
-      stat = await fs.lstat(file);
-    if (!stat.isFile() || stat.size !== receipt.size)
-      throw Error("Upload changed or missing");
-    const bytes = await fs.readFile(file);
+    const file = path.join(folder, receipt.name);
+    let bytes: Buffer;
+    try {
+      const stat = await fs.lstat(file);
+      if (!stat.isFile() || stat.size !== receipt.size)
+        throw Error("Upload changed or missing");
+      bytes = await fs.readFile(file);
+    } catch (error: any) {
+      // ENOENT is reserved for a missing receipt. Once accepted, a missing
+      // payload must never make this request ID available for a new upload.
+      if (error.code === "ENOENT")
+        throw Error("Upload file missing; original receipt retained");
+      throw error;
+    }
     if (createHash("sha256").update(bytes).digest("hex") !== receipt.sha)
       throw Error("Upload checksum mismatch");
     return {

@@ -16,7 +16,11 @@ export function TelegramSettings({call}: {call: Call}) {
   const [busy, setBusy] = useState(false), [error, setError] = useState(""), [notice, setNotice] = useState("");
   const [confirm, setConfirm] = useState<string>();
   const [dirty, setDirty] = useState(false);
-  const live = useRef(true), request = useRef(false);
+  const live = useRef(true), request = useRef(false), polling=useRef<object|undefined>(undefined),epoch=useRef(0);
+  const [historyFilter,setHistoryFilter]=useState("all"),[historyQuery,setHistoryQuery]=useState(""),[historyPage,setHistoryPage]=useState(0);
+  const receipts=(view?.receipts||[]).filter(r=>(historyFilter==="all"||(historyFilter==="unresolved"?["pending","sending","failed","uncertain"].includes(r.status):r.status===historyFilter))&&`${r.id} ${r.jobId||""} ${r.text} ${r.issue||""}`.toLowerCase().includes(historyQuery.trim().toLowerCase()));
+  const pages=Math.max(1,Math.ceil(receipts.length/20)),page=Math.min(historyPage,pages-1);
+  const unresolved=(view?.receipts||[]).filter(r=>["pending","sending","failed","uncertain"].includes(r.status)).length;
   const callRef = useRef(call); callRef.current = call;
   const apply = (value: TelegramView) => {
     setView(value); setChatId(value.chatId); setEnabled(value.enabled);
@@ -24,18 +28,20 @@ export function TelegramSettings({call}: {call: Call}) {
   };
   useEffect(() => {
     live.current = true;
-    void callRef.current("telegram.read").then(v => {if (live.current) apply(v);}).catch(e => {if (live.current) setError(errorText(e));});
+    const initialEpoch=epoch.current,initialRead={};polling.current=initialRead;
+    void callRef.current("telegram.read").then(v => {if (live.current&&epoch.current===initialEpoch) apply(v);}).catch(e => {if (live.current&&epoch.current===initialEpoch) setError(errorText(e));}).finally(()=>{if(polling.current===initialRead)polling.current=undefined;});
     const timer = setInterval(() => {
-      if (request.current) return;
+      if (request.current||polling.current) return;
+      const observedEpoch=epoch.current,activeRead={};polling.current=activeRead;
       void callRef.current("telegram.read").then((v: TelegramView) => {
-        if (live.current) setView(old => old ? {...old, receipts: v.receipts, issue: v.issue} : old);
-      }).catch(() => {});
+        if (live.current&&epoch.current===observedEpoch) setView(old => old&&v.revision===old.revision ? {...old, receipts: v.receipts, issue: v.issue} : old);
+      }).catch(() => {}).finally(()=>{if(polling.current===activeRead)polling.current=undefined;});
     }, 2000);
-    return () => {live.current = false; clearInterval(timer);};
+    return () => {live.current = false; epoch.current++;clearInterval(timer);};
   }, []);
   const run = async (action: () => Promise<unknown>) => {
     if (request.current) return;
-    request.current = true; setBusy(true); setError(""); setNotice("");
+    epoch.current++;request.current = true; setBusy(true); setError(""); setNotice("");
     try {await action();} catch(e) {if (live.current) setError(errorText(e));}
     finally {request.current = false; if (live.current) setBusy(false);}
   };
@@ -92,14 +98,22 @@ export function TelegramSettings({call}: {call: Call}) {
       </div>}
       <div className="telegram-history"><h3>{t("发送记录")}</h3>
         <p className="telegram-description">{t("限流会自动重试；结果未知的通知需要手动确认。关闭自动通知会保留队列，重新启用后继续发送。")}</p>
+        <div className="telegram-history-tools">
+          <label>{t("搜索通知记录")}<input type="search" value={historyQuery} onChange={e=>{setHistoryQuery(e.target.value);setHistoryPage(0);}}/></label>
+          <label>{t("通知状态")}<select value={historyFilter} onChange={e=>{setHistoryFilter(e.target.value);setHistoryPage(0);}}><option value="all">{t("全部")}</option><option value="unresolved">{t("待处理通知")}</option>{Object.entries(statuses).map(([key,label])=><option key={key} value={key}>{t(label)}</option>)}</select></label>
+          <button type="button" onClick={()=>{setHistoryFilter("unresolved");setHistoryQuery("");setHistoryPage(0);}}>{t("待处理通知")} · {unresolved}</button>
+          <span role="status">{receipts.length} / {view.receipts.length} · {page+1} / {pages}</span>
+        </div>
+        {!!view.receipts.length&&!receipts.length&&<p>{t("没有匹配的通知记录")}</p>}
         {!view.receipts.length && <p className="telegram-description">{t("暂无发送记录")}</p>}
-        {view.receipts.map(r => <article key={r.id} className={`telegram-receipt is-${r.status}`}>
+        {receipts.slice(page*20,(page+1)*20).map(r => <article key={r.id} className={`telegram-receipt is-${r.status}`}>
           <div><strong>{t(statuses[r.status])}</strong><time>{formatDate(r.createdAt)}</time><span>{t("尝试次数")}: {r.attempts}</span></div>
           <pre>{r.text}</pre>{r.issue && <p>{t(r.issue)}</p>}
           {r.status === "pending" && r.dueAt > Date.now() && <p>{t("下次尝试")}: {formatDate(r.dueAt)}</p>}
           {["failed", "uncertain"].includes(r.status) && <button disabled={busy || dirty} onClick={() => r.status === "uncertain" ? setConfirm(r.id) : void run(async () => setView(await call("telegram.receipt", {id: r.id, action: "retry"})))}>{t("重试通知")}</button>}
           {["pending", "failed", "uncertain"].includes(r.status) && <button disabled={busy || dirty} onClick={() => void run(async () => setView(await call("telegram.receipt", {id: r.id, action: "cancel"})))}>{t("取消通知")}</button>}
         </article>)}
+        {pages>1&&<nav className="telegram-history-pages" aria-label={t("通知记录分页")}><button type="button" disabled={page===0} onClick={()=>setHistoryPage(page-1)}>{t("上一页")}</button><span>{page+1} / {pages}</span><button type="button" disabled={page+1>=pages} onClick={()=>setHistoryPage(page+1)}>{t("下一页")}</button></nav>}
       </div>
     </>}
   </section>;

@@ -1,3 +1,4 @@
+import {deliveryChecksSchema} from "../shared/delivery";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { scheduleRecovery } from "./auto-recovery";
@@ -108,8 +109,28 @@ export class Store {
         },
       };
       for (const j of this.data.jobs) {
+        if(!j.projectCwd&&j.schedule?.sourceCwd)j.projectCwd=j.schedule.sourceCwd;
+        // Old batch-created workflows kept input checks on an unused field.
+        // Restore the declared gate without inheriting or fabricating evidence.
+        const legacy=(j as Job&{deliveryChecks?:unknown}).deliveryChecks;
+        if(legacy!==undefined){
+          if(!j.delivery){
+            const parsed=deliveryChecksSchema.safeParse(legacy);
+            if(!parsed.success)throw Error("旧版工作流验收条件无法读取，请检查状态文件");
+            if(parsed.data.length)j.delivery={revision:1,checks:parsed.data,reports:[],...(j.state==="completed"&&!j.recoveryRequired&&(!j.existing||j.existing.phase==="managed")?{pendingCompletion:true,blockedCompletion:true}:{})};
+          }
+          delete (j as Job&{deliveryChecks?:unknown}).deliveryChecks;
+        }
+
         for (const message of j.queuedMessages || []) message.id ||= randomUUID();
-        if (j.delivery?.pendingCompletion) {
+        if(j.resumeAfterShutdown&&(j.stopIntent||["completed","cancelled"].includes(j.state)))j.resumeAfterShutdown=undefined;
+        if (j.completionPending) {
+          if (!j.completion) throw Error("完成回执缺少结果身份，请检查状态文件");
+          j.recoveryRequired = true;
+          j.state = "needs_attention";
+          j.lastError = "本轮已确认完成，正在核查原进程并恢复结果收尾；不会重复执行本轮";
+          if (!j.autoRecovery) scheduleRecovery(j,"process");
+        } else if (j.delivery?.pendingCompletion) {
           // This marker is saved only after the worker has positively closed.
           // Resume read-only verification rather than sending another model turn.
           j.state = j.stopIntent === "cancel" ? "cancelled" : j.stopIntent === "pause" ? "paused" : "needs_attention";
@@ -117,6 +138,9 @@ export class Store {
           j.autoRecovery = undefined;
           j.delivery.blockedCompletion = true;
           j.lastError = "交付验收中断，正在重新检查产物";
+        } else if(j.resumeAfterShutdown&&!j.stopIntent){
+          j.recoveryRequired=true;j.state="needs_attention";j.lastError="服务退出中断，正在核查原进程后自动继续";
+          if(!j.autoRecovery)scheduleRecovery(j,"process");
         } else if (j.existing && j.existing.phase !== "managed") {
           if (!["completed", "cancelled"].includes(j.state)) {
             j.state = "needs_attention";

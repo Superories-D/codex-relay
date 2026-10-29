@@ -2944,6 +2944,11 @@ body:lang(ja) {
   box-shadow: 0 25px 100px #0008;
   color: #aaa;
 }
+.feature-detail-backdrop > .feature-detail {
+  /* Fit the overlay's actual content box, including ancestor CSS zoom. */
+  max-height: 100%;
+  min-height: 0;
+}
 .desktop-shell .detail-close {
   display: flex;
   color: #999;

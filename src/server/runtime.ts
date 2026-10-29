@@ -1,9 +1,11 @@
 import { bulkPrioritySchema } from "../shared/task-priority";
+import {sourceVersion} from "../shared/build-info";
+import {ProjectGit} from "./project-git";
 import {randomUUID} from "node:crypto";
 import {ServerWorkflows} from "./workflows";
 import { Desktop } from "../core/desktop";
 import { Schedules } from "../core/schedules";
-import { scheduleInputSchema } from "../core/schedule-command";
+import { scheduleInputSchema, scheduleAbandonSchema } from "../core/schedule-command";
 import { prepareWorkspaces, resolveWorkspace } from "./workspaces";
 import {goalUpdateSchema,updateGoal} from "../core/goal-command";
 import { RemoteActions } from "./actions";
@@ -29,6 +31,7 @@ import {
   controlSchema,
   chatSendSchema,
   idSchema,
+  deliverySaveSchema,
 } from "../main/validation";
 import { ServerCipher } from "./vault";
 import { acquireOwner } from "./owner";
@@ -54,6 +57,7 @@ export class ServerRuntime {
   get uploads() { return this.uploadStore ||= new ServerUploads(this.store.root); }
   private uploadStore?: ServerUploads;
   private remoteActions?: RemoteActions;
+  private projectGit?:ProjectGit;
   private reports?: WorkflowReports;
   private templates?: Templates;
   private closing = false;
@@ -150,7 +154,7 @@ export class ServerRuntime {
     this.schedules.start();
   }
   get draining() { return this.closing; }
-  beginDrain() { this.closing = true; }
+  beginDrain() { this.closing = true; this.scheduler.interruptDeliveryChecks(); }
   command(name: string, args?: unknown): Promise<unknown> {
     if (name === "health") return Promise.resolve(serviceHealth(this.scheduler.snapshot(),this.closing));
     if (this.closing) return Promise.reject(Object.assign(Error("Server is shutting down; retry after restart"),{status:503}));
@@ -200,6 +204,10 @@ export class ServerRuntime {
         const a=z.object({requestId:idSchema,id:idSchema}).strict().parse(args);
         return (this.remoteActions ||= new RemoteActions(this.store.root)).run(a.requestId,name,a.id,{},async()=>name==="schedule.run"?this.schedules.run(a.id):this.schedules.remove(a.id).then(()=>({removed:true})));
       }
+      case "schedule.abandon": {
+        const a=scheduleAbandonSchema.extend({requestId:idSchema}).parse(args);
+        return (this.remoteActions ||= new RemoteActions(this.store.root)).run(a.requestId,name,a.id,{runId:a.runId},()=>this.schedules.abandonPending(a.id,a.runId));
+      }
 
       case "goal.read": {
         const a=z.object({id:idSchema}).strict().parse(args);
@@ -212,6 +220,21 @@ export class ServerRuntime {
 
       case "action.read":
         return (this.remoteActions ||= new RemoteActions(this.store.root)).read(idSchema.parse(args));
+      case "actions.list":
+        return (this.remoteActions ||= new RemoteActions(this.store.root)).list(args);
+      case "delivery.read":
+        return this.scheduler.readDelivery(idSchema.parse(args));
+      case "delivery.repair":
+        return this.scheduler.deliveryPrompt(idSchema.parse(args));
+      case "delivery.save": {
+        const a=deliverySaveSchema.extend({requestId:idSchema}).parse(args);
+        return (this.remoteActions ||= new RemoteActions(this.store.root)).run(a.requestId,name,a.id,{revision:a.revision,checks:a.checks},()=>this.scheduler.saveDelivery(a.id,a.revision,a.checks));
+      }
+      case "delivery.run": {
+        const a=z.object({requestId:idSchema,id:idSchema,revision:z.number().int().nonnegative(),reportId:idSchema.optional()}).strict().parse(args);
+        const expected={revision:a.revision,reportId:a.reportId};
+        return (this.remoteActions ||= new RemoteActions(this.store.root)).run(a.requestId,name,a.id,expected,()=>this.scheduler.checkDelivery(a.id,"manual",undefined,expected));
+      }
       case "models.list":
         return this.store.data.accounts.filter(a=>a.enabled).map(a=>({account:a.label,ids:a.modelAccess?.ids||[],observedAt:a.modelAccess?.observedAt||0,complete:a.modelAccess?.complete||false}));
       case "task.steer": {
@@ -243,6 +266,14 @@ export class ServerRuntime {
         return serviceHealth(this.scheduler.snapshot(), this.closing);
       case "snapshot":
         return this.scheduler.snapshot();
+      case "project.changes": {
+        const a=z.object({cwd:z.string().min(1).max(32767)}).strict().parse(args);
+        return (this.projectGit ||= new ProjectGit(this.store.root,this.workspaceRoots)).changes(a.cwd);
+      }
+      case "project.diff": {
+        const a=z.object({cwd:z.string().min(1).max(32767),path:z.string().min(1).max(32767),staged:z.boolean().default(false)}).strict().parse(args);
+        return (this.projectGit ||= new ProjectGit(this.store.root,this.workspaceRoots)).diff(a.cwd,a.path,a.staged);
+      }
       case "job.add": {
         const input = newJobSchema.parse(args);
         if (input.mode !== "cli") throw Error("Only CLI tasks are supported");
@@ -338,6 +369,14 @@ export class ServerRuntime {
         const a = controlSchema.parse(args);
         return this.scheduler.control(a.id, a.action);
       }
+      case "task.control": {
+        const a=controlSchema.extend({requestId:idSchema,expected:z.string().min(1).max(2000)}).strict().parse(args);
+        return (this.remoteActions ||= new RemoteActions(this.store.root)).run(a.requestId,name,a.id,{action:a.action,expected:a.expected},()=>this.scheduler.controlObserved(a.id,a.action,a.expected));
+      }
+      case "task.queue": {
+        const a=z.object({requestId:idSchema,input:z.object({id:idSchema,messageId:idSchema,revision:z.number().int().nonnegative(),action:z.enum(["edit","remove","up","down"]),text:z.string().trim().min(1).max(100000).optional()}).strict()}).strict().parse(args);
+        return (this.remoteActions ||= new RemoteActions(this.store.root)).run(a.requestId,name,a.input.id,a.input,async()=>{await this.scheduler.editQueue(a.input);return {applied:true};});
+      }
       case "job.metadata": {
         const {id,...patch}=z.object({id:idSchema,title:z.string().trim().min(1).max(120).optional(),pinned:z.boolean().optional(),archived:z.boolean().optional()}).strict().parse(args);
         return this.scheduler.metadata(id,patch);
@@ -353,6 +392,10 @@ export class ServerRuntime {
       case "chat.submit": {
         const a=z.object({requestId:idSchema,input:chatSendSchema}).strict().parse(args);
         return this.scheduler.send(a.input,a.requestId);
+      }
+      case "chat.confirmedSubmit": {
+        const a=z.object({requestId:idSchema,controlRevision:z.number().int().nonnegative(),input:chatSendSchema.refine(input=>input.action==="queue")}).strict().parse(args);
+        return this.scheduler.send(a.input,a.requestId,a.controlRevision);
       }
       case "chat.send":
         return this.scheduler.send(chatSendSchema.parse(args));
@@ -374,7 +417,7 @@ export class ServerRuntime {
         return this.scheduler.snapshot().accounts;
       case "job.report":
         return taskReport(this.scheduler.snapshot(), idSchema.parse(args), {
-          version: "0.6.17-source",
+          version: sourceVersion,
           platform: process.platform,
           arch: process.arch,
           node: process.versions.node,
@@ -392,36 +435,12 @@ export class ServerRuntime {
     return this.closePromise;
   }
   private async closeOnce() {
-    this.closing = true;
+    this.beginDrain();
     await this.cliSetup?.shutdown();
     await Promise.allSettled([...this.inFlight]);
     await this.schedules.shutdown();
-    const resume = new Set(
-      this.store.data.jobs
-        .filter(
-          (j) =>
-            !j.stopIntent &&
-            ["queued", "waiting", "preparing", "running", "rotating"].includes(
-              j.state,
-            ),
-        )
-        .map((j) => j.id),
-    );
     try {
-      await this.scheduler.shutdown();
-      // Service shutdown is not a user Pause. Resume only work that shutdown
-      // itself stopped after process ownership was positively released.
-      for (const job of this.store.data.jobs)
-        if (
-          resume.has(job.id) &&
-          job.state === "paused" &&
-          job.stopIntent === "pause"
-        ) {
-          job.stopIntent = undefined;
-          job.state = "queued";
-          job.stage = "等待服务重启后继续";
-        }
-      await this.store.save();
+      await this.scheduler.shutdown({resumeOnRestart:true});
       await this.owner.release();
     } catch (error) {
       this.closing = false;

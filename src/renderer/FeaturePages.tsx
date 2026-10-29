@@ -1,3 +1,5 @@
+import {DeliveryDialog} from "./DeliveryDialog";
+import {SchedulePending} from "./SchedulePending";
 import { t, useI18n, formatDate, errorText } from "./i18n";
 import React, { useEffect, useRef, useState } from "react";
 import {
@@ -617,6 +619,7 @@ export function SchedulesPage({
   cwd,
   call,
   refresh,
+  poll,
   close,
   select,
 }: {
@@ -624,17 +627,19 @@ export function SchedulesPage({
   cwd: string;
   call: Call;
   refresh: () => void;
+  poll?:()=>void;
   close: () => void;
   select: (id: string) => void;
 }) {
   useI18n();
-  const refreshRef = useRef(refresh);
-  refreshRef.current = refresh;
+  const refreshRef = useRef(poll||refresh);
+  refreshRef.current = poll||refresh;
   useEffect(() => {
     const timer = setInterval(() => refreshRef.current(), 3000);
     return () => clearInterval(timer);
   }, []);
 
+  const [editingScheduleChecks,setEditingScheduleChecks]=useState(false);
   const [form, setForm] = useState<Partial<ScheduledTask>>(),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
@@ -730,7 +735,7 @@ export function SchedulesPage({
                   <CalendarClock size={22} />
                 </span>
                 <div>
-                  <button onClick={() => setForm(task)}>
+                  <button onClick={() => setForm({...task,revision:task.revision||0})}>
                     <h3>{task.title}</h3>
                   </button>
                   <p>
@@ -762,6 +767,11 @@ export function SchedulesPage({
                   {task.lastError && (
                     <p className="panel-error">{t(task.lastError)}</p>
                   )}
+                  <SchedulePending task={task} busy={busy} abandon={async runId=>{
+                    setBusy(true);setError("");
+                    try{const result=await call("schedule.abandon",{id:task.id,runId});refresh();if(result.jobId)select(result.jobId);}
+                    catch(error){setError(errorText(error));}finally{setBusy(false);}
+                  }}/>
                   {task.lastJobId && (
                     <button
                       className="text-link"
@@ -787,6 +797,7 @@ export function SchedulesPage({
                       } = task;
                       await call("schedule.save", {
                         ...saved,
+                        revision:task.revision||0,
                         enabled: !task.enabled,
                       });
                       refresh();
@@ -857,6 +868,7 @@ export function SchedulesPage({
               <X size={19} />
             </button>
             <h2>{form.id ? t("编辑定时任务") : t("新建定时任务")}</h2>
+            {editingScheduleChecks&&<DeliveryDialog purpose="plan" initial={form.deliveryChecks||[]} call={call} saveDraft={checks=>setForm({...form,deliveryChecks:checks})} close={()=>setEditingScheduleChecks(false)}/>}
             <label>
               {t("名称")}
               <input
@@ -982,6 +994,8 @@ export function SchedulesPage({
               />
               {t("在独立 Git Worktree 中运行")}
             </label>
+            <button type="button" disabled={busy} onClick={()=>setEditingScheduleChecks(true)}>{t("每次运行的交付验收")} · {form.deliveryChecks?.length||0}</button>
+            <p className="schedule-time-note">{t("计划修改只影响后续运行；已有任务的验收条件保持原样。")}</p>
             {error && (
               <p role="alert" className="panel-error">
                 {error}

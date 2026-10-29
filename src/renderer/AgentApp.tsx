@@ -3,13 +3,17 @@ import { WorkspaceHome } from "./WorkspaceHome";
 import { CommandPalette } from "./CommandPalette";
 import { t, useI18n, setLanguage, errorText } from "./i18n";
 import { MessageQueue } from "./MessageQueue";
-import { loadDraftState, saveDraftState, remainingDraft, remainingFiles } from "./drafts";
+import { loadDraftState, saveDraftState, remainingDraft, remainingFiles,confirmNativeDraft } from "./drafts";
+import {NativeFollowupRecovery,type PendingNativeFollowup} from "./native-followup-recovery";
+import {nativeFollowupSchema} from "../shared/native-followup";
+import {NativeCreationRecovery,type PendingNativeCreation} from "./native-creation-recovery";
 import { ChatSearch } from "./ChatSearch";
 import { TaskCenter } from "./TaskCenter";
 import { TaskTemplates } from "./TaskTemplates";
 import { TaskReport } from "./TaskReport";
 import { DeliveryDialog, DeliverySummary } from "./DeliveryDialog";
 import { readDeliveryDraft, writeDeliveryDraft, clearDeliveryDraft } from "./delivery-draft";
+import {RefreshQueue} from "../shared/refresh-queue";
 import { CopyButton } from "./CopyButton";
 import { CliSetupNotice } from "./CliSetupNotice";
 import { RecoveryNotice, RecoveryHistory } from "./RecoveryNotice";
@@ -158,12 +162,15 @@ export function AgentApp({
   const [deliveryOpen, setDeliveryOpen] = useState(false), [deliveryVersion,setDeliveryVersion]=useState(0);
   const [visibleProjects, setVisibleProjects] = useState(30),
     [visibleThreads, setVisibleThreads] = useState<Record<string, number>>({});
-  const [selected, setSelected] = useState<string | undefined>(
+  const [selected, setSelectedValue] = useState<string | undefined>(
     () => localStorage.getItem("relay.lastChat") || undefined,
   );
+  const selectionVersion=useRef(0);
+  const setSelected=(value:string|undefined)=>{selectionVersion.current++;setSelectedValue(value);};
   const [manage, setManage] = useState("");
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
+  const actionPending=useRef(false);
   const [search, setSearch] = useState("");
   const [archived, setArchived] = useState(false);
   const [inspector, setInspector] = useState(
@@ -176,6 +183,7 @@ export function AgentApp({
     schedules: [],
     preferences: { theme: "dark", notifications: true },
   });
+  const desktopReads=useRef<RefreshQueue<DesktopData>|undefined>(undefined);
   const [systemDark, setSystemDark] = useState(
     () => window.matchMedia("(prefers-color-scheme: dark)").matches,
   );
@@ -202,8 +210,26 @@ export function AgentApp({
   const [rename, setRename] = useState(false);
   const [title, setTitle] = useState("");
   const [initialDrafts] = useState(() => loadDraftState(localStorage));
-  const [drafts, setDrafts] = useState(initialDrafts.drafts);
-  const [files, setFiles] = useState(initialDrafts.files);
+  const [drafts, setDraftValues] = useState(initialDrafts.drafts);
+  const [files, setFileValues] = useState(initialDrafts.files);
+  const draftStateRef=useRef(initialDrafts);
+  const setDrafts=(update:React.SetStateAction<Record<string,string>>)=>{
+    const next=typeof update==="function"?update(draftStateRef.current.drafts):update;
+    draftStateRef.current={...draftStateRef.current,drafts:next};setDraftValues(next);
+  };
+  const setFiles=(update:React.SetStateAction<Record<string,ChatAttachment[]>>)=>{
+    const next=typeof update==="function"?update(draftStateRef.current.files):update;
+    draftStateRef.current={...draftStateRef.current,files:next};setFileValues(next);
+  };
+  const nativeFollowups=useRef<NativeFollowupRecovery|undefined>(undefined);
+  const [nativeReady,setNativeReady]=useState(false);
+  const [nativeEntries,setNativeEntries]=useState<PendingNativeFollowup[]>([]);
+  const [nativeFault,setNativeFault]=useState("");
+  const [nativeMessages,setNativeMessages]=useState<Record<string,string>>({});
+  const nativeCreations=useRef<NativeCreationRecovery|undefined>(undefined);
+  const [creationReady,setCreationReady]=useState(false),[creationFault,setCreationFault]=useState("");
+  const [creationEntries,setCreationEntries]=useState<PendingNativeCreation[]>([]);
+  const [creationMessages,setCreationMessages]=useState<Record<string,{text:string;jobId?:string;cwd:string}>>({});
   const [draftSaveFailed, setDraftSaveFailed] = useState(false);
   const [pasting, setPasting] = useState<Record<string, number>>({});
   const pasteLocks = useRef(new Map<string, number>());
@@ -288,6 +314,9 @@ export function AgentApp({
   const deliveryDraft = useMemo(()=>readDeliveryDraft(key),[key,deliveryVersion]);
   const draft = drafts[key] ?? "",
     attachments = files[key] ?? [];
+  const pendingNative=nativeEntries.find(record=>record.request.input.id===job?.id);
+  const pendingCreation=!job?creationEntries.find(record=>record.draftKey===key||record.request.input.cwd===cwd):undefined;
+  const creationMessage=creationMessages[key]||(!job?Object.values(creationMessages).find(value=>value.cwd===cwd):undefined);
   const call = async (name: string, args?: unknown): Promise<any> => {
     try {
       return await window.relay.command(name, args);
@@ -299,15 +328,18 @@ export function AgentApp({
       ].includes(name))
         setError(errorText(e));
       throw e;
+    } finally {
+      if(["schedule.save","schedule.remove","schedule.run","schedule.abandon"].includes(name))desktopReads.current?.invalidate();
     }
   };
   const action = (fn: () => Promise<unknown>) => {
-    if (pending) return;
+    if (actionPending.current) return;
+    actionPending.current=true;
     setPending(true);
     setError("");
     void fn()
       .catch((e) => setError(errorText(e)))
-      .finally(() => setPending(false));
+      .finally(() => {actionPending.current=false;setPending(false);});
   };
   const addPastedFiles = (
     target: string,
@@ -331,10 +363,7 @@ export function AgentApp({
       });
   };
   const refreshDesktop = () => {
-    void window.relay
-      .command("desktop.read")
-      .then((value) => setDesktop(value as DesktopData))
-      .catch((e) => setError(String(e)));
+    desktopReads.current?.invalidate();
   };
   const openFile = (path: string) => {
     setWorkspaceTab("files");
@@ -342,7 +371,9 @@ export function AgentApp({
     setInspector(true);
   };
   useEffect(() => {
-    refreshDesktop();
+    const queue=new RefreshQueue<DesktopData>(async()=>await window.relay.command("desktop.read") as DesktopData,setDesktop,error=>setError(String(error)));
+    desktopReads.current=queue;queue.refresh();
+    return()=>{queue.dispose();if(desktopReads.current===queue)desktopReads.current=undefined;};
   }, []);
   useEffect(() => {
     setLanguage(desktop.preferences?.language || "auto");
@@ -355,7 +386,7 @@ export function AgentApp({
   }, []);
   useEffect(() => {
     const save = () => {
-      try { saveDraftState(localStorage, { drafts, files }); setDraftSaveFailed(false); }
+      try { saveDraftState(localStorage, draftStateRef.current); setDraftSaveFailed(false); }
       catch { setDraftSaveFailed(true); }
     };
     const timer = setTimeout(save, 250);
@@ -366,7 +397,7 @@ export function AgentApp({
       window.removeEventListener("pagehide", save);
       window.removeEventListener("beforeunload", save);
       // Flush the previous render before switching chats or unmounting.
-      try { saveDraftState(localStorage, { drafts, files }); } catch {}
+      try { saveDraftState(localStorage, draftStateRef.current); } catch {}
     };
   }, [drafts, files]);
   useLayoutEffect(() => {
@@ -586,12 +617,63 @@ export function AgentApp({
       refreshDesktop();
     }
   };
+  useEffect(()=>{
+    let alive=true,initializing=false,controller:NativeFollowupRecovery|undefined;
+    const fail=(error:unknown)=>{if(alive)setNativeFault(errorText(error));};
+    const initialize=()=>{
+    if(initializing||controller||!alive)return;initializing=true;
+    void window.relay.command("chat.submission.identity").then(identity=>{
+      if(!alive)return;
+      const id=nativeFollowupSchema.shape.installationId.parse(identity);
+      controller=new NativeFollowupRecovery({storage:localStorage,identity:id,call:(name,args)=>window.relay.command(name,args),
+        accepted:record=>{
+          const next=confirmNativeDraft(localStorage,draftStateRef.current,record.request.requestId,record.request.input.id,record.draft,record.request.input.attachments);
+          draftStateRef.current=next;setDrafts(next.drafts);setFiles(next.files);
+          setNativeMessages(values=>({...values,[record.request.input.id]:""}));
+        },
+        rejected:(record,result)=>{if(result.state==="rejected")setNativeMessages(values=>({...values,[record.request.input.id]:result.error}));},
+        changed:()=>{if(alive&&controller)setNativeEntries(controller.entries());},
+      });
+      nativeFollowups.current=controller;setNativeReady(true);setNativeFault("");setNativeEntries(controller.entries());
+      return controller.drain();
+    }).catch(fail).finally(()=>{initializing=false;});
+    };initialize();
+    const timer=setInterval(()=>{if(controller)void controller.drain().catch(fail);else initialize();},3000);
+    return()=>{alive=false;clearInterval(timer);controller?.dispose();if(nativeFollowups.current===controller)nativeFollowups.current=undefined;};
+  },[]);
+  useEffect(()=>{
+    let alive=true,initializing=false,controller:NativeCreationRecovery|undefined;
+    const fail=(error:unknown)=>{if(alive)setCreationFault(errorText(error));};
+    const initialize=()=>{
+      if(initializing||controller||!alive)return;initializing=true;
+      void window.relay.command("chat.submission.identity").then(identity=>{
+        if(!alive)return;
+        const id=nativeFollowupSchema.shape.installationId.parse(identity);
+        controller=new NativeCreationRecovery({storage:localStorage,identity:id,call:(name,args)=>window.relay.command(name,args),
+          accepted:(record,result)=>{
+            const next=confirmNativeDraft(localStorage,draftStateRef.current,record.request.requestId,record.draftKey,record.draft,record.request.input.attachments||[]);
+            draftStateRef.current=next;setDrafts(next.drafts);setFiles(next.files);
+            clearDeliveryDraft(record.draftKey,record.request.input.deliveryChecks||[]);setDeliveryVersion(value=>value+1);
+            setCreationMessages(values=>({...values,[record.draftKey]:{text:"原创建请求已确认，聊天已保留。",jobId:result.jobId,cwd:record.request.input.cwd}}));
+          },
+          rejected:(record,result)=>{if(result.state==="rejected")setCreationMessages(values=>({...values,[record.draftKey]:{text:result.error,cwd:record.request.input.cwd}}));},
+          changed:()=>{if(alive&&controller){setCreationEntries(controller.entries());setCreationFault("");}},
+        });
+        nativeCreations.current=controller;setCreationReady(true);setCreationFault("");setCreationEntries(controller.entries());
+        return controller.drain();
+      }).catch(fail).finally(()=>{initializing=false;});
+    };initialize();
+    const timer=setInterval(()=>{if(controller)void controller.drain().catch(fail);else initialize();},3000);
+    return()=>{alive=false;clearInterval(timer);controller?.dispose();if(nativeCreations.current===controller)nativeCreations.current=undefined;};
+  },[]);
   const send = async (
     mode: "send" | "queue" | "steer" = "send",
     review = false,
     saveGoalOnly = false,
   ) => {
     if (pasteLocks.current.has(key)) return;
+    if(job&&pendingNative)throw Error(t("此任务仍有待确认消息，正在自动核对原请求。"));
+    if(!job&&pendingCreation)throw Error(t("此项目仍有待确认创建，正在自动核对原请求。"));
     if (!draft.trim() && !review) return;
     const slash = draft.trim().match(/^\/([a-z]+)(?:\s+(.*))?$/s);
     if (slash && !review) {
@@ -667,6 +749,8 @@ export function AgentApp({
         throw new Error(t("请先创建持续目标，再在聊天中补充文件或发起审查"));
     }
     if (!job) {
+      const navigation=selectionVersion.current;
+      if(!creatingGoal&&(!nativeCreations.current||creationFault))throw Error(t("创建恢复尚未就绪，草稿已保留。"));
       let dir = cwd;
       if (!dir) {
         dir = await call("choose.directory");
@@ -684,24 +768,33 @@ export function AgentApp({
         dir = created.cwd;
         refreshDesktop();
       }
-      const added = (await call(creatingGoal ? "chat.goal.create" : "job.add", {
+      const input = {
         title: text.replace(/\s+/g, " ").slice(0, 80),
         prompt: text,
         cwd: dir,
-        mode: "cli",
+        mode: "cli" as const,
         model,
         effort,
         bucket: "codex",
-        approvalPolicy: "on-request",
+        approvalPolicy: "on-request" as const,
         sandbox,
-        interactive: true,
+        interactive: true as const,
         attachments,
         review,
         planMode,
         multiAgent,
         deliveryChecks: deliveryDraft,
-        ...(creatingGoal ? { tokenBudget, start: !saveGoalOnly } : {}),
-      })) as Job;
+      };
+      if(!creatingGoal){
+        const recovery=nativeCreations.current!;
+        const result=await recovery.enqueue({installationId:recovery.identity,requestId:crypto.randomUUID(),input},draft,key);
+        if(result.state==="accepted"&&selectionVersion.current===navigation&&
+            !(draftStateRef.current.drafts[key]||"").length&&!(draftStateRef.current.files[key]||[]).length){
+          setSelected(result.jobId);localStorage.setItem("relay.lastChat",result.jobId);
+        }
+        following.current=true;return;
+      }
+      const added=await call("chat.goal.create",{...input,tokenBudget,start:!saveGoalOnly}) as Job;
       setSelected(added.id);
       clearDeliveryDraft(key,deliveryDraft);setDeliveryVersion(value=>value+1);
       localStorage.setItem("relay.lastChat", added.id);
@@ -709,17 +802,24 @@ export function AgentApp({
     } else {
       if (sandbox !== job.sandbox && !running(job))
         await call("chat.update", { id: job.id, sandbox });
-      await call("chat.send", {
+      const input = {
         id: job.id,
         text,
         attachments,
-        action: familyOwner && mode === "send" ? "queue" : mode,
+        action: familyOwner && mode === "send" ? "queue" as const : mode,
         model,
         effort,
         review,
         planMode,
         multiAgent,
-      });
+      };
+      if(input.action==="steer")await call("chat.send",input);
+      else {
+        const recovery=nativeFollowups.current;
+        if(!recovery||nativeFault)throw Error(t("消息恢复尚未就绪，草稿已保留。"));
+        await recovery.enqueue({installationId:recovery.identity,requestId:crypto.randomUUID(),controlRevision:job.controlRevision||0,input:{...input,action:"queue"}},draft);
+        following.current=true;return;
+      }
     }
     setDrafts((d) => ({ ...d, [key]: remainingDraft(d[key] || "", draft) }));
     setFiles((f) => ({ ...f, [key]: remainingFiles(f[key] || [], attachments) }));
@@ -1218,6 +1318,7 @@ export function AgentApp({
             cwd={currentCwd}
             call={call}
             refresh={refreshDesktop}
+            poll={()=>desktopReads.current?.refresh()}
             close={() => setScreen("chat")}
             select={(id) => {
               const j = snapshot?.jobs.find((j) => j.id === id);
@@ -1513,6 +1614,39 @@ export function AgentApp({
                   </div>
                 </div>
                 <div className="agent-composer-wrap">
+                  {!job&&creationFault&&<p role="alert" className="agent-history-note">{t("创建恢复尚未就绪，草稿已保留。")} {creationFault}</p>}
+                  {pendingCreation&&<div role="status" className="agent-history-note native-creation-pending">
+                    <p>{t("正在自动确认新聊天，重载后仍会继续，请勿重复创建。")}</p>
+                    {nativeCreations.current?.errors.get(pendingCreation.request.requestId)&&<p>{errorText(nativeCreations.current.errors.get(pendingCreation.request.requestId))}</p>}
+                    <button disabled={pending} onClick={()=>void nativeCreations.current?.cancel(pendingCreation).catch(error=>setCreationFault(errorText(error)))}>{t("停止确认并保留草稿")}</button>
+                  </div>}
+                  {!job&&!pendingCreation&&creationMessage&&<div role="status" className="agent-history-note native-creation-result">
+                    <p>{t(creationMessage.text)}</p>
+                    {creationMessage.jobId&&<button onClick={()=>{setSelected(creationMessage.jobId);localStorage.setItem("relay.lastChat",creationMessage.jobId!);}}>{t("打开已创建聊天")}</button>}
+                  </div>}
+                  {creationEntries.length>0&&!pendingCreation&&<details className="agent-history-note native-creation-pending">
+                    <summary>{t("后台待确认创建")} · {creationEntries.length}</summary>
+                    <div className="native-followup-list">{creationEntries.map(record=><div key={record.request.requestId}>
+                      <p>{record.request.input.title}</p>
+                      {nativeCreations.current?.errors.get(record.request.requestId)&&<p>{errorText(nativeCreations.current.errors.get(record.request.requestId))}</p>}
+                      <button onClick={()=>void nativeCreations.current?.cancel(record).catch(error=>setCreationFault(errorText(error)))}>{t("停止确认并保留草稿")}</button>
+                    </div>)}</div>
+                  </details>}
+                  {nativeFault&&<p role="alert" className="agent-history-note">{t("消息恢复尚未就绪，草稿已保留。")} {nativeFault}</p>}
+                  {pendingNative&&<div role="status" className="agent-history-note native-followup-pending">
+                    <p>{t("正在自动核对原消息，切换任务或重载后仍会继续。")}</p>
+                    {nativeFollowups.current?.errors.get(pendingNative.request.requestId)&&<p>{errorText(nativeFollowups.current.errors.get(pendingNative.request.requestId))}</p>}
+                    <button disabled={pending} onClick={()=>void nativeFollowups.current?.cancel(pendingNative).catch(error=>setNativeMessages(values=>({...values,[pendingNative.request.input.id]:errorText(error)})))}>{t("停止确认并保留草稿")}</button>
+                  </div>}
+                  {!pendingNative&&job&&nativeMessages[job.id]&&<p role="status" className="agent-history-note">{t(nativeMessages[job.id])}</p>}
+                  {nativeEntries.length>0&&!pendingNative&&<details className="agent-history-note native-followup-pending">
+                    <summary>{t("后台待确认消息")} · {nativeEntries.length}</summary>
+                    <div className="native-followup-list">{nativeEntries.map(record=><div key={record.request.requestId}>
+                      <p>{snapshot?.jobs.find(job=>job.id===record.request.input.id)?.title||record.request.input.id.slice(0,8)}</p>
+                      {nativeFollowups.current?.errors.get(record.request.requestId)&&<p>{errorText(nativeFollowups.current.errors.get(record.request.requestId))}</p>}
+                      <button onClick={()=>void nativeFollowups.current?.cancel(record).catch(error=>setNativeMessages(values=>({...values,[record.request.input.id]:errorText(error)})))}>{t("停止确认并保留草稿")}</button>
+                    </div>)}</div>
+                  </details>}
                   {draftSaveFailed && <p role="alert" className="agent-history-note">{t("草稿暂未保存，请复制重要内容后再关闭窗口。")}</p>}
                   {job?.state === "waiting" && job.waitingFor === "model" && (
                     <div className="model-wait-note" role="status">
@@ -1923,6 +2057,8 @@ export function AgentApp({
                           }
                           disabled={
                             pending ||
+                            !!pendingNative || !!pendingCreation || (!!job&&(!nativeReady||!!nativeFault)) ||
+                            (!job&&!goalMode&&(!creationReady||!!creationFault)) ||
                             !!pasting[key] ||
                             !draft.trim() ||
                             !!job?.archived ||
@@ -2375,7 +2511,8 @@ export function AgentApp({
         </ModalPresence>
         <ModalPresence>{reportOpen && job && <TaskReport id={job.id} call={call} close={() => setReportOpen(false)} />}</ModalPresence>
         <ModalPresence>{deliveryOpen&&<DeliveryDialog key={key} job={job} initial={deliveryDraft} call={call} close={()=>setDeliveryOpen(false)} saveDraft={checks=>{writeDeliveryDraft(key,checks);setDeliveryVersion(value=>value+1);}} repair={text=>{setDrafts(old=>({...old,[key]:[old[key],text].filter(Boolean).join("\n\n")}));setTimeout(()=>messageInput.current?.focus(),250);}}/>}</ModalPresence>
-        <ModalPresence>{templatesOpen && <TaskTemplates draft={draft} preferences={{ model, effort, planMode, multiAgent }} call={call} close={() => setTemplatesOpen(false)} apply={(template) => {
+        <ModalPresence>{templatesOpen && <TaskTemplates draft={draft} preferences={{ model, effort, planMode, multiAgent, deliveryChecks:job?.delivery?.checks||deliveryDraft }} call={call} close={() => setTemplatesOpen(false)} apply={(template) => {
+          if(!job){writeDeliveryDraft(key,template.deliveryChecks||[]);setDeliveryVersion(value=>value+1);}
           setDrafts((d) => ({ ...d, [key]: [d[key], template.prompt].filter(Boolean).join("\n\n") }));
           setModel(template.model); setEffort(template.effort); setPlanMode(template.planMode); setMultiAgent(template.multiAgent);
         }} />}</ModalPresence>

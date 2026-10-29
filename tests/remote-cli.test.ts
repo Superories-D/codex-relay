@@ -27,6 +27,7 @@ describe.skipIf(process.platform !== "linux")("remote CLI", () => {
         method: req.method,
         headers: {
           Authorization: req.headers.authorization!,
+            ...(req.headers["x-relay-server-id"]?{"X-Relay-Server-ID":String(req.headers["x-relay-server-id"])}:{}),
           "Content-Type": "application/json",
         },
         body: body || undefined,

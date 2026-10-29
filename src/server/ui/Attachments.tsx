@@ -1,3 +1,4 @@
+import {serverHeaders} from "./identity";
 import React, { useEffect, useRef, useState } from "react";
 import type { ChatAttachment } from "../../shared/types";
 import { t, errorText } from "../../renderer/i18n";
@@ -31,13 +32,18 @@ export function RemoteAttachments({
     alive = useRef(true),
     latest = useRef(value),
     locked = useRef(false);
+  const scope = useRef({id, token, generation:0});
+  if (scope.current.id !== id || scope.current.token !== token)
+    scope.current = {id, token, generation:scope.current.generation + 1};
+  const generation = scope.current.generation;
+  const current = () => alive.current && scope.current.generation === generation;
   latest.current = value;
   const [error, setError] = useState(""),
     [uploading, setUploading] = useState(false);
   const pendingKey = attachmentKey(id) + ".pending";
   async function receive(fileId: string, name: string, file?: File) {
     const endpoint = `/api/uploads/${fileId}`,
-      headers = { Authorization: `Bearer ${token}` };
+      headers = { Authorization: `Bearer ${token}`, ...serverHeaders() };
     let response: Response;
     try {
       response = await fetch(
@@ -51,19 +57,21 @@ export function RemoteAttachments({
               },
               body: file,
               signal: AbortSignal.timeout(60000),
+              redirect:"error",
             }
-          : { headers, signal: AbortSignal.timeout(15000) },
+          : { headers, signal: AbortSignal.timeout(15000),redirect:"error" },
       );
     } catch (e) {
       if (!file) throw e;
       response = await fetch(endpoint, {
         headers,
         signal: AbortSignal.timeout(15000),
+        redirect:"error",
       });
     }
     const data = await response.json();
     if (!response.ok) throw Error(data.error || "Upload failed");
-    if (!alive.current) return;
+    if (!current()) return;
     const next = [
       ...latest.current.filter((a) => a.path !== data.result.attachment.path),
       data.result.attachment,
@@ -88,7 +96,7 @@ export function RemoteAttachments({
     setError("");
     try {
       for (const file of files) {
-        if (!alive.current) break;
+        if (!current()) break;
         const fileId = crypto.randomUUID();
         sessionStorage.setItem(
           pendingKey,
@@ -97,10 +105,10 @@ export function RemoteAttachments({
         await receive(fileId, file.name, file);
       }
     } catch (e) {
-      if (alive.current) setError(errorText(e));
+      if (current()) setError(errorText(e));
     } finally {
-      locked.current = false;
-      if (alive.current) {
+      if (current()) {
+        locked.current = false;
         setUploading(false);
         onBusy(false);
       }
@@ -108,6 +116,10 @@ export function RemoteAttachments({
   }
   useEffect(() => {
     alive.current = true;
+    locked.current = false;
+    setUploading(false);
+    setError("");
+    onBusy(false);
     try {
       const pending = JSON.parse(sessionStorage.getItem(pendingKey) || "null");
       if (pending) {
@@ -116,11 +128,11 @@ export function RemoteAttachments({
         onBusy(true);
         void receive(pending.id, pending.name)
           .catch(() => {
-            if (alive.current) setError("上次上传尚未确认，请重新选择文件。");
+            if (current()) setError("上次上传尚未确认，请重新选择文件。");
           })
           .finally(() => {
-            locked.current = false;
-            if (alive.current) {
+            if (current()) {
+              locked.current = false;
               setUploading(false);
               onBusy(false);
             }

@@ -6,12 +6,31 @@ const root=path.resolve(__dirname,'../..'),output=path.join(root,'qa-output');
 function telegramFixture(){
   const command=window.relay.command;
   window.tgQA={revision:0,configured:false,enabled:false,includeTitles:false,events:['completed','attention','approval'],chatId:'',receipts:[]};
-  window.tgFail=true;window.tgCalls=[];
+  window.nativeSchedules=[];window.nativeScheduleSaves=[];
+  window.nativeAbandoned=[];
+  window.nativeDesktopActive=0;window.nativeDesktopMax=0;
+  window.tgFail=true;window.tgCalls=[];window.tgReadActive=0;window.tgReadMax=0;
   window.relay.onSnapshot=fn=>{window.tgSnapshot=fn;return()=>{};};
   window.relay.command=async(name,args)=>{
+    if(name==='desktop.read'){
+      const desktop=await command(name,args);desktop.schedules=structuredClone(window.nativeSchedules);window.nativeDesktopActive++;window.nativeDesktopMax=Math.max(window.nativeDesktopMax,window.nativeDesktopActive);
+      try{if(window.nativeDesktopHold)await new Promise(resolve=>{window.releaseNativeDesktop=()=>{window.nativeDesktopHold=false;resolve();};});return desktop;}finally{window.nativeDesktopActive--;}
+    }
+    if(name==='schedule.save'){
+      const previous=window.nativeSchedules.find(t=>t.id===args.id);
+      if(previous&&args.revision!==previous.revision)throw Error('定时任务已更新，请重新打开后再保存');
+      window.nativeScheduleSaves.push(structuredClone(args));window.nativeSchedules=[{...args,revision:(previous?.revision||0)+1,id:args.id||'native-schedule',nextRun:Date.now()+60000}];return {schedules:structuredClone(window.nativeSchedules)};
+    }
+    if(name==='schedule.abandon'){
+      const task=window.nativeSchedules.find(t=>t.id===args.id);if(task?.pendingRun?.id!==args.runId)throw Error('待创建运行已变化，请刷新后再操作');
+      window.nativeAbandoned.push(args);delete task.pendingRun;return {abandoned:true,runId:args.runId};
+    }
     if(!name.startsWith('telegram.'))return command(name,args);
     window.tgCalls.push({name,args});const s=window.tgQA;
-    if(name==='telegram.read')return structuredClone(s);
+    if(name==='telegram.read'){
+      const copy=structuredClone(s);window.tgReadActive++;window.tgReadMax=Math.max(window.tgReadMax,window.tgReadActive);
+      try{if(window.tgHoldRead)await new Promise(resolve=>{window.tgReleaseRead=()=>{window.tgHoldRead=false;resolve();};});return copy;}finally{window.tgReadActive--;}
+    }
     if(name==='telegram.discover')return[{id:'123456',name:'Local owner'}];
     if(name==='telegram.save'){
       await new Promise(r=>setTimeout(r,100));
@@ -53,7 +72,16 @@ function telegramFixture(){
       await p.locator('.telegram-actions > button').first().click();await page.waitForFunction(()=>window.tgQA.revision===1);
       await page.waitForFunction(()=>document.querySelector('.telegram-fields input')?.value==='');
       assert.equal(await p.locator('.telegram-actions > button').nth(1).isEnabled(),true);
+      if(language==='en'){
+        await page.evaluate(()=>{window.tgHoldRead=true;});await page.waitForFunction(()=>!!window.tgReleaseRead);
+        await page.waitForTimeout(4200);assert.equal(await page.evaluate(()=>window.tgReadMax),1,'Slow polling must not overlap reads');
+      }
       await p.locator('.telegram-actions > button').nth(1).click();await p.locator('.telegram-receipt.is-uncertain').waitFor();
+      if(language==='en'){
+        await page.evaluate(async()=>{window.tgReleaseRead();await new Promise(resolve=>setTimeout(resolve,40));});
+        assert.equal(await p.locator('.telegram-receipt.is-uncertain').count(),1,'A stale poll must not erase a newly queued receipt');
+      }
+
       await p.locator('.telegram-receipt > button').first().click();assert.equal(await p.locator('.telegram-confirm').count(),1);
       assert.equal(await page.evaluate(()=>window.tgCalls.filter(c=>c.name==='telegram.receipt').length),0,'Unknown result requires explicit confirmation');
       await p.locator('.telegram-confirm > button').last().click();
@@ -62,8 +90,44 @@ function telegramFixture(){
       await page.screenshot({path:path.join(output,`telegram-${language}-${theme}.png`)});
       await p.locator('.telegram-receipt > button').first().click();await p.locator('.telegram-confirm > button').first().click();
       await p.locator('.telegram-receipt.is-sent').waitFor();
+      if(language==='en'){
+        await page.evaluate(()=>{window.tgQA.receipts=Array.from({length:85},(_,i)=>({id:'history-'+i,event:'test',text:i===84?'Archived searchable notification':'Notification '+i,status:i===84?'uncertain':'sent',createdAt:Date.now()-i*1000,updatedAt:Date.now(),dueAt:Date.now(),attempts:1}));});
+        await p.locator('.telegram-actions > button').nth(2).click();await page.waitForFunction(()=>document.querySelectorAll('.telegram-receipt').length===20);
+        await p.locator('.telegram-history-tools input').fill('Archived searchable');assert.equal(await p.locator('.telegram-receipt').count(),1);
+        await p.locator('.telegram-history-tools input').fill('');await p.locator('.telegram-history-tools select').selectOption('unresolved');assert.equal(await p.locator('.telegram-receipt.is-uncertain').count(),1);
+        await p.locator('.telegram-history-tools select').selectOption('all');await p.locator('.telegram-history-pages button').last().click();
+        assert.match(await p.locator('.telegram-receipt pre').first().textContent(),/Notification 20/);assert.equal(await p.locator('.telegram-receipt').count(),20);
+      }
+
       await p.locator('.telegram-remove').click();await p.locator('.telegram-confirm > button').first().click();
       await page.waitForFunction(()=>!window.tgQA.configured);assert.equal(await inputs.first().inputValue(),'');
+      if(language==='en'){
+        await page.getByRole('button',{name:'Scheduled tasks',exact:true}).click();await page.getByRole('button',{name:'New scheduled task',exact:true}).click();
+        await page.locator('.schedule-form input').first().fill('Verified recurring work');await page.locator('.schedule-form textarea').fill('Produce report.txt');
+        await page.locator('.schedule-form').getByRole('button',{name:/^Delivery checks for each run/}).click();
+        await page.locator('.delivery-dialog').getByRole('button',{name:'Add check',exact:true}).click();await page.locator('.delivery-check input').nth(1).fill('report.txt');
+        await page.locator('.delivery-dialog').getByRole('button',{name:'Save acceptance checks',exact:true}).click();
+        const formBounds=await page.locator('.schedule-form').boundingBox();assert.ok(formBounds.y>=0&&formBounds.y+formBounds.height<=1001,'Schedule editor must remain inside the viewport after closing its nested acceptance dialog');
+        await page.locator('.schedule-form').getByRole('button',{name:'Save schedule',exact:true}).click();await page.waitForFunction(()=>window.nativeScheduleSaves.length===1);
+        assert.equal(await page.evaluate(()=>window.nativeScheduleSaves[0].deliveryChecks[0].path),'report.txt');
+        await page.locator('.schedule-form').waitFor({state:'detached'});
+        await page.evaluate(()=>{window.nativeDesktopMax=window.nativeDesktopActive;window.nativeDesktopHold=true;});await page.waitForFunction(()=>!!window.releaseNativeDesktop);await page.waitForTimeout(4200);
+        assert.equal(await page.evaluate(()=>window.nativeDesktopMax),1,'Slow desktop metadata reads must not overlap');
+        await page.locator('.schedule-list h3').filter({hasText:'Verified recurring work'}).click();
+        await page.locator('.schedule-form').getByRole('button',{name:'Save schedule',exact:true}).click();await page.waitForFunction(()=>window.nativeScheduleSaves.length===2);
+        assert.equal(await page.evaluate(()=>window.nativeScheduleSaves[1].revision),1,'Editing a saved native schedule must carry its observed revision');
+        await page.locator('.schedule-form').waitFor({state:'detached'});
+        await page.evaluate(()=>window.releaseNativeDesktop());await page.waitForTimeout(100);
+        await page.locator('.schedule-list h3').filter({hasText:'Verified recurring work'}).click();await page.locator('.schedule-form').getByRole('button',{name:'Save schedule',exact:true}).click();await page.waitForFunction(()=>window.nativeScheduleSaves.length===3);
+        assert.equal(await page.evaluate(()=>window.nativeScheduleSaves[2].revision),2,'The old metadata reply must not erase a newer saved revision');await page.locator('.schedule-form').waitFor({state:'detached'});
+        await page.evaluate(()=>{const task=window.nativeSchedules[0];task.pendingRun={id:crypto.randomUUID(),requestedAt:Date.now(),input:{title:'Original reserved work',prompt:'Original frozen instruction '+('Long instruction '.repeat(1000)),cwd:task.cwd,worktree:false,deliveryChecks:task.deliveryChecks}};});
+        await page.locator('.schedule-pending > button').waitFor();await page.locator('.schedule-pending > button').click();
+        const pendingBounds=await page.locator('dialog[open] .modal').boundingBox();assert.ok(pendingBounds.y>=0&&pendingBounds.y+pendingBounds.height<=1001,'Long pending-run snapshots must fit the zoomed viewport');
+        await page.screenshot({path:path.join(output,'schedule-pending-en-zoom150.png'),animations:'disabled'});
+        await page.getByRole('button',{name:'Abandon pending admission',exact:true}).click();assert.equal(await page.evaluate(()=>window.nativeAbandoned.length),0);
+        await page.getByRole('button',{name:'Confirm abandonment',exact:true}).click();await page.waitForFunction(()=>window.nativeAbandoned.length===1);await page.locator('.schedule-pending').waitFor({state:'detached'});
+      }
+
       report.layouts.push({language,theme,width,zoom,status:'passed',bounded:!bounds.overflow,draftPreserved:true,unknownRetryConfirmed:true});await context.close();
     }
     assert.deepEqual(report.errors,[]);report.status='passed';

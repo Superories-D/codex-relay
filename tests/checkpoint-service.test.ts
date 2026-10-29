@@ -1,14 +1,13 @@
+import os from "node:os";
 import {beforeEach,afterEach,it,expect,vi} from "vitest";
 import {promises as fs} from "node:fs";
 import path from "node:path";
-import os from "node:os";
-const fixtureParent=path.join(os.tmpdir(),"codex-relay-checkpoint-qa");
 import {Checkpoints} from "../src/main/checkpoints";
 import {CheckpointGit} from "../src/main/checkpoint-git";
 import {atomicWrite} from "../src/core/store";
 let root:string,source:string,profile:string,service:Checkpoints,git:CheckpointGit;
-beforeEach(async()=>{const parent=fixtureParent;await fs.mkdir(parent,{recursive:true});root=await fs.mkdtemp(path.join(parent,"checkpoint-service-"));source=path.join(root,"source");profile=path.join(root,"profile");await fs.mkdir(source);git=new CheckpointGit(path.join(root,"git"),{native:false});await git.run(source,["init","-b","main"]);await git.run(source,["config","user.name","QA"]);await git.run(source,["config","user.email","qa@localhost"]);await git.run(source,["config","core.autocrlf","false"]);await fs.writeFile(path.join(source,"a"),"base");await git.run(source,["add","a"]);await git.run(source,["commit","-m","Base"]);service=new Checkpoints({root:profile,native:false});});
-afterEach(async()=>{await service?.shutdown();const physical=await fs.realpath(root),parent=await fs.realpath(fixtureParent);if(path.dirname(physical)!==parent||!path.basename(physical).startsWith("checkpoint-service-"))throw Error("Unsafe checkpoint service fixture cleanup");await fs.rm(physical,{recursive:true,force:true});});
+beforeEach(async()=>{const parent=path.resolve(process.env.RELAY_QA_ROOT||path.join(os.tmpdir(),"codex-relay-qa"));await fs.mkdir(parent,{recursive:true});root=await fs.mkdtemp(path.join(parent,"checkpoint-service-"));source=path.join(root,"source");profile=path.join(root,"profile");await fs.mkdir(source);git=new CheckpointGit(path.join(root,"git"),{native:false});await git.run(source,["init","-b","main"]);await git.run(source,["config","user.name","QA"]);await git.run(source,["config","user.email","qa@localhost"]);await git.run(source,["config","core.autocrlf","false"]);await fs.writeFile(path.join(source,"a"),"base");await git.run(source,["add","a"]);await git.run(source,["commit","-m","Base"]);service=new Checkpoints({root:profile,native:false});});
+afterEach(async()=>{await service?.shutdown();const physical=await fs.realpath(root),parent=await fs.realpath(path.resolve(process.env.RELAY_QA_ROOT||path.join(os.tmpdir(),"codex-relay-qa")));if(path.dirname(physical)!==parent||!path.basename(physical).startsWith("checkpoint-service-"))throw Error("Unsafe checkpoint service fixture cleanup");await fs.rm(physical,{recursive:true,force:true});});
 async function idle(){const deadline=Date.now()+45000;for(;;){const view=await service.list();if(!view.active)return view;if(Date.now()>deadline)throw Error(`Checkpoint operation did not settle: ${JSON.stringify(view)}`);await new Promise(resolve=>setTimeout(resolve,20));}}
 async function preview(){const view=await service.preview({cwd:source,title:"Review"}),id=view.entries.at(-1)!.id,done=await idle();expect(done.entries.at(-1)!.status).toBe("preview");return id;}
 async function ready(){const id=await preview();await service.capture(id);const view=await idle();expect(view.entries.at(-1)!.status,view.entries.at(-1)!.issue).toBe("ready");return id;}

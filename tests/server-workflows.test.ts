@@ -29,10 +29,11 @@ it.skipIf(process.platform !== "linux")(
           approvalPolicy: "on-request",
           sandbox: "workspaceWrite",
         };
+      const check={kind:"file",path:"proof.txt",label:"Proof",minBytes:1};
       const jobs: any = await runtime.command("workflow.add", {
         requestId: source,
         title: "Pipeline",
-        steps: [input, input, input],
+        steps: [input, input, {...input,deliveryChecks:[check]}],
       });
       await expect(
         runtime.command("workflow.previewRetry", { id: source, fromStep: 3 }),
@@ -52,6 +53,7 @@ it.skipIf(process.platform !== "linux")(
         fromStep: 3,
       });
       expect(preview.steps).toHaveLength(1);
+      expect(preview.steps[0].deliveryChecks).toEqual([check]);
       expect(preview.steps[0].prompt).toContain("Recorded result");
       expect(preview.steps[0].prompt).not.toContain("top-secret");
       await expect(
@@ -65,6 +67,7 @@ it.skipIf(process.platform !== "linux")(
         result: any = await runtime.command("workflow.retry", request);
       expect(result.state).toBe("succeeded");
       expect(result.result).toHaveLength(1);
+      expect(result.result[0].delivery).toEqual({revision:1,checks:[check],reports:[]});
       expect(result.result[0]).toMatchObject({
         state: "paused",
         stopIntent: "pause",
@@ -75,6 +78,10 @@ it.skipIf(process.platform !== "linux")(
       runtime = await ServerRuntime.open(root, undefined, [work]);
       expect(await runtime.command("workflow.retry", request)).toEqual(result);
       expect(runtime.store.data.jobs).toHaveLength(4);
+      const prior=runtime.store.data.jobs.find(j=>j.id===jobs[0].id)!;
+      prior.delivery={revision:1,checks:[check as any],reports:[]};
+      await expect(runtime.command("workflow.previewRetry",{id:source,fromStep:3})).rejects.toThrow("Complete earlier");
+      await fs.writeFile(path.join(work,"proof.txt"),"proof");await runtime.scheduler.checkDelivery(prior.id);
       const stale: any = await runtime.command("workflow.previewRetry", {
         id: source,
         fromStep: 3,

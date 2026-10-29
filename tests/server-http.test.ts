@@ -1,3 +1,4 @@
+import {sourceVersion} from "../src/shared/build-info";
 import http from "node:http";
 import { promises as fs } from "node:fs";
 import os from "node:os";
@@ -60,6 +61,8 @@ describe.skipIf(process.platform !== "linux")(
           (await command("account.importText", { text: "secret" })).status,
         ).toBe(403);
         await expect(openHttp(runtime, 0, [root])).rejects.toThrow("overlap");
+        const meta=await (await fetch(base+"/api/meta",{headers})).json();
+        expect(meta.build.version).toBe(sourceVersion);expect(meta.serverId).toBe(runtime.installationId);
         const request = {
           requestId: randomUUID(),
           input: {
@@ -74,6 +77,11 @@ describe.skipIf(process.platform !== "linux")(
             approvalPolicy: "on-request",
           },
         };
+        const wrongIdentity = { ...headers,"X-Relay-Server-ID":randomUUID() };
+        expect((await fetch(base+"/api/command",{method:"POST",headers:wrongIdentity,body:JSON.stringify({name:"job.submit",args:request})})).status).toBe(409);
+        expect((await fetch(base+`/api/uploads/${randomUUID()}?name=wrong.txt`,{method:"POST",headers:wrongIdentity,body:"wrong server"})).status).toBe(409);
+        expect(runtime.store.data.jobs).toHaveLength(0);
+        headers["X-Relay-Server-ID" as keyof typeof headers]=runtime.installationId;
         const [a, b] = await Promise.all([
           command("job.submit", request),
           command("job.submit", request),
@@ -96,6 +104,7 @@ describe.skipIf(process.platform !== "linux")(
           await command("job.report", first.result.id)
         ).json();
         expect(report.result.task.id).toBe(first.result.id);
+        expect(report.result.environment.version).toBe(sourceVersion);
       } finally {
         await web.close();
         await runtime.close();

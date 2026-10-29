@@ -277,6 +277,13 @@ class RemoteStore {
     atomic(this.requestFile(record.requestId), value);
     return value;
   }
+  reopen(record) {
+    if (record.state !== "rejected") return record;
+    const { error, finishedAt, result, ...previous } = record;
+    const value = { ...previous, state: "pending", previousError: error };
+    atomic(this.requestFile(record.requestId), value);
+    return value;
+  }
   requests() {
     return fs
       .readdirSync(path.join(this.root, "requests"))

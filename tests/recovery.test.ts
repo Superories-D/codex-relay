@@ -13,6 +13,17 @@ beforeEach(async () => {
 });
 afterEach(async () => fs.rm(root, { recursive: true, force: true }));
 describe("crash recovery refuses duplicate writers", () => {
+  it.each(["budgetLimited","usageLimited"])("keeps a persisted Goal budget stop held after checking a service shutdown owner (%s)",async(status)=>{
+    const store=new Store(root);store.data.settings.resetWarmupEnabled=false;store.data.jobs=[{id:"budget",mode:"cli",state:"paused",resumeAfterShutdown:true,threadId:"thread",goal:{status,tokenBudget:100,tokensUsed:100}} as any];await store.save();
+    const disk=new Store(root);await disk.load();const job=disk.data.jobs[0];job.autoRecovery!.nextAttemptAt=0;const factory=vi.fn(),recover=vi.fn(async()=>{}),scheduler=new Scheduler(disk,{busy:new Set(),cancelLogin:async()=>{}} as any,{cli:factory,desktop:factory},recover);
+    try{await(scheduler as any).tick();await Promise.all([...(scheduler as any).recoveryTasks.values()]);expect(recover).toHaveBeenCalledOnce();expect(job.state).toBe("needs_attention");expect(job.lastError).toContain("预算");expect(job.resumeAfterShutdown).toBeUndefined();expect(job.autoRecovery).toBeUndefined();expect(factory).not.toHaveBeenCalled();}finally{await scheduler.shutdown();}
+  });
+  it.each(["running","pausing","paused"])("automatically recovers a system shutdown checkpoint from %s without inventing a user pause",async(state)=>{
+    const store=new Store(root);store.data.settings.resetWarmupEnabled=false;store.data.jobs=[{id:"system",mode:"cli",state,resumeAfterShutdown:true,controlRevision:7,threadId:"thread",goal:{status:"active"}} as any];await store.save();
+    const disk=new Store(root);await disk.load();const job=disk.data.jobs[0];expect(job.stopIntent).toBeUndefined();expect(job.recoveryRequired).toBe(true);job.autoRecovery!.nextAttemptAt=0;
+    const factory=vi.fn(),recover=vi.fn(async()=>{}),scheduler=new Scheduler(disk,{busy:new Set(),cancelLogin:async()=>{}} as any,{cli:factory,desktop:factory},recover);
+    try{await(scheduler as any).tick();await Promise.all([...(scheduler as any).recoveryTasks.values()]);expect(job.state).toBe("queued");expect(job.goalStartRequested).toBe(true);expect(job.resumeAfterShutdown).toBeUndefined();expect(job.controlRevision).toBe(7);expect(factory).not.toHaveBeenCalled();}finally{await scheduler.shutdown();}
+  });
   it("marks interrupted persisted jobs for global recovery gating", async () => {
     const s = new Store(root);
     s.data.jobs = [{ id: "a", state: "running" } as any];
@@ -56,10 +67,11 @@ describe("crash recovery refuses duplicate writers", () => {
       }
     },
   );
-  it("keeps checking a live owner after restart and automatically releases the gate only once it is idle", async () => {
+  it.each(["unknown","completed","shutdown"])("keeps checking a live owner after restart and releases only once idle (%s)", async (kind) => {
     const s = new Store(root);
     s.data.jobs = [
-      { id: "a", mode: "cli", state: "running", threadId: "original" } as any,
+      { id: "a", mode: "cli", state: "running", threadId: "original",
+        ...(kind==="completed"?{completionPending:true,completion:{revision:1,startedAt:1,finishedAt:2}}:kind==="shutdown"?{resumeAfterShutdown:true}:{}) } as any,
     ];
     const home = s.jobHome("a");
     await fs.mkdir(home, { recursive: true });
@@ -93,7 +105,7 @@ describe("crash recovery refuses duplicate writers", () => {
       await (scheduler as any).tick();
       await Promise.all([...(scheduler as any).recoveryTasks.values()]);
       expect(job).toMatchObject({
-        state: "queued",
+        state: kind==="completed" ? "completed" : "queued",
         recoveryRequired: false,
         threadId: "original",
       });

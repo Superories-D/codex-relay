@@ -60,7 +60,7 @@ export function DeliveryDialog({
   initial?: DeliveryCheck[];
   call: (name: string, args?: unknown) => Promise<any>;
   saveDraft?: (checks: DeliveryCheck[]) => void;
-  purpose?: "task" | "plan";
+  purpose?: "task" | "plan" | "existing";
   repair?: (text: string) => void;
   close: () => void;
 }) {
@@ -412,46 +412,53 @@ export function DeliveryDialog({
         {dirty && job && (
           <p role="status">{t("条件尚未保存，保存后再运行验收。")}</p>
         )}
-        {report && (
-          <section className="delivery-results" aria-label={t("验收结果")}>
-            <h3 data-status={current ? report.status : "unverified"}>
-              {t(current ? statusLabels[report.status] : "历史验收结果")} ·{" "}
-              {new Date(report.finishedAt).toLocaleString()}
-            </h3>
-            <p>{t("这是检查时刻的文件证据；后续文件变化需要重新验收。")}</p>
-            {report.findings.map((finding, index) => (
-              <article key={index} data-status={finding.status}>
-                <strong>
-                  {finding.check.label} · {t(statusLabels[finding.status])}
-                </strong>
-                <code>{finding.check.path}</code>
-                <p>{t(codeLabels[finding.code] || finding.code)}</p>
-                {finding.bytes !== undefined && (
-                  <span>{finding.bytes.toLocaleString()} bytes</span>
-                )}
-                {finding.sha256 && <code>SHA256 {finding.sha256}</code>}
-              </article>
-            ))}
-            {state.reports.length > 1 && (
-              <details>
-                <summary>
-                  {t("历史验收记录")} ({state.reports.length - 1})
-                </summary>
-                {state.reports
-                  .slice(0, -1)
-                  .reverse()
-                  .map((old) => (
-                    <p key={old.id}>
-                      {new Date(old.finishedAt).toLocaleString()} · r
-                      {old.revision} · {t(statusLabels[old.status])}
-                    </p>
-                  ))}
-              </details>
-            )}
-          </section>
-        )}
-        {!job && <p>{t(purpose === "plan" ? "保存后写入当前验收方案；不会创建或发送任务。" : "保存后随新任务提交，任务结束时自动验收。")}</p>}
+        <DeliveryEvidence state={state}/>
+        {!job && <p>{t(purpose === "plan" ? "保存后写入当前验收方案；不会创建或发送任务。" : purpose === "existing" ? "保存后更新当前任务的验收条件；历史报告保留，需重新验收。" : "保存后随新任务提交，任务结束时自动验收。")}</p>}
       </div>
     </Dialog>
+  );
+}
+
+export function DeliveryEvidence({state}: {state: DeliveryState}) {
+  const report = state.reports.at(-1);
+  if (!report) return null;
+  const current = report.revision === state.revision && state.staleEvidence?.reportId !== report.id;
+  return (
+    <section className="delivery-results" aria-label={t("验收结果")}>
+      <h3 data-status={current ? report.status : "unverified"}>
+        {t(current ? statusLabels[report.status] : "历史验收结果")} ·{" "}
+        {new Date(report.finishedAt).toLocaleString()}
+      </h3>
+      <p>{t("这是检查时刻的文件证据；后续文件变化需要重新验收。")}</p>
+      {report.findings.map((finding, index) => (
+        <article key={index} data-status={finding.status}>
+          <strong>
+            {finding.check.label} · {t(statusLabels[finding.status])}
+          </strong>
+          <code>{finding.check.path}</code>
+          <p>{t(codeLabels[finding.code] || finding.code)}</p>
+          {finding.bytes !== undefined && (
+            <span>{finding.bytes.toLocaleString()} bytes</span>
+          )}
+          {finding.sha256 && <code>SHA256 {finding.sha256}</code>}
+        </article>
+      ))}
+      {state.reports.length > 1 && (
+        <details>
+          <summary>
+            {t("历史验收记录")} ({state.reports.length - 1})
+          </summary>
+          {state.reports
+            .slice(0, -1)
+            .reverse()
+            .map((old) => (
+              <p key={old.id}>
+                {new Date(old.finishedAt).toLocaleString()} · r
+                {old.revision} · {t(statusLabels[old.status])}
+              </p>
+            ))}
+        </details>
+      )}
+    </section>
   );
 }

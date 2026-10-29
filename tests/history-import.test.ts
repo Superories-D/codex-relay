@@ -584,9 +584,27 @@ it("cancels background work and permits a later deduplicated restart without cha
   while (importRunning(importer.progress.phase) && Date.now() < end)
     await new Promise((resolve) => setTimeout(resolve, 20));
   expect(importer.progress.phase).toBe("cancelled");
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  await importer.drain();
   importer.start([home]);
   await finished();
   expect(store.data.jobs).toHaveLength(80);
   expect((await fs.readdir(path.join(home, "sessions"))).length).toBe(80);
 }, 30000);
+
+it("keeps terminal progress busy until the old worker has released ownership", async () => {
+  const delayedWorker = path.join(root, "delayed-worker.cjs");
+  await fs.writeFile(delayedWorker, `const {parentPort}=require('node:worker_threads');
+    parentPort.postMessage({type:'done',phase:'completed'});
+    setTimeout(()=>parentPort.close(),400);`);
+  importer = new BackgroundHistoryImport(store, desktop, delayedWorker, () => {});
+  const first = importer.start([home]).id;
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  expect(importRunning(importer.progress.phase)).toBe(true);
+  expect(importer.start([home]).id).toBe(first);
+  await importer.drain();
+  expect(importer.progress.phase).toBe("completed");
+  expect(importer.start([home]).id).not.toBe(first);
+  await importer.drain();
+  expect(importer.progress.phase).toBe("completed");
+  expect(JSON.parse(await fs.readFile(path.join(store.root, "history-import.json"), "utf8")).id).toBe(importer.progress.id);
+});

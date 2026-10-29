@@ -31,6 +31,7 @@ export function Dialog({
       const width = window.innerWidth / zoom, height = window.innerHeight / zoom;
       element.style.width = `${width}px`;
       element.style.height = `${height}px`;
+      element.style.setProperty("--dialog-height",`${height}px`);
       if (content.current) {
         const style = getComputedStyle(element);
         content.current.style.maxWidth = `${Math.max(1, width - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight))}px`;

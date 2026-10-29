@@ -16,6 +16,7 @@ export class BackgroundHistoryImport {
   private worker?: Worker;
   private processing: Promise<void> = Promise.resolve();
   private duplicateSkipped = 0;
+  private terminal?: "completed" | "cancelled" | "failed";
   private closing = false;
   private reportWrites: Promise<void> = Promise.resolve();
   constructor(
@@ -57,6 +58,7 @@ export class BackgroundHistoryImport {
       startedAt: Date.now(),
     };
     this.duplicateSkipped = 0;
+    this.terminal = undefined;
     const worker = new Worker(this.workerFile, {
       workerData: {
         root: this.store.root,
@@ -89,7 +91,7 @@ export class BackgroundHistoryImport {
       this.processing = this.processing
         .then(() => this.handle(message, worker))
         .catch((error) => {
-          this.progress.phase = "failed";
+          this.terminal = "failed";
           this.progress.failed++;
           this.progress.failures.push({
             title: "导入",
@@ -97,28 +99,29 @@ export class BackgroundHistoryImport {
               error instanceof Error ? error.message : String(error),
             ),
           });
-          this.progress.finishedAt = Date.now();
           void worker.terminate();
         });
     });
     worker.on("error", (error) => {
-      this.progress.phase = "failed";
+      if (this.worker !== worker) return;
+      this.terminal = "failed";
       this.progress.failed++;
       this.progress.failures.push({
         title: "导入",
         message: redact(error.message),
       });
-      this.progress.finishedAt = Date.now();
-      void this.save();
     });
     worker.on("exit", () => {
       this.processing = this.processing.then(async () => {
-        if (this.worker === worker) this.worker = undefined;
-        if (importRunning(this.progress.phase)) {
-          this.progress.phase = this.closing ? "cancelled" : "failed";
-          this.progress.finishedAt = Date.now();
-        }
+        if (this.worker !== worker) return;
+        // A worker's final message can arrive long before its native handles close.
+        // Publish terminal progress only once its ownership is actually released.
+        this.worker = undefined;
+        this.progress.phase = this.terminal || (this.closing ? "cancelled" : "failed");
+        this.progress.finishedAt = Date.now();
+        this.progress.current = "";
         await this.save();
+        this.changed();
       });
     });
     void this.save();
@@ -214,9 +217,7 @@ export class BackgroundHistoryImport {
       this.changed();
       worker.postMessage({ type: "ack" });
     } else if (message.type === "done" || message.type === "fatal") {
-      this.progress.phase = message.type === "fatal" ? "failed" : message.phase;
-      this.progress.finishedAt = Date.now();
-      this.progress.current = "";
+      this.terminal = message.type === "fatal" ? "failed" : message.phase;
       if (message.type === "fatal") {
         this.progress.failed++;
         this.progress.failures.push({
@@ -225,7 +226,6 @@ export class BackgroundHistoryImport {
         });
       }
       await this.save();
-      this.changed();
     }
   }
   cancel() {
@@ -248,11 +248,14 @@ export class BackgroundHistoryImport {
     this.closing = true;
     this.cancel();
     const worker = this.worker;
-    if (worker) {
-      await Promise.race([
-        new Promise<void>((resolve) => worker.once("exit", () => resolve())),
-        new Promise<void>((resolve) => setTimeout(resolve, 2000)),
-      ]);
+    if (worker && worker.threadId !== -1) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          new Promise<void>((resolve) => worker.once("exit", () => resolve())),
+          new Promise<void>((resolve) => { timer = setTimeout(resolve, 2000); }),
+        ]);
+      } finally { clearTimeout(timer); }
       if (this.worker === worker) await worker.terminate();
     }
     await this.processing;

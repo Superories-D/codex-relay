@@ -28,6 +28,7 @@ import { ProcessSafetyError } from "./process-safety-error";
 import { RecoveryError } from "./auto-recovery";
 import { redact } from "./redact";
 import { threadTokenUsage } from "../shared/token-usage";
+import { goalBudgetState } from "../shared/goal";
 const activeAgentStatuses = new Set([
   "running",
   "pendingInit",
@@ -45,6 +46,8 @@ export class CliWorker extends EventEmitter implements Worker {
   private goal?: ThreadGoal | null;
   private goalRevision = 0;
   private waitingForGoal = false;
+  private usageGoalProbe?: Promise<void>;
+  private goalControls: Promise<unknown> = Promise.resolve();
   private goalStopOutcome?: Outcome;
   private quotaSeen = false;
   private lastError: unknown;
@@ -144,6 +147,10 @@ export class CliWorker extends EventEmitter implements Worker {
     this.threadId = this.ctx.job.threadId;
     if (this.threadId) {
       await this.readGoal();
+      if (!this.ctx.shouldStart()) {
+        this.finish({ kind: "interrupted" });
+        return;
+      }
       if (
         this.goal &&
         ((this.ctx.job.goalResumeAfterQuota &&
@@ -151,13 +158,25 @@ export class CliWorker extends EventEmitter implements Worker {
           (this.ctx.job.goalResumeAfterModelChange &&
             ["active", "blocked"].includes(this.goal.status)))
       ) {
-        // Recover an already-authorized Goal, retaining its original accounting.
-        const response = await this.rpc.call("thread/goal/set", {
-          threadId: this.threadId,
-          status: "active",
-          origin: "automatic",
+        await this.queueGoalControl(async () => {
+          if (!this.ctx.shouldStart() || this.stopRequested || !this.goal ||
+              !((this.ctx.job.goalResumeAfterQuota && ["active", "usageLimited"].includes(this.goal.status)) ||
+                (this.ctx.job.goalResumeAfterModelChange && ["active", "blocked"].includes(this.goal.status)))) return;
+          const budget = goalBudgetState(this.goal);
+          if (this.goal.status === "usageLimited" && budget === "limited") return;
+          if (this.goal.status === "usageLimited" && budget === "unknown")
+            throw new RecoveryError("目标预算尚未确认，将核查原会话后继续");
+          if (this.ctx.job.goalResumeAfterQuota && !hasQuotaEvidence(quota[this.ctx.job.bucket]))
+            throw new RecoveryError("账户可用额度尚未确认，将核查后继续原目标");
+          // The thread is still unloaded. Preserve native accounting and let
+          // the server enforce its budget again before any Goal turn starts.
+          const revision = this.goalRevision;
+          const response = await this.rpc!.call("thread/goal/set", {
+            threadId: this.threadId, status: "active", origin: "automatic",
+          });
+          if (revision === this.goalRevision) this.setGoal(this.verifiedGoal(response));
         });
-        this.setGoal(response.goal);
+        await this.goalControls;
       }
       this.ctx.job.goalResumeAfterQuota = false;
       this.ctx.job.goalResumeAfterModelChange = false;
@@ -384,6 +403,20 @@ export class CliWorker extends EventEmitter implements Worker {
   private settleWaitingGoal() {
     if (!this.waitingForGoal || this.terminal) return;
     if (this.goal?.status === "active") return;
+    if (this.goal?.status === "usageLimited" && goalBudgetState(this.goal) !== "limited") {
+      if (this.usageGoalProbe) return;
+      const epoch = this.turnEpoch;
+      // Do not call quota(): it reads the Goal again and can recursively start
+      // another probe. A failed read still reconnects under the existing gate.
+      this.usageGoalProbe = this.readQuota().catch(() => {}).then(() => {
+        if (!this.waitingForGoal || this.terminal || epoch !== this.turnEpoch ||
+            this.goal?.status !== "usageLimited" || this.stopRequested) return;
+        this.waitingForGoal = false;
+        this.goalStopOutcome = this.stoppedGoalOutcome();
+        this.completeAfterChildren(this.goalStopOutcome);
+      }).finally(() => { this.usageGoalProbe = undefined; });
+      return;
+    }
     this.waitingForGoal = false;
     if (
       this.goal &&
@@ -391,13 +424,27 @@ export class CliWorker extends EventEmitter implements Worker {
         this.goal.status,
       )
     ) {
-      this.goalStopOutcome = { kind: "goalStopped" };
+      this.goalStopOutcome = this.stoppedGoalOutcome();
       this.completeAfterChildren(this.goalStopOutcome);
     } else {
       this.completeAfterChildren(
         completionOutcome(this.ctx.job, this.finalText),
       );
     }
+  }
+  private stoppedGoalOutcome(): Outcome {
+    if (this.goal?.status === "usageLimited" && goalBudgetState(this.goal) !== "limited") {
+      this.ctx.job.goalResumeAfterQuota = true;
+      return { kind: "recoverable", error: new RecoveryError(
+        "目标因额度中断，将核查账户并自动续接原目标",
+      ) };
+    }
+    return { kind: "goalStopped" };
+  }
+  private queueGoalControl<T>(run: () => Promise<T>): Promise<T> {
+    const task = this.goalControls.catch(() => {}).then(run);
+    this.goalControls = task;
+    return task;
   }
   private async readGoal() {
     if (!this.rpc || !this.threadId) return;
@@ -408,22 +455,7 @@ export class CliWorker extends EventEmitter implements Worker {
       });
       // A notification received during this read is newer than its snapshot.
       if (revision !== this.goalRevision) return;
-      const goal = response?.goal;
-      if (
-        goal !== null &&
-        (!goal ||
-          goal.threadId !== this.threadId ||
-          ![
-            "active",
-            "paused",
-            "blocked",
-            "usageLimited",
-            "budgetLimited",
-            "complete",
-          ].includes(goal.status))
-      )
-        throw new RecoveryError("目标状态尚未确认，将重新连接原会话");
-      this.setGoal(goal);
+      this.setGoal(this.verifiedGoal(response));
     } catch (error) {
       if (revision !== this.goalRevision) return;
       const detail = (error as { detail?: { code?: number; message?: string } })
@@ -441,6 +473,13 @@ export class CliWorker extends EventEmitter implements Worker {
         throw new RecoveryError("读取目标状态暂时失败，将重新连接原会话");
       throw error;
     }
+  }
+  private verifiedGoal(response: any): ThreadGoal | null {
+    const goal = response?.goal;
+    if (goal !== null && (!goal || goal.threadId !== this.threadId ||
+        !["active", "paused", "blocked", "usageLimited", "budgetLimited", "complete"].includes(goal.status)))
+      throw new RecoveryError("目标状态尚未确认，将重新连接原会话");
+    return goal;
   }
   private async beginTurn(id: string) {
     if (this.terminal || this.seenRootTurns.has(id)) return;
@@ -606,6 +645,7 @@ export class CliWorker extends EventEmitter implements Worker {
       this.agentsRunning() &&
       (outcome.kind === "completed" ||
         outcome.kind === "goalStopped" ||
+        outcome === this.goalStopOutcome ||
         outcome.kind === "quota" ||
         this.stopRequested)
     ) {
@@ -616,7 +656,7 @@ export class CliWorker extends EventEmitter implements Worker {
           ? "等待子代理确认停止"
           : "主轮次已结束，等待子代理完成",
       );
-      if (outcome.kind === "quota" || outcome.kind === "goalStopped")
+      if (outcome.kind === "quota" || outcome === this.goalStopOutcome || outcome.kind === "goalStopped")
         void this.stop().catch(() => {});
     } else this.finish(outcome);
   }
@@ -883,7 +923,7 @@ export class CliWorker extends EventEmitter implements Worker {
           this.goal.status,
         )
       ) {
-        this.goalStopOutcome = { kind: "goalStopped" };
+        this.goalStopOutcome = this.stoppedGoalOutcome();
         this.completeAfterChildren(this.goalStopOutcome);
       } else if (p.turn.status === "interrupted")
         this.completeAfterChildren({ kind: "interrupted" });
@@ -974,6 +1014,11 @@ export class CliWorker extends EventEmitter implements Worker {
     });
   }
   async operation(method: string, params: Record<string, unknown>) {
+    if (method === "thread/goal/set" || method === "thread/goal/clear")
+      return this.queueGoalControl(() => this.operationOnce(method, params));
+    return this.operationOnce(method, params);
+  }
+  private async operationOnce(method: string, params: Record<string, unknown>) {
     if (!this.rpc || !this.threadId || this.terminal)
       throw new Error("会话连接已结束");
     const revision = this.goalRevision;
@@ -1089,7 +1134,7 @@ export class CliWorker extends EventEmitter implements Worker {
       check();
     });
   }
-  async quota(): Promise<Record<string, Quota>> {
+  private async readQuota(): Promise<Record<string, Quota>> {
     if (!this.rpc) throw new Error("Worker not connected");
     const quotas = parseQuotas(await this.rpc.call("account/rateLimits/read"));
     this.quotas = quotas;
@@ -1104,6 +1149,10 @@ export class CliWorker extends EventEmitter implements Worker {
       )
         void this.stop().catch(() => {});
     }
+    return quotas;
+  }
+  async quota(): Promise<Record<string, Quota>> {
+    const quotas = await this.readQuota();
     if (this.waitingForGoal && !this.terminal && !this.quotaSeen)
       await this.readGoal();
     return quotas;

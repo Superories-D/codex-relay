@@ -1,7 +1,9 @@
 import { reviewWorkspaceEnglish } from "./review-workspace";
 import { taskWorkspaceEnglish } from "./task-workspace";
 import { workspaceEnglish } from "./workspace-shell";
-import {  legacyEnglish } from "./legacy-en";
+import {projectGitEnglish} from "./project-git";
+import {nativeFollowupEnglish} from "./native-followup";
+import { legacyEnglish } from "./legacy-en";
 import { nativeEnglish } from "./native-en";
 import { vaultEnglish } from "./vault";
 import { operationsEnglish } from "./operations";
@@ -11,6 +13,55 @@ export const english: Record<string, string> = {
 ...reviewWorkspaceEnglish,
 ...taskWorkspaceEnglish,
 ...workspaceEnglish,
+  ...nativeFollowupEnglish,
+  ...projectGitEnglish,
+  "正在后台确认待处理操作，切换任务不影响恢复。": "Confirming pending operations in the background; switching tasks does not interrupt recovery.",
+"查看待创建运行": "Inspect pending admission",
+"正在刷新计划列表…": "Refreshing schedules…",
+
+"待创建运行": "Pending task admission",
+"旧记录尚无运行快照，恢复时使用当前计划。": "This legacy record has no run snapshot; recovery uses the current plan.",
+"保留已有文件；已创建任务只恢复记录，不会停止。计划仍按配置继续运行。": "Existing files remain. Created tasks are reconciled and keep running. The schedule continues as configured.",
+"放弃待创建运行": "Abandon pending admission",
+"确认放弃这一次尚未创建的运行？": "Abandon this occurrence if no task has been created?",
+"确认放弃": "Confirm abandonment",
+"待创建运行已变化，请刷新后再操作": "The pending occurrence changed. Refresh before trying again.",
+"待创建运行已放弃；计划仍按配置继续。": "Pending admission abandoned; the schedule continues as configured.",
+"任务已经创建，已恢复运行记录。": "The task was already created; its schedule record has been restored.",
+
+"定时任务已更新，请重新打开后再保存": "This schedule changed. Reopen it before saving.",
+"请重新打开新建定时任务表单": "Reopen the new schedule form.",
+
+"模板总大小超过 16 MiB，请精简内容后重试": "Templates exceed 16 MiB in total. Shorten their content and try again.",
+
+"模板中的验收条件只用于新任务，已有任务的条件保持不变。": "Template acceptance checks apply to new tasks. Existing task checks stay unchanged.",
+
+"修复要求超过消息上限，请精简条件或手动填写追问。": "Repair instructions exceed the message limit. Simplify the checks or write a follow-up manually.",
+
+"保存后更新当前任务的验收条件；历史报告保留，需重新验收。": "Saving updates acceptance checks for this task. Previous reports remain; verify the new contract again.",
+"该会话有待确认消息，请先等待回执。": "This chat has a pending message. Wait for its receipt first.",
+"操作请求未能保存，请保留条件并重试。": "The operation could not be saved. Keep your checks and try again.",
+
+"计划修改只影响后续运行；已有任务的验收条件保持原样。":"Plan changes apply to future runs. Existing tasks keep their own delivery checks.",
+"每次运行的交付验收":"Delivery checks for each run",
+"断线后自动恢复连接与待确认请求，不会重复创建任务。":"Reconnects and recovers pending requests automatically without creating duplicate tasks.",
+"全部":"All",
+"通知记录分页":"Notification history pages",
+"没有匹配的通知记录":"No matching notifications",
+"待处理通知":"Unresolved notifications",
+"通知状态":"Notification status",
+"搜索通知记录":"Search notifications",
+"加载更多":"Load more",
+"打开对应任务":"Open task",
+"查看回执":"View receipt",
+"待确认和未知结果不会自动重复执行，请检查对应任务。":"Pending and unknown operations are not executed again automatically. Check the corresponding task.",
+"回执不可读取":"Receipt unavailable",
+"结果待确认":"Awaiting confirmation",
+"远程操作记录":"Remote operation history",
+"提交结果尚未确认，正在自动使用原请求编号恢复。":"Submission is unconfirmed. Recovering automatically with the original request ID.",
+"服务器身份已变化，请在新标签页连接；本页保留原服务器的待确认请求。":"The server installation changed. Connect in a new tab; pending requests for the original server remain here.",
+"服务器缺少安装标识，请更新服务器后重连。":"The server has no installation ID. Update it and reconnect.",
+"正在验证服务器身份，请稍后重试。":"Verifying server identity. Please try again shortly.",
 ...vaultEnglish,
 ...operationsEnglish,
 ...recoveryEnglish,

@@ -6,7 +6,9 @@ import type {
   ChatPage,
   Approval,
   QuestionRecord,
+  Job,
 } from "../shared/types";
+import {completionAssistant} from "../shared/notification-event";
 import { redact } from "./redact";
 import { questionList } from "../shared/user-questions";
 import { protocolImages, imageSafePayload } from "../shared/chat-images";
@@ -16,6 +18,7 @@ import { atomicWrite } from "./store";
 // Conversations are stored separately from the bounded diagnostic log and snapshots.
 export class Chats {
   private writes = new Map<string, Promise<void>>();
+  private pendingWrites = new Map<string, (()=>Promise<void>)[]>();
   private live = new Map<string, Map<string, ChatItem>>();
   private events = new Map<string, Promise<void>>();
   private cache = new Map<
@@ -27,8 +30,29 @@ export class Chats {
   file(id: string) {
     return path.join(this.root, "chats", `${id}.jsonl`);
   }
-  append(id: string, item: ChatItem) {
-    const next = (this.writes.get(id) ?? Promise.resolve()).then(async () => {
+  private write(id:string,operation?:()=>Promise<void>) {
+    const pending=this.pendingWrites.get(id)||[];
+    if(operation){pending.push(operation);this.pendingWrites.set(id,pending);}
+    const target=pending.at(-1);
+    const next=(this.writes.get(id)??Promise.resolve()).catch(()=>{}).then(async()=>{
+      // A prior barrier may already have drained this target. Do not consume
+      // later work or make an earlier caller wait for/fail on a later append.
+      if(!target||!pending.includes(target))return;
+      while(pending.length){
+        const head=pending[0];
+        try{await head();}
+        catch(error){this.prepared.delete(id);this.cache.delete(id);throw error;}
+        pending.shift();
+        if(head===target)break;
+      }
+      if(!pending.length&&this.pendingWrites.get(id)===pending)this.pendingWrites.delete(id);
+    });
+    this.writes.set(id,next);
+    return next;
+  }
+  append(id: string, item: ChatItem, committed?:()=>void) {
+    item=structuredClone(item);
+    return this.write(id,async () => {
       item = await persistImages(this.root, item);
       await fs.mkdir(path.dirname(this.file(id)), {
         recursive: true,
@@ -81,9 +105,8 @@ export class Chats {
         const after = await fs.stat(this.file(id));
         cached.stamp = `${after.size}:${after.mtimeMs}`;
       } else this.cache.delete(id);
+      committed?.();
     });
-    this.writes.set(id, next);
-    return next;
   }
   user(id: string, text: string, detail?: string, messageId: string = randomUUID()) {
     return this.append(id, {
@@ -108,8 +131,9 @@ export class Chats {
   // local user IDs, media and question records; do not duplicate locally sent
   // messages when their native userMessage IDs become available later.
   async hydrate(id: string, items: ChatItem[]) {
+    items=structuredClone(items);
     await this.flush(id);
-    const next = (this.writes.get(id) ?? Promise.resolve()).then(async () => {
+    return this.write(id,async () => {
       const previous = new Map<string, ChatItem>();
       try {
         for await (const row of jsonLines(this.file(id)))
@@ -168,11 +192,9 @@ export class Chats {
       this.cache.delete(id);
       this.prepared.add(id);
     });
-    this.writes.set(id, next);
-    return next;
   }
   event(id: string, method: string, p: any) {
-    const next = (this.events.get(id) ?? Promise.resolve()).then(() =>
+    const next = (this.events.get(id) ?? Promise.resolve()).catch(()=>{}).then(() =>
       this.reduce(id, method, p),
     );
     this.events.set(id, next);
@@ -190,7 +212,6 @@ export class Chats {
     });
   }
   async questions(id: string, before?: number) {
-    await this.events.get(id);
     await this.read(id);
     const rows = (this.cache.get(id)?.rows || []).filter(
       (item) => item.kind === "questionRequest",
@@ -269,8 +290,10 @@ export class Chats {
       converted.status =
         method === "item/completed" ? (item.status ?? "completed") : "running";
       if (method === "item/completed") {
-        await this.append(id, converted);
-        live.delete(key);
+        live.set(key,converted);
+        await this.append(id, converted,()=>{
+          if(live.get(key)===converted)live.delete(key);
+        });
       } else live.set(key, converted);
     } else if (
       method === "item/reasoning/summaryTextDelta" ||
@@ -341,15 +364,18 @@ export class Chats {
     }
   }
   async flush(id: string) {
-    await this.events.get(id);
+    // Reducer write failures remain in pendingWrites. Retry that exact frozen
+    // record, rather than re-running deltas or leaving the event chain poisoned.
+    await this.events.get(id)?.catch(()=>{});
+    await this.write(id);
     for (const item of this.live.get(id)?.values() ?? [])
-      await this.append(id, { ...item, status: "interrupted" });
+      await this.append(id, { ...item, status: item.status === "completed" ? "completed" : "interrupted" });
     this.live.delete(id);
-    await this.writes.get(id);
+    await this.write(id);
   }
   async read(id: string, before?: number): Promise<ChatPage> {
-    await this.events.get(id);
-    await this.writes.get(id);
+    await this.events.get(id)?.catch(()=>{});
+    await this.write(id);
     let base: ChatItem[] = [];
     let positions = new Map<string, number>();
     try {
@@ -390,6 +416,14 @@ export class Chats {
       total,
       ...(start ? { before: start } : {}),
     };
+  }
+  async latestAssistant(id:string, completion?:Job["completion"]) {
+    await this.read(id);
+    // Use the complete cached journal, not just the final 80 display rows:
+    // a result followed by many tool records is still this turn's result.
+    const live = [...(this.live.get(id)?.values() || [])],
+      rows = this.cache.get(id)?.rows || [];
+    return completionAssistant({completion},live) || completionAssistant({completion},rows);
   }
   async search(id: string, query: string, offset = 0, role?: ChatItem["role"]) {
     const needle = query.trim().normalize("NFKC").toLowerCase();

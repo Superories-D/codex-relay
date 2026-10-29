@@ -43,6 +43,29 @@ afterEach(async () => {
   await Promise.all(managers.splice(0).map(m => m.shutdown()));
   await Promise.all(roots.splice(0).map(root => fs.rm(root, {recursive: true, force: true})));
 });
+it("waits for the saved completion cursor without reannouncing metadata controls on a completed task",async()=>{
+ const {m}=await fixture();await m.save(setup());m.observe(snap("completed"),()=>false);await m.drain();expect(m.view().receipts).toHaveLength(0);
+ m.observe(snap("completed"),()=>true);await m.drain();expect(m.view().receipts).toHaveLength(1);
+ m.observe(snap("completed"),()=>false);m.observe(snap("completed"),()=>true);await m.drain();expect(m.view().receipts).toHaveLength(1);
+});
+
+it("retains distinct completion generations in the desktop outbox and does not replay them after restart",async()=>{
+  const completion=(revision:number)=>({revision,startedAt:revision*10,finishedAt:revision*10+5});
+  const first=await fixture({snapshot:snap("completed",{completion:completion(1)})});await first.m.save(setup());
+  first.m.observe(snap("completed",{completion:completion(2)}));first.m.observe(snap("completed",{completion:completion(3)}));await first.m.drain();
+  expect(first.m.view().receipts.map(r=>r.event)).toEqual(["completed","completed"]);
+  await first.m.shutdown();const second=await fixture({root:first.root,snapshot:snap("completed",{completion:completion(3)})});
+  second.m.observe(snap("completed",{completion:completion(3),title:"Rename",updatedAt:100}));await second.m.drain();expect(second.m.view().receipts).toHaveLength(2);
+  second.m.observe(snap("completed",{completion:completion(4)}));await second.m.drain();expect(second.m.view().receipts).toHaveLength(3);
+});
+
+it("migrates the desktop event cursor without flooding old completions",async()=>{
+  const first=await fixture({snapshot:snap("completed")});await first.m.save(setup());await first.m.shutdown();
+  const file=path.join(first.root,"windows-telegram.enc"),legacy=JSON.parse(cipher.decrypt(await fs.readFile(file)));delete legacy.cursor.events;await atomicWrite(file,cipher.encrypt(JSON.stringify(legacy)));
+  const snapshot=snap("completed",{completion:{revision:1,startedAt:1,finishedAt:2}}),second=await fixture({root:first.root,snapshot});
+  second.m.observe(snapshot);await second.m.drain();expect(second.m.view().receipts).toHaveLength(0);
+  second.m.observe(snap("completed",{completion:{revision:2,startedAt:3,finishedAt:4}}));await second.m.drain();expect(second.m.view().receipts).toHaveLength(1);
+});
 
 it("keeps configuration encrypted and exposes no token; disabled configuration needs an explicit test to send", async () => {
   const {m, root, calls} = await fixture();

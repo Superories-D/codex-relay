@@ -1,9 +1,12 @@
+import {deliveryChecksSchema} from "../shared/delivery";
 import { z } from "zod";
 import path from "node:path";
 import { idSchema } from "../main/validation";
 export const scheduleInputSchema = z
   .object({
     id: idSchema.optional(),
+    revision:z.number().int().nonnegative().optional(),
+    deliveryChecks:deliveryChecksSchema.optional(),
     title: z.string().trim().min(1).max(120),
     prompt: z.string().trim().min(1).max(100000),
     cwd: z.string().max(32700).refine(path.isAbsolute),
@@ -16,3 +19,5 @@ export const scheduleInputSchema = z
     worktree: z.boolean(),
   })
   .strict();
+export const scheduleRunInputSchema=scheduleInputSchema.pick({title:true,prompt:true,cwd:true,worktree:true,deliveryChecks:true});
+export const scheduleAbandonSchema=z.object({id:idSchema,runId:idSchema}).strict();

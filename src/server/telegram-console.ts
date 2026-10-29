@@ -1,4 +1,9 @@
 import { ServerAssets } from "./assets";
+import {deliveryStatus} from "./delivery-view";
+import {taskControlSignature} from "../shared/task-control";
+import {gitStaged,gitUnstaged} from "../shared/git";
+import type {ProjectChanges} from "./project-git";
+import {deliveryChecksSchema} from "../shared/delivery";
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import { attachmentsSchema } from "../main/validation";
@@ -8,6 +13,10 @@ import type { conversationExport } from "../core/conversation-export";
 import type { ServerRuntime } from "./runtime";
 import { resolveWorkspace } from "./workspaces";
 
+export const confirmedFollowupSchema=z.object({
+  id:z.string().uuid(),text:z.string().trim().min(1).max(100000),attachments:z.tuple([]),action:z.literal("queue"),
+}).strict();
+export type ConfirmedFollowup=z.infer<typeof confirmedFollowupSchema>;
 export const contextSchema = z
   .object({
     project: z.string().optional(),
@@ -20,6 +29,7 @@ export const contextSchema = z
         planMode: z.boolean(),
         multiAgent: z.boolean(),
         prompt: z.string().max(100000).optional(),
+        deliveryChecks: deliveryChecksSchema.optional(),
       })
       .optional(),
   })
@@ -66,16 +76,42 @@ export const homeKeyboard = () => [
   [button("项目 Projects", "/projects"), button("任务 Tasks", "/status")],
   [button("审批 / 提问", "/approvals"), button("服务 Health", "/health")],
   [button("工作流", "/workflows"), button("帮助 Help", "/help")],
+  [button("项目 Git", "/repo"),button("模板", "/templates")],
 ];
 const defaults: NonNullable<TelegramContext["defaults"]> = {
   model: "",
   effort: "",
   planMode: false,
   multiAgent: false,
+  deliveryChecks: [],
 };
 
 /** Presentation and explicit user operations. It never invokes an arbitrary runtime command. */
 export class TelegramConsole {
+  private repositories=new Map<string,{view:ProjectChanges;expires:number}>();
+  private async repository(cwd:string) {
+    const view=await this.runtime.command("project.changes",{cwd}) as ProjectChanges;
+    for(const [key,saved] of this.repositories)if(saved.expires<=this.now())this.repositories.delete(key);
+    while(this.repositories.size>=12)this.repositories.delete(this.repositories.keys().next().value!);
+    const key=randomBytes(6).toString("hex");this.repositories.set(key,{view,expires:this.now()+20*60*1000});return this.repositoryPage(key,1);
+  }
+  private repositoryPage(key:string,page:number):TelegramReply {
+    const saved=this.repositories.get(key);
+    if(!saved||saved.expires<=this.now())throw Error("项目变更快照已过期，请重新 /repo");
+    const view=saved.view,total=Math.max(1,Math.ceil(view.files.length/10));
+    if(!Number.isInteger(page)||page<1||page>total)throw Error("Invalid repository page");
+    const start=(page-1)*10,files=view.files.slice(start,start+10),keyboard=files.flatMap((file,index)=>{
+      const actions=[];
+      if(file.directory)return [];
+      if(gitStaged(file))actions.push(button(`暂存 ${start+index+1}`,`/repo_diff ${key} ${start+index} staged`));
+      if(gitUnstaged(file))actions.push(button(`工作区 ${start+index+1}`,`/repo_diff ${key} ${start+index} worktree`));
+      return actions.length?[actions]:[];
+    }),nav=[];
+    if(page>1)nav.push(button("上一页",`/repo_page ${key} ${page-1}`));
+    if(page<total)nav.push(button("下一页",`/repo_page ${key} ${page+1}`));
+    if(nav.length)keyboard.push(nav);keyboard.push([button("重新检查项目",`/repo_refresh ${key}`),button("项目列表","/projects")]);
+    return {text:`项目 Git · ${page}/${total}\n${view.root}\n分支: ${view.branch} · ${view.head.slice(0,12)||"尚无提交"}\n读取: ${new Date(view.at).toISOString()}\n变更 ${view.total}${view.truncated?"（仅展示前 500 项）":""}\n\n${files.map((file,index)=>`${start+index+1}. [${file.index}${file.worktree}] ${file.path}${file.directory?" [目录]":""}${file.original?" ← "+file.original:""}`).join("\n")||"工作区和暂存区均无变更。"}\n\n按原始文件比较；自定义过滤器不运行，子模块内容不展开。列表快照保留 20 分钟，差异在打开时重新读取。`,keyboard};
+  }
   private assetLinks = new Map<
     string,
     { jobId: string; assetId: string; expires: number }
@@ -94,12 +130,21 @@ export class TelegramConsole {
       args: unknown;
     }
   >();
+  private scheduleGrants=new Map<string,{id:string;runId:string;expires:number}>();
+  private scheduleReceipt(receipt:any):TelegramReply {
+    const text=`定时任务操作: ${receipt.state}\n${receipt.id}${receipt.error?"\n"+receipt.error:""}\n/schedules 查看最新状态。`;
+    const jobId=receipt.result?.jobId||(receipt.action==="schedule.run"?receipt.result?.id:undefined);
+    const job=this.runtime.store.data.jobs.find(job=>job.id===jobId);
+    if(job)return {...this.card(job),text:`${text}\n${receipt.action==="schedule.abandon"?"任务已经创建，已恢复运行记录。":"本次运行已创建任务。"}\n${this.card(job).text}`};
+    return {text:text+(receipt.result?.abandoned?"\n待创建运行已放弃；原文件保留，计划仍按配置继续。":""),keyboard:[[button("定时任务","/schedules")]]};
+  }
   constructor(
     private runtime: ServerRuntime,
     private roots: string[],
     private clean: (text: string, limit?: number) => string,
     private save: (context: TelegramContext) => Promise<void>,
     private now: () => number,
+    private prepareFollowup:(input:ConfirmedFollowup,requestId:string,controlRevision:number)=>Promise<void>=async()=>{throw Error("Confirmed follow-up persistence is unavailable");},
   ) {}
   job(prefix?: string) {
     if (!prefix || prefix.length < 8)
@@ -150,6 +195,9 @@ export class TelegramConsole {
       ],
       [
         button("产物 / 附件", `/files ${job.id}`),
+        button("交付验收", `/delivery ${job.id}`),
+      ],
+      [
         button("任务列表", "/status"),
         button("审批 / 提问", "/approvals"),
       ],
@@ -163,6 +211,7 @@ export class TelegramConsole {
         `${job.title}\n${job.id}\n状态: ${job.state}${job.autoRecovery ? " · 自动恢复中" : ""}\n项目: ${job.cwd}\n` +
         `优先级: ${job.priority || "normal"} · 排队: ${job.queuedMessages?.length || 0}\n` +
         `模型: ${job.model || "default"} · 推理: ${job.effort || "default"}\n` +
+        (job.delivery?.checks.length ? `交付验收: ${deliveryStatus(job.delivery)}\n` : "") +
         (job.workflow
           ? `工作流: ${job.workflow.title} (${job.workflow.step}/${job.workflow.total})\n`
           : "") +
@@ -227,13 +276,13 @@ export class TelegramConsole {
     };
   }
   private signature(job: Job) {
-    return JSON.stringify([
-      job.state,
-      job.turnId,
-      job.updatedAt,
-      job.queueRevision,
-      job.stopIntent,
-    ]);
+    return taskControlSignature(job);
+  }
+  taskReceipt(receipt:any):TelegramReply {
+    const job=this.runtime.store.data.jobs.find(job=>job.id===receipt.jobId);
+    const status=receipt.state==="succeeded"?(receipt.result?.applied===false?"任务状态已变化，操作未应用。":"操作已确认。"):"操作结果未知，请检查任务状态；不会自动重复执行。";
+    const text=`${status}\n${receipt.id}${receipt.error?"\n"+receipt.error:""}`;
+    return job?{...this.card(job),text:`${text}\n\n${this.card(job).text}`}:{text,keyboard:homeKeyboard()};
   }
   private action(label: string, job: Job, command: string, args: unknown) {
     for (const [key, action] of this.actions)
@@ -262,11 +311,68 @@ export class TelegramConsole {
         text:
           "Codex Relay · 手机控制台\n\n" +
           "1. /projects → 点选项目\n2. /new 任务描述 → 创建并选中任务\n3. 直接发文字追问；回复任务卡片可指定该任务\n\n" +
-          "/status [状态|all] [页码] · /task ID\n/result [ID] · /history [ID] · /export [ID]\n/search 关键词 · /report [ID]\n/notify all|errors|watched|off · /watch [ID] · /unwatch ID\n/quiet 22-7（UTC） · /throttle 秒 · /digest\n/wf preview|retry|pause|resume\n/schedules · /schedule create|run|pause|enable|remove\n/goal read|create|edit|start|pause|budget|clear\n/steer 立即补充 · /switchmodel 模型 [推理强度] · /models\n/queue [ID] · /priority high|normal|low\n/edit 消息ID 版本 新文字\n/remove 消息ID 版本 · /up 消息ID 版本 · /down 消息ID 版本\n" +
+          "图片/文档说明可写 /new、/run、/send；/follow 指令发送到所选或所回复的任务。相册请等附件到齐后再发指令。\n\n" +
+          "/status [状态|all] [页码] · /task ID\n/result [ID] · /history [ID] · /export [ID]\n/search 关键词 · /report [ID]\n/delivery [ID] · /verify [ID] · /repair [ID]\n/notify all|errors|watched|off · /watch [ID] · /unwatch ID\n/quiet 22-7（UTC） · /throttle 秒 · /digest\n/actions · /receipt 操作UUID\n/wf preview|retry|pause|resume\n/schedules · /schedule create|run|pause|enable|remove\n/goal read|create|edit|start|pause|budget|clear\n/steer 立即补充 · /switchmodel 模型 [推理强度] · /models\n/queue [ID] · /priority high|normal|low\n/edit 消息ID 版本 新文字\n/remove 消息ID 版本 · /up 消息ID 版本 · /down 消息ID 版本\n" +
+          "/repo [项目编号] 查看 Git 变更，按按钮读取暂存/工作区差异\n" +
           "/pause [ID] · /resume [ID] · /cancel [ID]\n/rename 名称 · /pin on|off · /archive on|off\n/depends ID ID（或 none）\n\n" +
           "/workflow 标题 换行 阶段一 换行 --- 换行 阶段二\n/workflows · /handoff 工作流ID\n/templates · /template ID（或 off）\n/defaults · /model 名称（或 default）\n/effort low|medium|high|xhigh|default · /plan on|off\n\n" +
           "/approvals [页码] · /answer CODE JSON\n/dispatch pause|resume [project|all]\n/limit 1..8|auto · /health · /accounts\n/forget 清除当前任务 · /dismiss 退出答题\n\n所有操作仅接受配置的本人私聊。",
       };
+    if(command==="repo") {
+      const cwd=args&&/^\d+$/.test(args)?this.roots[Number(args)-1]:!args?context.project:undefined;
+      if(!cwd)throw Error("Use /repo PROJECT_NUMBER; /projects lists configured projects");
+      return this.repository(cwd);
+    }
+    if(command==="repo_refresh") {const saved=this.repositories.get(args);if(!saved||saved.expires<=this.now())throw Error("项目变更快照已过期，请重新 /repo");return this.repository(saved.view.root);}
+    if(command==="repo_page") {const [key,page]=args.split(/\s+/);return this.repositoryPage(key,Number(page));}
+    if(command==="repo_diff") {
+      const [key,number,kind]=args.split(/\s+/),saved=this.repositories.get(key),index=Number(number);
+      if(!saved||saved.expires<=this.now())throw Error("项目变更快照已过期，请重新 /repo");
+      const file=saved.view.files[index];if(!Number.isInteger(index)||!file||!["staged","worktree"].includes(kind))throw Error("Invalid project diff selection");
+      const diff=await this.runtime.command("project.diff",{cwd:saved.view.root,path:file.path,staged:kind==="staged"}) as any;
+      const text=diff.preview==="encoded"?"非 UTF-8 文件或差异不提供文本预览。":diff.preview==="binary"?"二进制文件不提供文本预览。":diff.text||"当前内容无差异。";
+      return this.paginate(`Git 差异 · ${diff.staged?"暂存区":"工作区"}\n${diff.root}\n${diff.branch} · ${diff.path}\n读取: ${new Date(diff.at).toISOString()}\n\n${text}\n\n只读检查；原文件和暂存区保持不变。`);
+    }
+    if(command === "actions") {
+      const page:any=await this.runtime.command("actions.list",{limit:20});
+      return this.paginate("远程操作记录（最近20条）\n"+page.entries.map((r:any)=>`${r.id}\n${r.action||"不可读取"} · ${r.state} · ${new Date(r.updatedAt).toISOString()}${r.error?"\n"+r.error:""}`).join("\n\n")+"\n/receipt UUID 查看原回执。未知结果请检查任务，不会自动重放。");
+    }
+    if(command === "receipt") {
+      const receipt=await this.runtime.command("action.read",args);
+      if(!receipt)throw Error("Receipt not found");
+      return this.paginate(JSON.stringify(receipt,null,2));
+    }
+    if (command === "delivery" || command === "verify" || command === "repair") {
+      const job = this.job(args || context.task);
+      if (command === "repair") {
+        const text = await this.runtime.command("delivery.repair", job.id) as string;
+        if(text.length>100000) return this.paginate("修复要求超过消息上限，请精简条件或手动填写追问。\n\n"+text,job.id);
+        const reply = this.paginate(`修复追问预览（尚未投递）\n${text}\n\n确认后提交修复追问：空闲任务进入队列，运行中的任务在本轮结束后处理。`, job.id);
+        reply.keyboard!.push([this.action("确认排队修复", job, "chat.submit", {input:{id:job.id, text, action:"queue", attachments:[]}})]);
+        return reply;
+      }
+      let receipt: any;
+      if (command === "verify") {
+        // Reconcile a durable receipt before deriving new expectations from a changed report.
+        receipt = await this.runtime.command("action.read", requestId);
+        if (receipt && (receipt.action !== "delivery.run" || receipt.jobId !== job.id)) throw Error("Request ID belongs to another operation");
+        if (!receipt) {
+          const state = this.runtime.scheduler.readDelivery(job.id);
+          receipt = await this.runtime.command("delivery.run", {requestId, id:job.id, revision:state.revision, reportId:state.reports.at(-1)?.id});
+        }
+      }
+      const state = this.runtime.scheduler.readDelivery(job.id), latest = state.reports.at(-1);
+      const reply = this.paginate([
+        `交付验收 · ${job.title}\n${job.id}\n版本 ${state.revision} · ${deliveryStatus(state)}`,
+        receipt ? `操作回执 ${receipt.id}: ${receipt.state}${receipt.error ? "\n"+receipt.error : ""}` : "",
+        state.checks.length ? "当前条件:\n"+state.checks.map((check,i)=>`${i+1}. ${JSON.stringify(check)}`).join("\n") : "尚未设置交付验收条件。",
+        latest ? `最新检查: 版本 ${latest.revision} · ${latest.status} · ${new Date(latest.finishedAt).toISOString()}\n`+latest.findings.map(f=>`${f.check.label} · ${f.status} · ${f.code}\n${f.check.path}${f.bytes!==undefined?" · "+f.bytes+" B":""}${f.sha256?"\nSHA256 "+f.sha256:""}`).join("\n\n") : "尚无文件检查报告。",
+        "复验读取当前产物，不执行模型或 shell；通过后沿用调度器的交付解除规则。结果是检查时的文件快照。",
+      ].filter(Boolean).join("\n\n"), job.id);
+      if (state.checks.length) reply.keyboard!.push([button("重新检查文件", `/verify ${job.id}`)]);
+      if (latest?.revision === state.revision && latest.status !== "passed") reply.keyboard!.push([button("预览修复追问", `/repair ${job.id}`)]);
+      return reply;
+    }
     if(command === "wf") {
       const [action,id,extra]=args.split(/\s+/);
       if(action==="preview"){
@@ -280,24 +386,52 @@ export class TelegramConsole {
     }
     if(command === "schedules") {
       const list:any=await this.runtime.command("schedule.list");
-      return this.paginate(`定时任务 · ${list.timeZone}\n`+list.tasks.map((task:any)=>`${task.id}\n${task.title} · ${task.enabled?"启用":"暂停"} · ${task.cadence}\n下一次: ${new Date(task.nextRun).toISOString()}\n${task.lastError||""}`).join("\n\n")+"\n/schedule create MINUTES 任务描述\n/schedule run|pause|enable|remove ID");
+      return this.paginate(`定时任务 · ${list.timeZone}\n`+list.tasks.map((task:any)=>`${task.id}\n${task.title} · ${task.enabled?"启用":"暂停"} · ${task.cadence}\n下一次: ${new Date(task.nextRun).toISOString()}\n${task.lastError||""}${task.pendingRun?`\n待创建运行: ${task.pendingRun.id}\n/schedule pending ${task.id}`:""}`).join("\n\n")+"\n/schedule create MINUTES 任务描述\n/schedule run|pause|enable|remove ID\n/schedule pending ID 查看并处理待创建运行");
     }
     if(command === "schedule") {
       const [action,...parts]=args.split(/\s+/),value=parts.join(" ");
+      if(action==="discard"){
+        const recorded:any=await this.runtime.command("action.read",requestId);
+        if(recorded){if(recorded.action!=="schedule.abandon")throw Error("Request ID belongs to another operation");return this.scheduleReceipt(recorded);}
+        const grant=this.scheduleGrants.get(value);
+        if(!grant||grant.expires<=this.now())throw Error("确认已过期，请重新查看 /schedule pending ID");
+        this.scheduleGrants.delete(value);
+        return this.scheduleReceipt(await this.runtime.command("schedule.abandon",{requestId,id:grant.id,runId:grant.runId}));
+      }
+      const target=action==="abandon"?parts[0]||"":value;
+      const actionName=({create:"schedule.create",pause:"schedule.save",enable:"schedule.save",run:"schedule.run",remove:"schedule.remove",abandon:"schedule.abandon"} as Record<string,string>)[action];
+      if(actionName){
+        const recorded:any=await this.runtime.command("action.read",requestId);
+        if(recorded){
+          if(recorded.action!==actionName || (action==="create"?recorded.jobId!==requestId:target.length<8||!recorded.jobId.startsWith(target)))throw Error("Request ID belongs to another operation");
+          return this.scheduleReceipt(recorded);
+        }
+      }
       if(action==="create"){
         const minutes=Number(parts.shift()),prompt=parts.join(" "),input=await this.input(context,prompt);
-        const receipt:any=await this.runtime.command("schedule.create",{requestId,id:requestId,input:{title:input.title,prompt:input.prompt,cwd:input.cwd,enabled:true,cadence:"interval",minutes,hour:9,minute:0,weekday:1,worktree:false}});
+        const receipt:any=await this.runtime.command("schedule.create",{requestId,id:requestId,input:{title:input.title,prompt:input.prompt,cwd:input.cwd,enabled:true,cadence:"interval",minutes,hour:9,minute:0,weekday:1,worktree:false,deliveryChecks:input.deliveryChecks}});
         return `定时任务: ${receipt.state} · ${requestId}\n/schedules 查看；时间为服务器时区。`;
       }
-      const tasks:any=await this.runtime.command("schedule.list"),matches=tasks.tasks.filter((task:any)=>value.length>=8&&task.id.startsWith(value));
+      const tasks:any=await this.runtime.command("schedule.list"),matches=tasks.tasks.filter((task:any)=>target.length>=8&&task.id.startsWith(target));
       if(matches.length!==1)throw Error("Schedule ID is missing or ambiguous");
       const task=matches[0];let receipt:any;
+      if(action==="pending"){
+        if(!task.pendingRun)return "此计划没有待创建运行。";
+        const reply=this.paginate(`待创建运行\n${JSON.stringify(task.pendingRun,null,2)}\n\n放弃只影响这一次尚未创建的运行，保留所有文件，计划仍按配置继续。若任务已经创建，只恢复记录并返回任务卡，不会停止任务。确认按钮保留 5 分钟。`);
+        for(const [key,grant] of this.scheduleGrants)if(grant.expires<=this.now())this.scheduleGrants.delete(key);
+        while(this.scheduleGrants.size>=200)this.scheduleGrants.delete(this.scheduleGrants.keys().next().value!);
+        const code=randomBytes(6).toString("hex");this.scheduleGrants.set(code,{id:task.id,runId:task.pendingRun.id,expires:this.now()+5*60*1000});
+        reply.keyboard!.push([button("确认放弃待创建运行",`/schedule discard ${code}`)]);return reply;
+      }
       if(action==="pause"||action==="enable"){
-        const {title,prompt,cwd,cadence,minutes,hour,minute,weekday,worktree}=task;
-        receipt=await this.runtime.command("schedule.save",{requestId,id:task.id,input:{title,prompt,cwd,cadence,minutes,hour,minute,weekday,worktree,enabled:action==="enable"}});
+        const {title,prompt,cwd,cadence,minutes,hour,minute,weekday,worktree,deliveryChecks}=task;
+        receipt=await this.runtime.command("schedule.save",{requestId,id:task.id,input:{title,prompt,cwd,cadence,minutes,hour,minute,weekday,worktree,deliveryChecks,revision:task.revision||0,enabled:action==="enable"}});
       }else if(action==="run"||action==="remove")receipt=await this.runtime.command(`schedule.${action}`,{requestId,id:task.id});
-      else throw Error("Use /schedule create|run|pause|enable|remove");
-      return `定时任务操作: ${receipt.state}\n/schedules 查看状态。`;
+      else if(action==="abandon"){
+        if(parts.length!==2)throw Error("Use /schedule abandon SCHEDULE_ID RUN_UUID");
+        receipt=await this.runtime.command("schedule.abandon",{requestId,id:task.id,runId:parts[1]});
+      }else throw Error("Use /schedule create|run|pause|enable|remove|pending|abandon");
+      return this.scheduleReceipt(receipt);
     }
     if(command === "goal") {
       const job=this.job(context.task),match=args.match(/^(\S+)(?:\s+([\s\S]*))?$/),action=match?.[1]||"read",value=match?.[2]||"";
@@ -652,14 +786,32 @@ export class TelegramConsole {
       };
     }
     if (command === "confirm") {
+      const recorded=await this.runtime.command("action.read",requestId) as any;
+      if(recorded) {
+        if(!["task.control","task.queue"].includes(recorded.action))throw Error("Request ID belongs to another operation");
+        return this.taskReceipt(recorded);
+      }
       const action = this.actions.get(args);
       if (!action || action.expires <= this.now())
         throw Error("操作按钮已过期，请重新打开任务或队列");
       const job = this.job(action.jobId);
       if (action.signature !== this.signature(job))
         throw Error("任务或队列已变化，请刷新后操作");
+      if(action.command==="chat.submit") {
+        const input=confirmedFollowupSchema.parse((action.args as {input:unknown}).input),controlRevision=job.controlRevision||0;
+        // Freeze a normal idempotent send before consuming the ephemeral grant.
+        // Restart can then continue through /send without needing that grant.
+        await this.prepareFollowup(input,requestId,controlRevision);
+        this.actions.delete(args);
+        await this.runtime.command("chat.confirmedSubmit",{requestId,input,controlRevision});
+        return this.card(job);
+      }
       // Consume before execution: an uncertain response must never replay a control.
       this.actions.delete(args);
+      if(action.command==="job.control"||action.command==="chat.queue") {
+        const input=action.args as Record<string,unknown>;
+        return this.taskReceipt(await this.runtime.command(action.command==="job.control"?"task.control":"task.queue",action.command==="job.control"?{...input,expected:action.signature,requestId}:{input,requestId}));
+      }
       await this.runtime.command(action.command, action.args);
       return this.card(job);
     }
@@ -720,6 +872,11 @@ export class TelegramConsole {
       );
     }
     if (["edit", "remove", "up", "down"].includes(command)) {
+      const recorded=await this.runtime.command("action.read",requestId) as any;
+      if(recorded) {
+        if(recorded.action!=="task.queue")throw Error("Request ID belongs to another operation");
+        return this.taskReceipt(recorded);
+      }
       const job = this.job(context.task),
         match = args.match(/^(\S+)\s+(\d+)(?:\s+([\s\S]+))?$/);
       if (!match || match[1].length < 8)
@@ -730,14 +887,13 @@ export class TelegramConsole {
         m.id?.startsWith(match[1]),
       );
       if (items.length !== 1) throw Error("Message ID is missing or ambiguous");
-      await this.runtime.command("chat.queue", {
+      return this.taskReceipt(await this.runtime.command("task.queue", {requestId,input:{
         id: job.id,
         messageId: items[0].id,
         revision: Number(match[2]),
         action: command,
         ...(command === "edit" ? { text: match[3] } : {}),
-      });
-      return `队列已更新 ${job.id}。/queue 刷新。`;
+      }}));
     }
     if (["priority", "rename", "pin", "archive", "depends"].includes(command)) {
       const job = this.job(context.task);
@@ -786,7 +942,7 @@ export class TelegramConsole {
             state.items
               .map(
                 (t) =>
-                  `${t.name}\n/template ${t.id}\n${t.prompt.slice(0, 200)}`,
+                  `${t.name}\n/template ${t.id}\n交付验收: ${t.deliveryChecks?.length||0} 条\n${t.prompt.slice(0, 200)}`,
               )
               .join("\n\n") ||
               "暂无模板，可先在网页保存模板。/template off 清除模板。",
@@ -803,6 +959,7 @@ export class TelegramConsole {
           planMode: t.planMode,
           multiAgent: t.multiAgent,
           prompt: t.prompt,
+          deliveryChecks: t.deliveryChecks || [],
         };
       } else if (command === "template") next = { ...defaults };
       else if (command === "model") {
@@ -822,7 +979,7 @@ export class TelegramConsole {
       }
       if (command !== "defaults")
         await this.save({ ...context, defaults: next });
-      return `新任务默认值（不改已有任务）\n模型: ${next.model || "default"}\n推理: ${next.effort || "default"}\n计划模式: ${next.planMode ? "on" : "off"}\n多代理: ${next.multiAgent ? "on" : "off"}\n模板前缀: ${next.prompt?.slice(0, 1000) || "无"}`;
+      return `新任务默认值（不改已有任务）\n模型: ${next.model || "default"}\n推理: ${next.effort || "default"}\n计划模式: ${next.planMode ? "on" : "off"}\n多代理: ${next.multiAgent ? "on" : "off"}\n交付验收: ${next.deliveryChecks?.length||0} 条\n模板前缀: ${next.prompt?.slice(0, 1000) || "无"}`;
     }
     if (command === "dispatch") {
       const [action, scope = "project"] = args.split(/\s+/);

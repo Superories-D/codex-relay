@@ -36,7 +36,7 @@ if (operation === "help") {
  profile save NAME --url ORIGIN --token-file FILE [--cwd SERVER_PATH] [--host user@server]
  profile list|show|remove [NAME] · --profile NAME selects a saved connection
  requests | recover --request-id UUID
- health | doctor | status | watch [--id UUID] | report --id UUID | approvals
+ info | health | doctor | status | watch [--id UUID] | report --id UUID | approvals
  run --cwd /server/project --prompt-file task.txt [--request-id UUID] [--detach]
  send --id UUID --prompt-file followup.txt [--request-id UUID]
  pause|resume|cancel --id UUID
@@ -81,6 +81,10 @@ const durableNames = new Set([
   "workflow.add",
   "task.steer",
   "task.model",
+  "task.control",
+  "task.queue",
+  "delivery.save",
+  "delivery.run",
   "goal.update",
   "workflow.retry",
   "workflow.control",
@@ -88,12 +92,14 @@ const durableNames = new Set([
   "schedule.save",
   "schedule.run",
   "schedule.remove",
+  "schedule.abandon",
 ]);
-async function api(route, body) {
+async function api(route, body, serverId) {
   const response = await fetch(base + route, {
     method: body ? "POST" : "GET",
     headers: {
       Authorization: `Bearer ${token}`,
+      ...(serverId?{"X-Relay-Server-ID":serverId}:{}),
       ...(body ? { "Content-Type": "application/json" } : {}),
     },
     body: body ? JSON.stringify(body) : undefined,
@@ -120,18 +126,13 @@ async function command(name, args, retry = false) {
   }
   for (let attempt = 0; ; attempt++) {
     try {
-      const result = await api("/api/command", { name, args });
+      const result = await api("/api/command", { name, args },record?.serverId);
       if (record) store().finish(record, result);
       return result;
     } catch (error) {
-      if (
-        record &&
-        error instanceof HttpError &&
-        error.status >= 400 &&
-        error.status < 500 &&
-        error.status !== 429
-      )
-        store().finish(record, undefined, error.message);
+      // A gateway error can be returned after the server committed the request.
+      // Preserve the original payload and ID; 4xx still stop this attempt so
+      // validation and authentication errors do not create an automatic loop.
       if (controller.signal.aborted) throw error;
       if (
         !retry ||
@@ -304,6 +305,7 @@ async function main() {
       throw Error(
         "Recovery server installation differs from the recorded server",
       );
+    if (record.state === "rejected") store().reopen(record);
     console.log(JSON.stringify(await command(record.name, record.args, true)));
     return;
   }
@@ -374,6 +376,7 @@ async function main() {
     result = await command("workflow.add", input, true);
   } else if (["pause", "resume", "cancel"].includes(operation))
     result = await command("job.control", { id: values.id, action: operation });
+  else if (operation === "info") result = await api("/api/meta");
   else if (operation === "health") result = await command("health");
   else if (operation === "doctor") result = await command("environment.check");
   else if (operation === "approvals") result = await command("approval.list");

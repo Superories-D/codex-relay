@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -57,7 +57,69 @@ beforeEach(async () => {
   history = new History(store, chats);
 });
 afterEach(async () => {
+  vi.restoreAllMocks();
   await fs.rm(root, { recursive: true, force: true });
+});
+it("retries a failed partial journal append in order after storage returns without poisoning another task",async()=>{
+ const id=randomUUID();await chats.user(id,"Original",undefined,"original");
+ const append=fs.appendFile.bind(fs);let broken=false;
+ vi.spyOn(fs,"appendFile").mockImplementation(async(file,data,options)=>{
+  if(String(file)===chats.file(id)&&!broken){broken=true;await append(file,String(data).slice(0,17),options);throw Error("ENOSPC partial append");}
+  await append(file,data,options);
+ });
+ const item:any={id:"retained",role:"assistant",kind:"message",text:"Retained answer",at:1,status:"completed"};
+ await expect(chats.append(id,item)).rejects.toThrow("ENOSPC");item.text="Mutated after failure";
+ await chats.user("independent","Unaffected");await chats.user(id,"Later",undefined,"later");
+ const rows=(await new Chats(store.root).read(id)).items;
+ expect(rows.map(row=>row.id)).toEqual(["original","retained","later"]);expect(rows[1].text).toBe("Retained answer");
+ expect((await chats.read("independent")).items[0].text).toBe("Unaffected");
+});
+it("retains a complete protocol answer through a write failure and flush without downgrading its status",async()=>{
+ const id=randomUUID(),append=fs.appendFile.bind(fs);let broken=false;
+ vi.spyOn(fs,"appendFile").mockImplementation(async(file,data,options)=>{
+  if(String(file)===chats.file(id)&&!broken){broken=true;await append(file,String(data).slice(0,11),options);throw Error("temporary write failure");}
+  await append(file,data,options);
+ });
+ await chats.event(id,"item/started",{turnId:"turn",item:{id:"answer",type:"agentMessage",text:""}});
+ await chats.event(id,"item/agentMessage/delta",{turnId:"turn",itemId:"answer",delta:"Full "});
+ await expect(chats.event(id,"item/completed",{turnId:"turn",item:{id:"answer",type:"agentMessage",text:"Full final answer"}})).rejects.toThrow("temporary");
+ await chats.event(id,"turn/plan/updated",{turnId:"turn",explanation:"Later record",plan:[]});await chats.flush(id);
+ const rows=(await new Chats(store.root).read(id)).items;expect(rows.map(row=>row.text)).toEqual(["Full final answer","Later record"]);
+ expect(rows[0]).toMatchObject({status:"completed",turnId:"turn"});
+});
+it("deduplicates a fully written record after a lost write acknowledgement",async()=>{
+ const id=randomUUID(),append=fs.appendFile.bind(fs);let failed=false;
+ vi.spyOn(fs,"appendFile").mockImplementation(async(file,data,options)=>{await append(file,data,options);if(String(file)===chats.file(id)&&!failed){failed=true;throw Error("write acknowledgement lost");}});
+ await expect(chats.user(id,"Once",undefined,"stable-id")).rejects.toThrow("acknowledgement");
+ await chats.flush(id);const rows=await new Chats(store.root).read(id);expect(rows.total).toBe(1);expect(rows.items[0]).toMatchObject({id:"stable-id",text:"Once"});
+});
+it("does not reject an earlier committed append when a later queued append fails",async()=>{
+ const id=randomUUID(),append=fs.appendFile.bind(fs);let release!:()=>void,entered!:()=>void,failed=false;
+ const gate=new Promise<void>(r=>{release=r;}),writing=new Promise<void>(r=>{entered=r;});
+ vi.spyOn(fs,"appendFile").mockImplementation(async(file,data,options)=>{
+  if(String(file)===chats.file(id)&&String(data).includes('"id":"first"')){entered();await gate;}
+  if(String(file)===chats.file(id)&&String(data).includes('"id":"second"')&&!failed){failed=true;throw Error("second unavailable");}
+  await append(file,data,options);
+ });
+ const first=chats.user(id,"First",undefined,"first");await writing;const second=chats.user(id,"Second",undefined,"second");
+ const results=Promise.allSettled([first,second]);release();expect((await results).map(r=>r.status)).toEqual(["fulfilled","rejected"]);
+ expect((await chats.read(id)).items.map(row=>row.text)).toEqual(["First","Second"]);
+});
+it("keeps unreadable writes visibly blocked until storage recovers and then repairs them on read",async()=>{
+ const id=randomUUID(),append=fs.appendFile.bind(fs);let offline=true;
+ vi.spyOn(fs,"appendFile").mockImplementation(async(file,data,options)=>{if(String(file)===chats.file(id)&&offline)throw Error("storage offline");await append(file,data,options);});
+ await expect(chats.user(id,"Pending row",undefined,"pending")).rejects.toThrow("offline");
+ await expect(chats.read(id)).rejects.toThrow("offline");await expect(chats.flush(id)).rejects.toThrow("offline");
+ offline=false;expect((await chats.read(id)).items.map(row=>row.id)).toEqual(["pending"]);await chats.flush(id);
+ expect((await new Chats(store.root).read(id)).total).toBe(1);
+});
+it("retries failed native hydration before later appends and freezes its supplied history",async()=>{
+ const id=randomUUID();await chats.user(id,"Local input",undefined,"local");
+ const rename=fs.rename.bind(fs);let failed=false;vi.spyOn(fs,"rename").mockImplementation(async(from,to)=>{if(String(to)===chats.file(id)&&!failed){failed=true;throw Error("replace interrupted");}await rename(from,to);});
+ const native:any[]=[{id:"native",role:"assistant",kind:"message",text:"Native result",at:1}];
+ await expect(chats.hydrate(id,native)).rejects.toThrow("replace interrupted");native[0].text="Changed after failed replace";
+ await chats.user(id,"Next input",undefined,"next");
+ expect((await new Chats(store.root).read(id)).items.map(row=>row.text)).toEqual(["Native result","Local input","Next input"]);
 });
 async function fixture(index = 0, extra = {}) {
   const id = randomUUID(),

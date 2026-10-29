@@ -3,9 +3,11 @@ import {
   quietNow,
   wantsNotice,
 } from "./notification-policy";
+import {deliveryStatus} from "./delivery-view";
+import {taskControlSignature} from "../shared/task-control";
+import {notificationEvent} from "../shared/notification-event";
 import { attachmentsSchema } from "../main/validation";
 import {
-  ServerUploads,
   telegramDownload,
   UPLOAD_LIMIT,
   type TelegramDownload,
@@ -19,7 +21,7 @@ import { atomicWrite } from "../core/store";
 import { redact } from "../core/redact";
 import { prepareWorkspaces, resolveWorkspace } from "./workspaces";
 import type { ServerRuntime } from "./runtime";
-import type { Approval, Job } from "../shared/types";
+import type { Approval, Job, ChatAttachment } from "../shared/types";
 import {
   questionList,
   validateQuestionAnswers,
@@ -76,6 +78,11 @@ export type TelegramApi = (
   body: Record<string, unknown>,
   signal: AbortSignal,
 ) => Promise<any>;
+export class TelegramApiError extends Error {
+  constructor(readonly method: Parameters<TelegramApi>[0], readonly status: number) {
+    super(`Telegram ${method} failed (HTTP ${status}); check bot configuration and rate limits`);
+  }
+}
 export function telegramApi(token: string): TelegramApi {
   let nextSendAt = 0,
     notBefore = 0;
@@ -157,9 +164,7 @@ export function telegramApi(token: string): TelegramApi {
       notBefore =
         Date.now() + Math.min(3600, data.parameters.retry_after) * 1000;
     if (!response.ok || data.ok !== true)
-      throw Error(
-        `Telegram ${method} failed (HTTP ${response.status}); check bot configuration and rate limits`,
-      );
+      throw new TelegramApiError(method, response.status);
     return data.result;
   };
 }
@@ -169,6 +174,7 @@ const stateSchema = z
     identity: z.string(),
     offset: z.number().int().nonnegative(),
     known: z.record(z.string(), z.string()),
+    knownEvents: z.record(z.string(), z.string()).optional(),
     notificationPolicy: notificationPolicySchema.optional(),
     notices: z
       .array(
@@ -192,15 +198,19 @@ const stateSchema = z
         updateId: z.number().int().nonnegative(),
         text: z.string().max(110000),
         context: contextSchema,
+        confirmation:z.object({controlRevision:z.number().int().nonnegative()}).strict().optional(),
         media: z
           .object({
             fileId: z.string().min(1).max(1000),
             name: z.string().max(200),
             size: z.number().nonnegative().max(UPLOAD_LIMIT).optional(),
+            grouped: z.boolean().optional(),
           })
           .optional(),
       })
       .strict()
+      .refine(incoming=>!incoming.confirmation||/^\/send\s/.test(incoming.text),"Invalid confirmed follow-up")
+      .refine(incoming=>!incoming.media||incoming.text==="/upload"||/^\/(?:new|send)(?:@[A-Za-z0-9_]+)?(?:\s|$)/i.test(incoming.text),"Invalid attachment command")
       .optional(),
     pending: replySchema
       .extend({ updateId: z.number().int().nonnegative() })
@@ -225,6 +235,15 @@ export class TelegramBridge {
   private state?: State;
   private controller = new AbortController();
   private loop?: Promise<void>;
+  private polling?:Promise<void>;
+  private mutations:Promise<unknown>=Promise.resolve();
+  private noticePass?:Promise<void>;
+  private noticeTicker?:ReturnType<typeof setInterval>;
+  private noticeRetryAt=0;
+  private noticeCaptureAfter=0;
+  private noticeFailures=0;
+  private noticeTimer?:ReturnType<typeof setTimeout>;
+  private noticeListener?:()=>void;
   private grants = new Map<
     string,
     {
@@ -261,6 +280,13 @@ export class TelegramBridge {
         await this.commit({ ...this.state!, context: selection });
       },
       now,
+      async(input,id,controlRevision)=>{
+        const incoming=this.state?.incoming;
+        if(!incoming||incoming.media||requestId(this.identity,incoming.updateId)!==id)throw Error("确认请求上下文已变化，请重新打开修复预览");
+        // Keep the original update ID and persist its exact destination/body.
+        // The existing /send path deduplicates this ID across service restarts.
+        await this.commit({...this.state!,incoming:{...incoming,text:`/send ${input.id} ${input.text}`,context:{...incoming.context,attachments:[]},confirmation:{controlRevision}}});
+      },
     );
   }
   static async open(
@@ -285,7 +311,14 @@ export class TelegramBridge {
       const state = stateSchema.parse(
         JSON.parse(await fs.readFile(bridge.file(), "utf8")),
       );
-      if (state.identity === bridge.identity) bridge.state = state;
+      if (state.identity === bridge.identity) {
+        bridge.state = state;
+        // One-time baseline prevents an upgrade from replaying historical
+        // terminal states. Tag changes while offline still notify normally.
+        if (!state.knownEvents) await bridge.commit({...state,
+          knownEvents: Object.fromEntries(bridge.jobs().map(j=>[j.id,bridge.event(j)])),
+        });
+      }
     } catch (e: any) {
       if (e.code !== "ENOENT") throw e;
     }
@@ -327,6 +360,15 @@ export class TelegramBridge {
         ? "recovering"
         : job.state;
   }
+  private event(job: Job) {
+    const approvals = this.runtime.scheduler.approvals.filter(a=>a.jobId===job.id);
+    const value = approvals.length
+      ? JSON.stringify(approvals.map(a=>JSON.stringify([a.id,a.historyId,a.reviewId,a.method,a.params])).sort())
+      : notificationEvent(job);
+    // Approval payloads and errors can contain credentials; persist only an
+    // opaque event identity, never the raw fingerprint input.
+    return createHash("sha256").update(value).digest("hex");
+  }
   async initialize() {
     if (this.state) return;
     const hook = await this.api("getWebhookInfo", {}, this.controller.signal);
@@ -358,6 +400,7 @@ export class TelegramBridge {
       identity: this.identity,
       offset: latest + 1,
       known: Object.fromEntries(this.jobs().map((j) => [j.id, this.tag(j)])),
+      knownEvents: Object.fromEntries(this.jobs().map((j) => [j.id, this.event(j)])),
     });
   }
   private async send(reply: string | TelegramReply) {
@@ -409,6 +452,7 @@ export class TelegramBridge {
     updateId: number,
     text: string,
     context: TelegramContext,
+    controlRevision?:number,
   ): Promise<string | TelegramReply> {
     const match = text.match(/^\/(\w+)(?:@[A-Za-z0-9_]+)?(?:\s+([\s\S]*))?$/);
     if (!match) return "Use /help for Relay commands.";
@@ -520,8 +564,9 @@ export class TelegramBridge {
       const parts = args.match(/^(\S+)\s+([\s\S]+)$/);
       if (!parts) throw Error("Use /send TASK_ID instruction");
       const job = this.findJob(parts[1]);
-      await this.runtime.command("chat.submit", {
+      await this.runtime.command(controlRevision===undefined?"chat.submit":"chat.confirmedSubmit", {
         requestId: requestId(this.identity, updateId),
+        ...(controlRevision===undefined?{}:{controlRevision}),
         input: {
           id: job.id,
           text: parts[2],
@@ -536,6 +581,11 @@ export class TelegramBridge {
       };
     }
     if (["pause", "resume", "cancel"].includes(command)) {
+      const id=requestId(this.identity,updateId),recorded=await this.runtime.command("action.read",id) as any;
+      if(recorded) {
+        if(recorded.action!=="task.control")throw Error("Request ID belongs to another operation");
+        return this.console.taskReceipt(recorded);
+      }
       const job = this.findJob(args.trim() || context.task || "");
       if (
         command === "resume" &&
@@ -547,11 +597,11 @@ export class TelegramBridge {
         (command === "cancel" && job.state === "cancelled")
       )
         return `Task already ${job.state}: ${job.id}`;
-      await this.runtime.command("job.control", {
+      return this.console.taskReceipt(await this.runtime.command("task.control", {
+        requestId:id,expected:taskControlSignature(job),
         id: job.id,
         action: command,
-      });
-      return `${command}: ${job.id}`;
+      }));
     }
     if (command === "dismiss") {
       this.wizard = undefined;
@@ -706,8 +756,8 @@ export class TelegramBridge {
   }
   private async stageMedia(
     incoming: NonNullable<State["incoming"]>,
-  ): Promise<TelegramReply> {
-    const uploads = new ServerUploads(this.runtime.store.root),
+  ): Promise<{reply:TelegramReply;attachment:ChatAttachment}> {
+    const uploads = this.runtime.uploads,
       id = requestId(this.identity, incoming.updateId),
       media = incoming.media!;
     let result;
@@ -724,6 +774,8 @@ export class TelegramBridge {
         { file_id: media.fileId },
         this.controller.signal,
       ).catch((error) => {
+        if (error instanceof TelegramApiError && error.method === "getFile" && [400,413,422].includes(error.status))
+          throw Error(`Telegram 无法获取此附件（HTTP ${error.status}）。请重新发送附件；其他指令仍可正常使用。`);
         throw new TelegramPersistenceError(
           "Telegram file metadata unavailable; retrying",
           { cause: error },
@@ -752,10 +804,12 @@ export class TelegramBridge {
         ...this.state!,
         inbox: [...inbox, result.attachment],
       });
-    return {
-      text: `附件已暂存: ${result.attachment.name}（${result.size} bytes）\n发送下一条任务指令一起提交；/inbox 查看或清空。文件说明不会自动执行。`,
+    return {attachment:result.attachment,reply:{
+      text: `附件已暂存: ${result.attachment.name}（${result.size} bytes）\n`+
+        (media.grouped?"相册附件逐张暂存，说明中的指令不会提前执行；等所有附件到齐后再发送任务指令。":"发送下一条任务指令一起提交；单个附件的说明可直接写 /new、/run、/send 或 /follow 指令，普通说明不会自动执行。")+
+        "\n/inbox 查看或清空。",
       keyboard: [[button("查看附件", "/inbox")]],
-    };
+    }};
   }
   private currentGrant(code: string) {
     const grant = this.grants.get(code);
@@ -790,20 +844,33 @@ export class TelegramBridge {
     });
   }
   private async processIncoming() {
-    const incoming = this.state!.incoming;
+    let incoming = this.state!.incoming;
     if (!incoming) return;
     let reply: TelegramReply;
     try {
-      const result = incoming.media
-        ? await this.stageMedia(incoming)
-        : await this.execute(
+      let staged:TelegramReply|undefined;
+      if(incoming.media){
+        const uploaded=await this.stageMedia(incoming);
+        if(incoming.text==="/upload")staged=uploaded.reply;
+        else {
+          // Save the exact instruction + attachment snapshot before admission.
+          // On restart this becomes the ordinary UUID-deduplicated command path,
+          // without redownloading or picking up a later inbox/project selection.
+          const attachments=[...(incoming.context.attachments||[])];
+          if(!attachments.some(file=>file.path===uploaded.attachment.path))attachments.push(uploaded.attachment);
+          const next={...incoming,media:undefined,context:{...incoming.context,attachments}};
+          await this.commit({...this.state!,incoming:next});incoming=next;
+        }
+      }
+      const result = staged ?? await this.execute(
             incoming.updateId,
             incoming.text,
             incoming.context,
+            incoming.confirmation?.controlRevision,
           );
       if (
         !incoming.media &&
-        /^\/(new|run|send)\b/.test(incoming.text) &&
+        /^\/(new|run|send)\b/i.test(incoming.text) &&
         incoming.context.attachments?.length
       ) {
         const used = new Set(incoming.context.attachments.map((a) => a.path));
@@ -814,9 +881,14 @@ export class TelegramBridge {
       }
       reply = typeof result === "string" ? { text: result } : result;
     } catch (e) {
-      if (e instanceof TelegramPersistenceError) throw e;
+      // Shutdown is not a definitive rejection. Retain the resolved incoming
+      // intent so a new bridge can reconcile it instead of sending an error.
+      if (this.controller.signal.aborted || e instanceof TelegramPersistenceError) throw e;
+      if(incoming.media&&["ENOSPC","EDQUOT","EMFILE","ENFILE","EIO","EBUSY"].includes((e as NodeJS.ErrnoException)?.code||""))
+        throw new TelegramPersistenceError("Telegram attachment storage unavailable; retrying",{cause:e});
       reply = {
-        text: `Error: ${this.safe(e instanceof Error ? e.message : e)}`,
+        text: `Error: ${this.safe(e instanceof Error ? e.message : e)}`+
+          (incoming.context.attachments?.length?"\n附件保留在 /inbox，可修正指令后继续。":""),
       };
     }
     reply.text = this.safe(reply.text);
@@ -856,11 +928,17 @@ export class TelegramBridge {
       context.project = project;
       return `/new ${run[2]}`;
     }
+    if(/^\/run(?:@[A-Za-z0-9_]+)?(?:\s|$)/i.test(text))throw Error("Use /run PROJECT_NUMBER instruction; list roots with /projects");
+    const follow=text.match(/^\/follow(?:@[A-Za-z0-9_]+)?(?:\s+([\s\S]+))?$/i);
+    if(follow){if(!follow[1]?.trim())throw Error("Use /follow instruction; select a task or reply to its card");return this.routeTask(follow[1].trim(),message,context);}
     if (text.startsWith("/")) return text;
     if (this.state!.answerCode) {
       // Persisted answer mode fails closed after restart; it must not become a task instruction.
       return `/answertext ${this.state!.answerCode} ${this.wizard?.index || 0} ${text}`;
     }
+    return this.routeTask(text,message,context);
+  }
+  private routeTask(text:string,message:any,context:TelegramContext){
     let task = context.task;
     if (message.reply_to_message) {
       task = this.state!.routes?.[String(message.reply_to_message.message_id)];
@@ -875,23 +953,79 @@ export class TelegramBridge {
       );
     return `/send ${task} ${text}`;
   }
-  async pollOnce() {
-    await this.initialize();
-    await this.deliverPending();
-    // A durable resolved route survives lost acknowledgements, project changes and restart.
-    await this.processIncoming();
+  pollOnce() {
+    if(this.polling)return this.polling;
+    const task=this.poll();this.polling=task;
+    void task.finally(()=>{if(this.polling===task)this.polling=undefined;}).catch(()=>{});
+    return task;
+  }
+  private serial<T>(effect:()=>Promise<T>){
+    const task=this.mutations.catch(()=>{}).then(effect);this.mutations=task;return task;
+  }
+  private policy(){
+    return this.state!.notificationPolicy||{mode:this.config.notify?"all" as const:"off" as const,watched:[],quiet:null,intervalSeconds:0};
+  }
+  private hasNewNotice(){
+    if(!this.state)return false;
+    const policy=this.policy();
+    return this.jobs().some(job=>{
+      const tag=this.tag(job);
+      if(tag==="completed"&&!this.runtime.scheduler.notificationSettled(job.id))return false;
+      return wantsNotice(policy,job.id,tag)&&(this.state!.known[job.id]!==tag||this.state!.knownEvents?.[job.id]!==this.event(job));
+    });
+  }
+  private noticeDue(){
+    if(!this.state?.notices?.length)return false;
+    const policy=this.policy();
+    return !quietNow(policy,this.now())&&(this.state.lastNoticeAt===undefined||this.now()-this.state.lastNoticeAt>=policy.intervalSeconds*1000);
+  }
+  private requestNotice(onError:(error:unknown)=>void){
+    if(this.noticePass||!this.state||this.controller.signal.aborted)return;
+    const task=this.serial(async()=>{
+      if(this.controller.signal.aborted)return;
+      const budget=this.now()<this.noticeRetryAt?0:5;
+      if(budget&&this.state!.pending){
+        await this.notify(0);
+        await this.deliverPending();
+      }
+      await this.notify(budget);this.noticeCaptureAfter=0;
+      if(budget){this.noticeFailures=0;this.noticeRetryAt=0;}
+    });
+    this.noticePass=task;
+    void task.catch(error=>{
+      if(this.controller.signal.aborted)return;
+      this.noticeFailures++;
+      this.noticeRetryAt=this.now()+Math.min(60000,1000*2**Math.min(this.noticeFailures,6));
+      if(error instanceof TelegramPersistenceError)this.noticeCaptureAfter=this.noticeRetryAt;
+      onError(Error(this.safe(error instanceof Error?error.message:error)));
+    }).finally(()=>{if(this.noticePass===task)this.noticePass=undefined;}).catch(()=>{});
+  }
+  private async poll() {
+    await this.serial(async()=>{
+      this.controller.signal.throwIfAborted();
+      await this.initialize();
+      await this.deliverPending();
+      // Resolved routes survive lost acknowledgements and project changes.
+      await this.processIncoming();
+    });
     const updates = await this.api(
       "getUpdates",
       {
         offset: this.state!.offset,
         limit: 20,
-        timeout: 25,
+        timeout:25,
         allowed_updates: ["message", "callback_query"],
       },
       this.controller.signal,
     );
     if (!Array.isArray(updates))
       throw Error("Invalid Telegram update response");
+    await this.serial(async()=>{
+      this.controller.signal.throwIfAborted();
+      await this.consume(updates);
+    });
+  }
+  private async consume(updates:any[]) {
     for (const update of updates
       .slice(0, 100)
       .sort((a, b) => a.update_id - b.update_id)) {
@@ -933,6 +1067,7 @@ export class TelegramBridge {
         attachments: this.state!.inbox || [],
       });
       let routed: string;
+      let confirmation:NonNullable<State["incoming"]>["confirmation"];
       let media: NonNullable<State["incoming"]>["media"];
       const source =
         !callback &&
@@ -955,6 +1090,7 @@ export class TelegramBridge {
               -200,
             ),
             size: source.file_size,
+            ...(message.media_group_id?{grouped:true}:{}),
           };
         }
         if (!media && typeof text !== "string")
@@ -963,9 +1099,18 @@ export class TelegramBridge {
           );
         if (typeof text === "string" && text.length > 100000)
           throw Error("Message is too large");
-        routed = media
-          ? "/upload"
-          : this.route(text.trim(), callback ? {} : message, context);
+        if(media){
+          const caption=typeof message.caption==="string"?message.caption.trim():"";
+          if(caption.length>100000)throw Error("Message is too large");
+          routed=!media.grouped&&/^\/(?:new|run|send|follow)(?:@[A-Za-z0-9_]+)?(?:\s|$)/i.test(caption)
+            ? this.route(caption,message,context) : "/upload";
+          const follow=routed.match(/^\/send(?:@[A-Za-z0-9_]+)?\s+(\S+)\s+([\s\S]+)$/i);
+          if(follow){
+            const job=this.findJob(follow[1]);
+            routed=`/send ${job.id} ${follow[2]}`;
+            confirmation={controlRevision:job.controlRevision||0};
+          }
+        }else routed=this.route(text.trim(),callback?{}:message,context);
       } catch (e) {
         await this.commit({
           ...this.state!,
@@ -979,15 +1124,16 @@ export class TelegramBridge {
       }
       await this.commit({
         ...this.state!,
-        incoming: { updateId: update.update_id, text: routed, context, media },
+        incoming: { updateId: update.update_id, text: routed, context, media, confirmation },
       });
       await this.processIncoming();
     }
-    await this.notify();
+    await this.notify(this.now()<this.noticeRetryAt?0:5);
   }
-  private async notify() {
+  private async notify(limit=5) {
     const jobs = this.jobs(),
       known = { ...this.state!.known },
+      knownEvents = { ...this.state!.knownEvents },
       policy = this.state!.notificationPolicy || {
         mode: this.config.notify ? ("all" as const) : ("off" as const),
         watched: [],
@@ -997,18 +1143,22 @@ export class TelegramBridge {
     let notices = [...(this.state!.notices || [])],
       dropped = this.state!.noticeDropped || 0;
     for (const job of jobs) {
-      const tag = this.tag(job);
-      if (known[job.id] === tag) continue;
+      const tag = this.tag(job), event = this.event(job),
+        completion = job.completion && {...job.completion};
+      // Do not publish a transient terminal state while its final save or
+      // queue handoff still owns the task; leave the prior cursor untouched.
+      if(tag==="completed"&&!this.runtime.scheduler.notificationSettled(job.id))continue;
+      if (known[job.id] === tag && knownEvents[job.id] === event) continue;
       known[job.id] = tag;
+      knownEvents[job.id] = event;
       if (!wantsNotice(policy, job.id, tag)) continue;
       let text = `Relay update\n${job.id.slice(0, 8)} · ${tag.startsWith("approval:") ? "needs your answer (/approvals)" : tag} · ${job.title.slice(0, 120)}`;
+      if (job.delivery?.checks.length) text += `\n交付验收: ${deliveryStatus(job.delivery)}`;
       if (tag === "completed") {
-        const page = await this.runtime.scheduler.chats.read(job.id),
-          latest = [...page.items]
-            .reverse()
-            .find((i) => i.role === "assistant" && i.text.trim());
+        const latest = await this.runtime.scheduler.chats.latestAssistant(job.id, completion);
         if (latest)
           text += `\n\n${this.safe(latest.text, 1200)}${latest.text.length > 1200 ? "…（点击最新结果查看全文）" : ""}`;
+        else if (completion) text += "\n本轮没有新的助手文本，可打开任务检查工具结果与产物。";
       } else if (tag === "needs_attention" && job.lastError)
         text += `\n${this.safe(job.lastError, 1000)}`;
       else if (tag === "recovering")
@@ -1030,6 +1180,9 @@ export class TelegramBridge {
         known: Object.fromEntries(
           Object.entries(known).filter(([id]) => ids.has(id)),
         ),
+        knownEvents: Object.fromEntries(
+          Object.entries(knownEvents).filter(([id]) => ids.has(id)),
+        ),
         notices,
         noticeDropped: dropped,
       };
@@ -1038,7 +1191,7 @@ export class TelegramBridge {
       await this.commit(next);
     if (quietNow(policy, this.now())) return;
     let delivered = 0;
-    while (this.state!.notices?.length && delivered < 5) {
+    while (this.state!.notices?.length && delivered < limit) {
       if (
         policy.intervalSeconds &&
         this.state!.lastNoticeAt !== undefined &&
@@ -1070,6 +1223,22 @@ export class TelegramBridge {
   }
   start(onError: (error: unknown) => void) {
     if (this.loop) return;
+    this.noticeListener=()=>{
+      if(this.noticeTimer||this.controller.signal.aborted)return;
+      this.noticeTimer=setTimeout(()=>{
+        this.noticeTimer=undefined;
+        try{if(this.now()>=this.noticeCaptureAfter&&this.hasNewNotice())this.requestNotice(onError);}
+        catch(error){onError(Error(this.safe(error instanceof Error?error.message:error)));}
+      },100);
+      this.noticeTimer.unref();
+    };
+    this.runtime.scheduler.on("operationsObserved",this.noticeListener);
+    this.noticeListener();
+    this.noticeTicker=setInterval(()=>{
+      try{if(this.now()>=this.noticeRetryAt&&this.noticeDue())this.requestNotice(onError);}
+      catch(error){onError(Error(this.safe(error instanceof Error?error.message:error)));}
+    },1000);
+    this.noticeTicker.unref();
     this.loop = (async () => {
       let failures = 0;
       while (!this.controller.signal.aborted) {
@@ -1100,7 +1269,11 @@ export class TelegramBridge {
     })();
   }
   async stop() {
+    if(this.noticeListener)this.runtime.scheduler.off("operationsObserved",this.noticeListener);
+    if(this.noticeTimer)clearTimeout(this.noticeTimer);
+    if(this.noticeTicker)clearInterval(this.noticeTicker);
     this.controller.abort();
     await this.loop;
+    await this.noticePass?.catch(()=>{});
   }
 }

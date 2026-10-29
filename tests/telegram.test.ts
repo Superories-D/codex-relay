@@ -1,15 +1,18 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import {createServer} from "node:http";
 import { describe, it, expect, vi } from "vitest";
 import { ServerRuntime } from "../src/server/runtime";
 import {
   TelegramBridge,
+  TelegramApiError,
   telegramApi,
   telegramConfig,
   type TelegramApi,
 } from "../src/server/telegram";
 import { atomicWrite } from "../src/core/store";
+import {CheckpointGit} from "../src/main/checkpoint-git";
 const config = {
   token: "123456789:" + "a".repeat(35),
   userId: "123456789",
@@ -28,7 +31,7 @@ async function setup() {
   const base = await fs.mkdtemp(path.join(os.tmpdir(), "relay-telegram-")),
     workspace = path.join(base, "project");
   await fs.mkdir(workspace);
-  const runtime = await ServerRuntime.open(path.join(base, "data"));
+  const runtime = await ServerRuntime.open(path.join(base, "data"),undefined,[workspace]);
   await runtime.scheduler.dispatch(true);
   return {
     base,
@@ -44,11 +47,14 @@ function transport() {
   let updates: any[] = [];
   const sent: any[] = [];
   const acknowledgements: any[] = [];
+  const polls:any[]=[];
   let failSend = false;
   const api: TelegramApi = async (method, body) => {
     if (method === "getWebhookInfo") return { url: "" };
-    if (method === "getUpdates")
+    if (method === "getUpdates") {
+      polls.push(body);
       return body.offset === -1 ? [message(10, "/run 1 Old backlog")] : updates;
+    }
     if (method === "answerCallbackQuery") {
       acknowledgements.push(body);
       return true;
@@ -64,6 +70,7 @@ function transport() {
     api,
     sent,
     acknowledgements,
+    polls,
     setUpdates(value: any[]) {
       updates = value;
     },
@@ -72,6 +79,181 @@ function transport() {
     },
   };
 }
+it.skipIf(process.platform!=="linux")("delivers through the real fetch-based Bot transport while its long-poll HTTP request remains open",async()=>{
+ const f=await setup(),sent:any[]=[],errors:unknown[]=[];let polls=0,closed=0,bridge:TelegramBridge|undefined;
+ const server=createServer(async(req,res)=>{
+  let bytes="";for await(const chunk of req)bytes+=chunk;const body=JSON.parse(bytes),method=req.url!.slice(1);
+  const reply=(result:unknown)=>{res.writeHead(200,{"Content-Type":"application/json"});res.end(JSON.stringify({ok:true,result}));};
+  if(method==="getWebhookInfo")return reply({url:""});
+  if(method==="getUpdates"){
+   if(body.offset===-1)return reply([message(10,"/help")]);polls++;
+   if(Number(body.timeout)>0){res.on("close",()=>{closed++;});return;}
+   return reply([]);
+  }
+  sent.push(body);reply({message_id:sent.length});
+ });
+ await new Promise<void>(resolve=>server.listen(0,"127.0.0.1",resolve));const address=server.address() as {port:number},fetch=globalThis.fetch;
+ const transport=vi.spyOn(globalThis,"fetch").mockImplementation((url,options)=>fetch(`http://127.0.0.1:${address.port}/${new URL(String(url)).pathname.split("/").at(-1)}`,options));
+ try{
+  const job=await f.runtime.scheduler.add({title:"HTTP wake",prompt:"Work",cwd:f.workspace,mode:"cli",model:"",effort:"",bucket:"codex",sandbox:"workspaceWrite",approvalPolicy:"on-request"});
+  bridge=await TelegramBridge.open(f.runtime,{...config,notify:true},[f.workspace],telegramApi(config.token));await bridge.initialize();bridge.start(error=>errors.push(error));await vi.waitFor(()=>expect(polls).toBe(1));
+  job.state="completed";f.runtime.scheduler.changed();await vi.waitFor(()=>expect(sent.some(reply=>reply.text.startsWith("Relay update"))).toBe(true),{timeout:3000});expect(closed).toBe(0);expect(polls).toBe(1);expect(errors).toEqual([]);
+ }finally{await bridge?.stop();transport.mockRestore();server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));await f.close();}
+});
+it.skipIf(process.platform!=="linux")("notifies alongside an idle Telegram poll and preserves the next command's offset",async()=>{
+ const f=await setup(),t=transport();let stopped:TelegramBridge|undefined,aborts=0,deliver!:()=>void;const polls:any[]=[],errors:unknown[]=[];
+ const api:TelegramApi=async(method,body,signal)=>{
+  if(method!=="getUpdates"||body.offset===-1)return t.api(method,body,signal);
+  polls.push(body);
+  return new Promise((resolve,reject)=>{deliver=()=>resolve([message(11,"/help")]);const abort=()=>{aborts++;reject(Error("long poll aborted"));};if(signal.aborted)abort();else signal.addEventListener("abort",abort,{once:true});});
+ };
+ try{
+  const job=await f.runtime.scheduler.add({title:"Wake result",prompt:"Work",cwd:f.workspace,mode:"cli",model:"",effort:"",bucket:"codex",sandbox:"workspaceWrite",approvalPolicy:"on-request",interactive:true});
+  const bridge=stopped=await TelegramBridge.open(f.runtime,{...config,notify:true},[f.workspace],api);await bridge.initialize();const observers=f.runtime.scheduler.listenerCount("operationsObserved");bridge.start(error=>errors.push(error));
+  await vi.waitFor(()=>expect(polls).toHaveLength(1));job.updatedAt++;f.runtime.scheduler.changed();await new Promise(resolve=>setTimeout(resolve,180));expect(aborts).toBe(0);
+  job.state="completed";f.runtime.scheduler.changed();await vi.waitFor(()=>expect(t.sent.some(reply=>reply.text.startsWith("Relay update"))).toBe(true),{timeout:3000});
+  expect(aborts).toBe(0);expect(polls).toHaveLength(1);deliver();await vi.waitFor(()=>expect(polls).toHaveLength(2),{timeout:3000});expect(polls.slice(0,2).map(poll=>poll.offset)).toEqual([11,12]);expect(t.sent.filter(reply=>reply.text.startsWith("Relay update"))).toHaveLength(1);expect(errors).toEqual([]);
+  await bridge.stop();stopped=undefined;expect(f.runtime.scheduler.listenerCount("operationsObserved")).toBe(observers);
+ }finally{await stopped?.stop();await f.close();}
+});
+it.skipIf(process.platform!=="linux")("drains more than one Telegram batch without another 25-second wait",async()=>{
+ const f=await setup(),t=transport(),polls:any[]=[];let bridge:TelegramBridge|undefined;
+ const api:TelegramApi=async(method,body,signal)=>{if(method==="getUpdates"&&body.offset!==-1){polls.push(body);if(Number(body.timeout)>0)return new Promise((_,reject)=>{if(signal.aborted)reject(Error("Stopped"));else signal.addEventListener("abort",()=>reject(Error("Stopped")),{once:true});});}return t.api(method,body,signal);};
+ try{
+  for(let i=0;i<12;i++)await f.runtime.scheduler.add({title:`Batch ${i}`,prompt:"Work",cwd:f.workspace,mode:"cli",model:"",effort:"",bucket:"codex",sandbox:"workspaceWrite",approvalPolicy:"on-request"});
+  bridge=await TelegramBridge.open(f.runtime,{...config,notify:true},[f.workspace],api);await bridge.initialize();for(const job of f.runtime.store.data.jobs)job.state="completed";
+  bridge.start(()=>{});await vi.waitFor(()=>expect(t.sent.filter(reply=>reply.text.startsWith("Relay update"))).toHaveLength(12),{timeout:4500});expect(polls.map(poll=>poll.timeout)).toEqual([25]);
+ }finally{await bridge?.stop();await f.close();}
+});
+it.skipIf(process.platform!=="linux")("serializes an incoming command with an in-flight notification without overwriting either saved state",async()=>{
+ const f=await setup(),t=transport(),errors:unknown[]=[];let bridge:TelegramBridge|undefined,deliver!:(updates:any[])=>void,release!:()=>void,entered!:()=>void;
+ const sending=new Promise<void>(resolve=>{entered=resolve;}),blocked=new Promise<void>(resolve=>{release=resolve;});
+ const api:TelegramApi=async(method,body,signal)=>{
+  if(method==="getUpdates"&&body.offset!==-1)return new Promise((resolve,reject)=>{deliver=resolve;if(signal.aborted)reject(Error("Stopped"));else signal.addEventListener("abort",()=>reject(Error("Stopped")),{once:true});});
+  if(method==="sendMessage"&&String(body.text).startsWith("Relay update")){entered();await blocked;}
+  return t.api(method,body,signal);
+ };
+ try{
+  const job=await f.runtime.scheduler.add({title:"Concurrent notice",prompt:"Work",cwd:f.workspace,mode:"cli",model:"",effort:"",bucket:"codex",sandbox:"workspaceWrite",approvalPolicy:"on-request"});
+  bridge=await TelegramBridge.open(f.runtime,{...config,notify:true},[f.workspace],api);await bridge.initialize();bridge.start(error=>errors.push(error));await vi.waitFor(()=>expect(deliver).toBeTypeOf("function"));job.state="completed";f.runtime.scheduler.changed();await sending;
+  deliver([message(11,"/run 1 Concurrent command")]);await new Promise(resolve=>setTimeout(resolve,80));expect(f.runtime.store.data.jobs).toHaveLength(1);release();
+  await vi.waitFor(()=>expect(f.runtime.store.data.jobs).toHaveLength(2));await vi.waitFor(()=>expect(t.sent).toHaveLength(2));
+  const file=path.join(f.runtime.store.root,"telegram-state.json");await vi.waitFor(async()=>expect(JSON.parse(await fs.readFile(file,"utf8")).offset).toBe(12));
+  const state=JSON.parse(await fs.readFile(file,"utf8")),created=f.runtime.store.data.jobs.find(item=>item.id!==job.id)!;
+  expect(state.known[job.id]).toBe("completed");expect(state.notices).toEqual([]);expect(state.context.task).toBe(created.id);expect(Object.values(state.routes).sort()).toEqual([job.id,created.id].sort());expect(errors).toEqual([]);
+ }finally{release?.();await bridge?.stop();await f.close();}
+});
+it.skipIf(process.platform!=="linux")("retains the update offset when stop interrupts a notice ahead of a received command",async()=>{
+ const f=await setup(),t=transport();let bridge:TelegramBridge|undefined,deliver!:(updates:any[])=>void,entered!:()=>void;
+ const sending=new Promise<void>(resolve=>{entered=resolve;});
+ const api:TelegramApi=async(method,body,signal)=>{
+  if(method==="getUpdates"&&body.offset!==-1)return new Promise((resolve,reject)=>{deliver=resolve;if(signal.aborted)reject(Error("Stopped"));else signal.addEventListener("abort",()=>reject(Error("Stopped")),{once:true});});
+  if(method==="sendMessage"&&String(body.text).startsWith("Relay update")){entered();return new Promise((_,reject)=>{if(signal.aborted)reject(Error("Stopped"));else signal.addEventListener("abort",()=>reject(Error("Stopped")),{once:true});});}
+  return t.api(method,body,signal);
+ };
+ try{
+  const job=await f.runtime.scheduler.add({title:"Shutdown notice",prompt:"Work",cwd:f.workspace,mode:"cli",model:"",effort:"",bucket:"codex",sandbox:"workspaceWrite",approvalPolicy:"on-request"});
+  bridge=await TelegramBridge.open(f.runtime,{...config,notify:true},[f.workspace],api);await bridge.initialize();bridge.start(()=>{});await vi.waitFor(()=>expect(deliver).toBeTypeOf("function"));job.state="completed";f.runtime.scheduler.changed();await sending;
+  deliver([message(11,"/run 1 After restart")]);await new Promise(resolve=>setTimeout(resolve,50));await bridge.stop();bridge=undefined;expect(f.runtime.store.data.jobs).toHaveLength(1);
+  const file=path.join(f.runtime.store.root,"telegram-state.json"),state=JSON.parse(await fs.readFile(file,"utf8"));expect(state.offset).toBe(11);expect(state.notices).toHaveLength(1);
+  t.setUpdates([message(11,"/run 1 After restart")]);const restored=await TelegramBridge.open(f.runtime,{...config,notify:true},[f.workspace],t.api);await restored.pollOnce();await restored.pollOnce();expect(f.runtime.store.data.jobs).toHaveLength(2);expect(JSON.parse(await fs.readFile(file,"utf8")).offset).toBe(12);
+ }finally{await bridge?.stop();await f.close();}
+});
+it.skipIf(process.platform!=="linux")("captures a newer immutable result during notification backoff without another API attempt",async()=>{
+ const f=await setup(),t=transport(),errors:unknown[]=[];let now=Date.now(),down=true,attempts=0,bridge:TelegramBridge|undefined;
+ const api:TelegramApi=async(method,body,signal)=>{
+  if(method==="getUpdates"&&body.offset!==-1)return new Promise((_,reject)=>{if(signal.aborted)reject(Error("Stopped"));else signal.addEventListener("abort",()=>reject(Error("Stopped")),{once:true});});
+  if(method==="sendMessage"){attempts++;if(down)throw Error("Temporary notice transport failure");}return t.api(method,body,signal);
+ };
+ try{
+  const job=await f.runtime.scheduler.add({title:"Backoff snapshots",prompt:"Work",cwd:f.workspace,mode:"cli",model:"",effort:"",bucket:"codex",sandbox:"workspaceWrite",approvalPolicy:"on-request"});
+  bridge=await TelegramBridge.open(f.runtime,{...config,notify:true},[f.workspace],api,atomicWrite,()=>now);await bridge.initialize();bridge.start(error=>errors.push(error));job.state="completed";
+  job.completion={revision:1,startedAt:10,finishedAt:20};await f.runtime.scheduler.chats.append(job.id,{id:"first",role:"assistant",kind:"message",text:"SAVED FIRST",at:15});f.runtime.scheduler.changed();await vi.waitFor(()=>expect(errors).toHaveLength(1));
+  job.completion={revision:2,startedAt:30,finishedAt:40};await f.runtime.scheduler.chats.append(job.id,{id:"second",role:"assistant",kind:"message",text:"SAVED SECOND",at:35});f.runtime.scheduler.changed();
+  const file=path.join(f.runtime.store.root,"telegram-state.json");await vi.waitFor(async()=>expect(JSON.parse(await fs.readFile(file,"utf8")).notices).toHaveLength(2));expect(attempts).toBe(1);
+  down=false;now+=2100;await vi.waitFor(()=>expect(t.sent).toHaveLength(2),{timeout:2500});expect(t.sent.map(reply=>reply.text.match(/SAVED \w+/)?.[0])).toEqual(["SAVED FIRST","SAVED SECOND"]);expect(errors).toHaveLength(1);
+ }finally{await bridge?.stop();await f.close();}
+});
+it.skipIf(process.platform!=="linux")("captures completion before retrying an unavailable persisted command reply",async()=>{
+ const f=await setup(),t=transport(),errors:unknown[]=[];let bridge:TelegramBridge|undefined;const now=Date.now();
+ const api:TelegramApi=async(method,body,signal)=>{
+  if(method==="getUpdates"&&body.offset!==-1)return [message(11,"/help")];
+  if(method==="sendMessage")throw Error("Reply transport unavailable");
+  return t.api(method,body,signal);
+ };
+ try{
+  const job=await f.runtime.scheduler.add({title:"Snapshot despite pending reply",prompt:"Work",cwd:f.workspace,mode:"cli",model:"",effort:"",bucket:"codex",sandbox:"workspaceWrite",approvalPolicy:"on-request"});
+  bridge=await TelegramBridge.open(f.runtime,{...config,notify:true},[f.workspace],api,atomicWrite,()=>now);await bridge.initialize();bridge.start(error=>errors.push(error));await vi.waitFor(()=>expect(errors.length).toBeGreaterThan(0));job.state="completed";f.runtime.scheduler.changed();
+  const file=path.join(f.runtime.store.root,"telegram-state.json");await vi.waitFor(async()=>expect(JSON.parse(await fs.readFile(file,"utf8")).notices).toHaveLength(1));const state=JSON.parse(await fs.readFile(file,"utf8"));expect(state.pending.updateId).toBe(11);expect(state.notices[0].text).toContain(job.title);expect(state.offset).toBe(11);
+ }finally{await bridge?.stop();await f.close();}
+});
+it.skipIf(process.platform!=="linux")("coalesces overlapping poll callers into one offset reader",async()=>{
+ const f=await setup(),t=transport();let release!:(value:any[])=>void,calls=0;
+ const api:TelegramApi=async(method,body,signal)=>{if(method==="getUpdates"&&body.offset!==-1){calls++;return new Promise(resolve=>{release=resolve;});}return t.api(method,body,signal);};
+ try{const bridge=await TelegramBridge.open(f.runtime,config,[f.workspace],api);await bridge.initialize();const one=bridge.pollOnce(),two=bridge.pollOnce();await vi.waitFor(()=>expect(calls).toBe(1));release([]);await Promise.all([one,two]);expect(calls).toBe(1);}finally{await f.close();}
+});
+it.skipIf(process.platform!=="linux").each([false,true])("publishes only settled completions and does not reannounce metadata edits (already known: %s)",async(known)=>{
+ const f=await setup(),t=transport();let release!:()=>void;
+ try{
+  const job=await f.runtime.scheduler.add({title:"Commit gate",prompt:"Work",cwd:f.workspace,mode:"cli",model:"",effort:"",bucket:"codex",sandbox:"workspaceWrite",approvalPolicy:"on-request"});if(known)job.state="completed";
+  const bridge=await TelegramBridge.open(f.runtime,{...config,notify:true},[f.workspace],t.api);await bridge.initialize();job.state="completed";
+  const original=f.runtime.store.save.bind(f.runtime.store),gate=new Promise<void>(resolve=>{release=resolve;});let entered=false;
+  const fault=vi.spyOn(f.runtime.store,"save").mockImplementationOnce(async()=>{entered=true;await gate;await original();});
+  const editing=f.runtime.scheduler.metadata(job.id,{title:"Updated"});await vi.waitFor(()=>expect(entered).toBe(true));
+  await bridge.pollOnce();expect(t.sent).toHaveLength(0);release();await editing;fault.mockRestore();await bridge.pollOnce();expect(t.sent).toHaveLength(known?0:1);
+ }finally{release?.();await f.close();}
+});
+it.skipIf(process.platform !== "linux")("notifies another completed turn without observing running and never quotes the previous turn",async()=>{
+ const f=await setup(),t=transport();
+ try{
+ const bridge=await TelegramBridge.open(f.runtime,{...config,notify:true},[f.workspace],t.api);await bridge.initialize();
+ t.setUpdates([message(11,"/run 1 Rapid followups")]);await bridge.pollOnce();t.setUpdates([]);
+ const job:any=f.runtime.store.data.jobs[0];job.state="completed";job.threadId="thread";job.turnId="one";
+ job.completion={revision:1,startedAt:10,finishedAt:20,turnId:"one",threadId:"thread"};
+ await f.runtime.scheduler.chats.append(job.id,{id:"answer-one",role:"assistant",kind:"message",turnId:"one",text:"FIRST RESULT",at:15});
+ await bridge.pollOnce();expect(t.sent.at(-1).text).toContain("FIRST RESULT");const before=t.sent.length;
+ job.turnId="two";job.completion={revision:2,startedAt:30,finishedAt:40,turnId:"two",threadId:"thread"};
+ await f.runtime.scheduler.chats.append(job.id,{id:"answer-two",role:"assistant",kind:"message",turnId:"two",text:"SECOND RESULT",at:35});
+ for(let i=0;i<90;i++)await f.runtime.scheduler.chats.append(job.id,{id:`tool-${i}`,role:"tool",kind:"message",turnId:"two",text:"Tool record",at:36});
+ await bridge.pollOnce();expect(t.sent.length).toBe(before+1);expect(t.sent.at(-1).text).toContain("SECOND RESULT");
+ job.title="Metadata change";job.updatedAt++;await bridge.pollOnce();expect(t.sent.length).toBe(before+1);
+ job.turnId="three";job.completion={revision:3,startedAt:50,finishedAt:60,turnId:"three",threadId:"thread"};
+ await bridge.pollOnce();expect(t.sent.length).toBe(before+2);expect(t.sent.at(-1).text).not.toContain("SECOND RESULT");
+ expect(t.sent.at(-1).text).toContain("本轮没有新的助手文本");
+ }finally{await f.close();}
+});
+it.skipIf(process.platform !== "linux")("baselines legacy notification state without replaying history and hashes updated approval payloads",async()=>{
+ const f=await setup(),t=transport();
+ try{
+ let bridge=await TelegramBridge.open(f.runtime,{...config,notify:true},[f.workspace],t.api);await bridge.initialize();
+ t.setUpdates([message(11,"/run 1 Migration")]);await bridge.pollOnce();t.setUpdates([]);
+ const job=f.runtime.store.data.jobs[0];job.state="completed";job.turnId="historical";await bridge.pollOnce();
+ const file=path.join(f.runtime.store.root,"telegram-state.json"),legacy=JSON.parse(await fs.readFile(file,"utf8"));delete legacy.knownEvents;await atomicWrite(file,JSON.stringify(legacy));
+ const before=t.sent.length;bridge=await TelegramBridge.open(f.runtime,{...config,notify:true},[f.workspace],t.api);await bridge.pollOnce();expect(t.sent).toHaveLength(before);
+ job.turnId="new-turn";await bridge.pollOnce();expect(t.sent).toHaveLength(before+1);
+ const approval:any={jobId:job.id,id:"same",historyId:"same-history",method:"ask",kind:"input",params:{prompt:"First prompt"}};f.runtime.scheduler.approvals=[approval];
+ await bridge.pollOnce();expect(t.sent).toHaveLength(before+2);approval.params={prompt:"api_key: never-store-this-secret"};
+ await bridge.pollOnce();expect(t.sent).toHaveLength(before+3);await bridge.pollOnce();expect(t.sent).toHaveLength(before+3);
+ expect(await fs.readFile(file,"utf8")).not.toContain("never-store-this-secret");
+ }finally{f.runtime.scheduler.approvals=[];await f.close();}
+});
+it.skipIf(process.platform !== "linux")("queues immutable successive completion summaries during quiet hours and restores both after restart",async()=>{
+ const f=await setup(),t=transport();let now=Date.UTC(2026,9,27,23);
+ try{
+ let bridge=await TelegramBridge.open(f.runtime,{...config,notify:true},[f.workspace],t.api,atomicWrite,()=>now);await bridge.initialize();
+ t.setUpdates([message(11,"/run 1 Quiet results")]);await bridge.pollOnce();t.setUpdates([message(12,"/quiet 22-7")]);await bridge.pollOnce();t.setUpdates([]);
+ const job=f.runtime.store.data.jobs[0];job.state="completed";
+ for(let revision=1;revision<=2;revision++){
+  job.completion={revision,startedAt:revision*10,finishedAt:revision*10+5};
+  await f.runtime.scheduler.chats.append(job.id,{id:`answer-${revision}`,role:"assistant",kind:"message",text:`SAVED RESULT ${revision}`,at:revision*10+1});await bridge.pollOnce();
+ }
+ const file=path.join(f.runtime.store.root,"telegram-state.json"),state=JSON.parse(await fs.readFile(file,"utf8"));expect(state.notices).toHaveLength(2);
+ const before=t.sent.length;await bridge.pollOnce();expect(t.sent).toHaveLength(before);
+ now=Date.UTC(2026,9,28,8);bridge=await TelegramBridge.open(f.runtime,{...config,notify:true},[f.workspace],t.api,atomicWrite,()=>now);await bridge.pollOnce();
+ expect(t.sent.slice(before).map(n=>n.text.match(/SAVED RESULT \d/)?.[0])).toEqual(["SAVED RESULT 1","SAVED RESULT 2"]);
+ await bridge.pollOnce();expect(t.sent).toHaveLength(before+2);
+ }finally{await f.close();}
+});
 describe.skipIf(process.platform !== "linux")("private Telegram bridge", () => {
   it("encrypts imported configuration and refuses public-readable input", async () => {
     const fixture = await setup();
@@ -357,6 +539,126 @@ async function consoleFixture(write = atomicWrite, now = Date.now) {
   };
 }
 describe.skipIf(process.platform !== "linux")("Telegram mobile console", () => {
+  it("inspects real delivery failures, previews a repair follow-up, and rejects a stale repair confirmation", async () => {
+    const f = await consoleFixture();
+    try {
+      await f.send("/project 1");
+      await f.send("/new Delivery task");
+      const job = f.runtime.store.data.jobs[0];
+      await f.runtime.scheduler.saveDelivery(job.id, 0, [{kind:"contains", path:"report.txt", label:"Report", text:"done"}]);
+      job.state = "completed";
+      const failed = await f.send("/verify");
+      expect(failed.text).toContain("验收未通过");
+      expect(failed.text).toContain("missing");
+      expect(job.state).toBe("needs_attention");
+      const preview = await f.send("/repair");
+      expect(preview.text).toContain("尚未投递");
+      expect(preview.text).toContain("report.txt");
+      expect(job.queuedMessages || []).toHaveLength(0);
+      const confirm = buttons(preview).find(b => b.text === "确认排队修复")!.callback_data;
+      await fs.writeFile(path.join(f.workspace, "report.txt"), "done");
+      expect((await f.send("/verify")).text).toContain("最近检查通过");
+      expect((await f.click(confirm)).text).toContain("已变化");
+      expect(job.queuedMessages || []).toHaveLength(0);
+      await fs.writeFile(path.join(f.workspace, "report.txt"), "broken");
+      await f.send("/verify");
+      const repair = await f.send("/repair");
+      const key = buttons(repair).find(b => b.text === "确认排队修复")!.callback_data;
+      await f.click(key);
+      expect(job.pendingMessage).toContain("textMissing");
+      expect(job.messageReceipts).toHaveLength(1);
+      await f.click(key);
+      expect(job.messageReceipts).toHaveLength(1);
+      expect(job.queuedMessages || []).toHaveLength(0);
+      expect((await f.send("/delivery")).text).toContain("SHA256");
+    } finally { await f.close(); }
+  });
+  it.each(["prepare-before-write","prepare-after-write","reply"])("resumes a confirmed repair without another click after %s interruption",async phase=>{
+    let armed=false;
+    const f=await consoleFixture(async(file,value)=>{
+      const state=JSON.parse(String(value)),preparing=state.incoming?.text.startsWith("/send "),fail=armed&&(phase==="reply"?!!state.pending:preparing);
+      if(fail){armed=false;if(phase==="prepare-after-write")await atomicWrite(file,value);throw Error("Confirmed repair checkpoint interrupted");}
+      await atomicWrite(file,value);
+    });
+    try {
+      await f.send("/run 1 Reliable repair");const job=f.runtime.store.data.jobs[0];await f.runtime.scheduler.saveDelivery(job.id,0,[{kind:"file",path:"missing.txt",label:"Missing output",minBytes:1}]);await f.send("/verify");
+      const expected=await f.runtime.command("delivery.repair",job.id) as string,preview=await f.send("/repair"),confirm=buttons(preview).find(button=>button.text==="确认排队修复")!.callback_data,revision=job.queueRevision||0;
+      armed=true;await expect(f.click(confirm)).rejects.toThrow("Confirmed repair checkpoint interrupted");
+      if(phase!=="reply")expect(job.messageReceipts||[]).toHaveLength(0);else expect(job.messageReceipts).toHaveLength(1);
+      if(phase!=="prepare-before-write")await f.restart();
+      await f.bridge.pollOnce();
+      expect(f.t.sent.at(-1).text).not.toContain("已过期");expect(job.messageReceipts).toHaveLength(1);expect(job.queuedMessages).toHaveLength(1);expect(job.queueRevision).toBe(revision+1);expect(job.queuedMessages![0].text).toBe(expected.trim());
+      const accepted=job.messageReceipts![0].id;await f.bridge.pollOnce();expect(job.messageReceipts![0].id).toBe(accepted);expect(job.queuedMessages).toHaveLength(1);
+      expect((await f.click(confirm)).text).toContain("已过期");expect(job.queuedMessages).toHaveLength(1);
+    }finally{await f.close();}
+  });
+  it("restores a confirmed repair after a complete runtime restart without changing its message receipt",async()=>{
+    let armed=false;
+    const write=async(file:string,value:string|Buffer)=>{if(armed&&JSON.parse(String(value)).pending){armed=false;throw Error("Repair reply interrupted");}await atomicWrite(file,value);};
+    const f=await consoleFixture(write);let reopened:ServerRuntime|undefined;
+    try {
+      await f.send("/run 1 Full restart repair");const job=f.runtime.store.data.jobs[0];await f.runtime.scheduler.saveDelivery(job.id,0,[{kind:"file",path:"missing.txt",label:"Missing",minBytes:1}]);await f.send("/verify");
+      const preview=await f.send("/repair"),confirm=buttons(preview).find(button=>button.text==="确认排队修复")!.callback_data;armed=true;await expect(f.click(confirm)).rejects.toThrow("Repair reply interrupted");
+      const receipt=structuredClone(job.messageReceipts),revision=job.queueRevision,text=job.queuedMessages![0].text;
+      await f.runtime.close();reopened=await ServerRuntime.open(f.runtime.store.root,undefined,[f.workspace]);
+      const bridge=await TelegramBridge.open(reopened,config,[f.workspace],f.t.api,write);await bridge.pollOnce();await bridge.pollOnce();
+      const restored=reopened.store.data.jobs.find(item=>item.id===job.id)!;
+      expect(restored.messageReceipts).toEqual(receipt);expect(restored.queueRevision).toBe(revision);expect(restored.queuedMessages).toHaveLength(1);expect(restored.queuedMessages![0].text).toBe(text);expect(f.t.sent.at(-1).text).toContain(`Follow-up accepted for ${job.id}`);
+    }finally{await reopened?.close();await f.close();}
+  });
+  it.each([["before-send","pause"],["before-send","cancel"],["after-send","pause"],["after-send","cancel"]] as const)("keeps a later %s/%s authoritative over a confirmed repair",async(phase,action)=>{
+    let armed=false;
+    const f=await consoleFixture(async(file,value)=>{
+      const state=JSON.parse(String(value)),fail=armed&&(phase==="before-send"?state.incoming?.text.startsWith("/send "):!!state.pending);
+      if(fail){armed=false;if(phase==="before-send")await atomicWrite(file,value);throw Error("Repair interrupted around delivery");}await atomicWrite(file,value);
+    });
+    try {
+      await f.send("/run 1 Stopped repair");const job=f.runtime.store.data.jobs[0];await f.runtime.scheduler.saveDelivery(job.id,0,[{kind:"file",path:"missing.txt",label:"Missing",minBytes:1}]);await f.send("/verify");
+      const preview=await f.send("/repair"),confirm=buttons(preview).find(button=>button.text==="确认排队修复")!.callback_data;armed=true;await expect(f.click(confirm)).rejects.toThrow("Repair interrupted around delivery");
+      await f.runtime.scheduler.control(job.id,action);const stoppedQueue=structuredClone(job.queuedMessages||[]),revision=job.queueRevision;
+      await f.restart();await f.bridge.pollOnce();
+      expect(job.state).toBe(action==="pause"?"paused":"cancelled");expect(job.stopIntent).toBe(action);expect(job.queuedMessages||[]).toEqual(stoppedQueue);expect(job.queueRevision).toBe(revision);expect(job.messageReceipts||[]).toHaveLength(phase==="before-send"?0:1);
+      if(phase==="before-send")expect(f.t.sent.at(-1).text).toContain("确认的追问未投递");else expect(f.t.sent.at(-1).text).toContain("Follow-up accepted");
+    }finally{await f.close();}
+  });
+  it("retains a prepared repair through the real drain-before-bot-stop ordering",async()=>{
+    let armed=false,drain:()=>Promise<void>=async()=>{};
+    const write=async(file:string,value:string|Buffer)=>{await atomicWrite(file,value);if(armed&&JSON.parse(String(value)).incoming?.text.startsWith("/send ")){armed=false;await drain();}};
+    const f=await consoleFixture(write);let reopened:ServerRuntime|undefined;
+    try {
+      await f.send("/run 1 Shutdown repair");const job=f.runtime.store.data.jobs[0];await f.runtime.scheduler.saveDelivery(job.id,0,[{kind:"file",path:"missing.txt",label:"Missing",minBytes:1}]);await f.send("/verify");
+      const preview=await f.send("/repair"),confirm=buttons(preview).find(button=>button.text==="确认排队修复")!.callback_data;
+      drain=async()=>{f.runtime.beginDrain();await f.bridge.stop();};armed=true;await expect(f.click(confirm)).rejects.toThrow();expect(job.messageReceipts||[]).toHaveLength(0);
+      const frozen=JSON.parse(await fs.readFile(path.join(f.runtime.store.root,"telegram-state.json"),"utf8"));expect(frozen.incoming.text).toMatch(/^\/send /);expect(frozen.pending).toBeUndefined();
+      await f.runtime.close();reopened=await ServerRuntime.open(f.runtime.store.root,undefined,[f.workspace]);const bridge=await TelegramBridge.open(reopened,config,[f.workspace],f.t.api,write);await bridge.pollOnce();
+      const restored=reopened.store.data.jobs.find(item=>item.id===job.id)!;expect(restored.messageReceipts).toHaveLength(1);expect(restored.queuedMessages).toHaveLength(1);expect(f.t.sent.at(-1).text).toContain("Follow-up accepted");
+    }finally{await reopened?.close();await f.close();}
+  });
+  it("reconciles a verification after the reply checkpoint fails without reading files twice", async () => {
+    let fail = false;
+    const f = await consoleFixture(async (file,value) => {
+      if (fail && JSON.parse(String(value)).pending) { fail=false; throw Error("reply checkpoint lost"); }
+      await atomicWrite(file,value);
+    });
+    try {
+      await f.send("/project 1");
+      await f.send("/new Delivery recovery");
+      const job = f.runtime.store.data.jobs[0];
+      await f.runtime.scheduler.saveDelivery(job.id, 0, [{kind:"file", path:"report.txt", label:"Report", minBytes:1}]);
+      job.state = "completed";
+      fail = true;
+      await expect(f.send("/verify")).rejects.toThrow("reply checkpoint lost");
+      expect(job.delivery!.reports).toHaveLength(1);
+      await fs.writeFile(path.join(f.workspace, "report.txt"), "now present");
+      await f.restart();
+      await f.bridge.pollOnce();
+      expect(job.delivery!.reports).toHaveLength(1);
+      expect(f.t.sent.at(-1).text).toContain("验收未通过");
+      await f.send("/verify");
+      expect(job.delivery!.reports).toHaveLength(2);
+      expect(job.state).toBe("completed");
+    } finally { await f.close(); }
+  });
   it("selects projects, persists defaults and routes ordinary text and replies to the correct task", async () => {
     const f = await consoleFixture();
     try {
@@ -555,6 +857,50 @@ describe.skipIf(process.platform !== "linux")("Telegram mobile console", () => {
       await f.close();
     }
   });
+  it.each(["control","typed-control","button-queue","typed-queue"])("recovers a %s receipt after a lost reply checkpoint and restart",async kind=>{
+    let fail=false;
+    const f=await consoleFixture(async(file,value)=>{
+      if(fail&&file.endsWith("telegram-state.json")&&JSON.parse(String(value)).pending){fail=false;throw Error("Management reply lost");}
+      await atomicWrite(file,value);
+    });
+    try {
+      await f.send("/run 1 Managed task");const job=f.runtime.store.data.jobs[0];
+      let command:string;
+      if(kind.includes("control"))command=kind==="typed-control"?`/pause ${job.id}`:buttons(await f.click(`/control pause ${job.id}`))[0].callback_data;
+      else {
+        await f.send("first");await f.send("second");
+        command=kind==="button-queue"?buttons(await f.send("/queue")).find(button=>button.text==="↓ 1")!.callback_data:`/edit ${job.queuedMessages![0].id} ${job.queueRevision} changed`;
+      }
+      const control=vi.spyOn(f.runtime.scheduler,"controlObserved"),queue=vi.spyOn(f.runtime.scheduler,"editQueue");fail=true;
+      await expect(kind.startsWith("typed-")?f.send(command):f.click(command)).rejects.toThrow("Management reply lost");
+      const revision=job.queueRevision,texts=job.queuedMessages?.map(message=>message.text);
+      if(kind.includes("control")){expect(job.state).toBe("paused");await f.runtime.scheduler.control(job.id,"resume");}
+      await f.restart();await f.bridge.pollOnce();
+      expect(f.t.sent.at(-1).text).toContain("操作已确认");
+      if(kind.includes("control")){expect(control).toHaveBeenCalledTimes(1);expect(job.state).toBe("queued");}
+      else {expect(queue).toHaveBeenCalledTimes(1);expect(job.queueRevision).toBe(revision);expect(job.queuedMessages?.map(message=>message.text)).toEqual(texts);}
+    }finally{await f.close();}
+  });
+  it("inspects real repository snapshots, redacts file diffs and restores an already-read reply after restart",async()=>{
+    const f=await consoleFixture(),git=new CheckpointGit(path.join(f.base,"git-qa"),{native:false});
+    try {
+      await git.run(f.workspace,["init","-b","main"]);await git.run(f.workspace,["config","user.name","QA"]);await git.run(f.workspace,["config","user.email","qa@invalid.local"]);
+      const file=path.join(f.workspace,"a.txt");await fs.writeFile(file,"base\n");await git.run(f.workspace,["add","a.txt"]);await git.run(f.workspace,["commit","-m","Base"]);await fs.writeFile(file,"staged\n");await git.run(f.workspace,["add","a.txt"]);await fs.writeFile(file,`working ${config.token}\n`);
+      await Promise.all(Array.from({length:12},(_,index)=>fs.writeFile(path.join(f.workspace,`new-${index}.txt`),"new")));
+      await f.send("/project 1");const view=await f.send("/repo");expect(view.text).toContain("变更 13");expect(view.text).toContain("分支: main");
+      const staged=buttons(view).find(button=>button.text==="暂存 1")!.callback_data,working=buttons(view).find(button=>button.text==="工作区 1")!.callback_data,next=buttons(view).find(button=>button.text==="下一页")!.callback_data,refresh=buttons(view).find(button=>button.text==="重新检查项目")!.callback_data;
+      const before=await fs.readFile(path.join(f.workspace,".git/index"));expect((await f.click(staged)).text).toContain("+staged");
+      await fs.writeFile(path.join(f.workspace,"later.txt"),"Later work");expect((await f.click(next)).text).toContain("变更 13");
+      const newer=await f.click(refresh);expect(newer.text).toContain("变更 14");expect(buttons(newer).find(button=>button.text==="工作区 1")!.callback_data).not.toBe(working);
+      await fs.writeFile(path.join(f.workspace,"encoded.txt"),Buffer.from([0xff,0xfe,0x41]));const encodedView=await f.send("/repo 1"),number=/^(\d+)\. \[\?\?\] encoded\.txt$/m.exec(encodedView.text)?.[1];expect(number).toBeTruthy();
+      const unavailable=await f.click(buttons(encodedView).find(button=>button.text===`工作区 ${number}`)!.callback_data);expect(unavailable.text).toContain("非 UTF-8");expect(unavailable.text).not.toContain("\uFFFD");
+      const calls=vi.spyOn(f.runtime,"command");f.t.failNextSend();await expect(f.click(working)).rejects.toThrow("Simulated lost send acknowledgement");
+      expect(calls.mock.calls.filter(call=>call[0]==="project.diff")).toHaveLength(1);await f.restart();await f.bridge.pollOnce();
+      expect(f.t.sent.at(-1).text).toContain("+working");expect(f.t.sent.at(-1).text).not.toContain(config.token);expect(calls.mock.calls.filter(call=>call[0]==="project.diff")).toHaveLength(1);
+      expect((await f.click(working)).text).toContain("已过期");expect(await fs.readFile(path.join(f.workspace,".git/index"))).toEqual(before);expect(f.runtime.store.data.jobs).toHaveLength(0);
+      for(const button of buttons(view))expect(Buffer.byteLength(button.callback_data)).toBeLessThanOrEqual(64);
+    }finally{await f.close();}
+  });
   it("manages the real queue with revision checks and prevents repeat button execution", async () => {
     const f = await consoleFixture();
     try {
@@ -607,6 +953,7 @@ describe.skipIf(process.platform !== "linux")("Telegram mobile console", () => {
           effort: "high",
           planMode: false,
           multiAgent: false,
+          deliveryChecks:[{kind:"file",path:"report.txt",label:"Report",minBytes:1}],
         },
       });
       await f.send(`/template ${template.items[0].id}`);
@@ -620,6 +967,7 @@ describe.skipIf(process.platform !== "linux")("Telegram mobile console", () => {
       expect(jobs[1].dependsOn).toEqual([jobs[0].id]);
       expect(jobs[2].dependsOn).toEqual([jobs[1].id]);
       expect(jobs[0].prompt).toBe("Verify before changing\n\nInvestigate");
+      expect(jobs.every(j=>j.delivery?.checks[0].path==="report.txt" && !j.delivery.reports.length)).toBe(true);
       await f.bridge.pollOnce();
       expect(jobs).toHaveLength(3);
       const report = await f.send(`/handoff ${jobs[0].workflow!.id}`);
@@ -641,6 +989,73 @@ describe.skipIf(process.platform !== "linux")("Telegram mobile console", () => {
     } finally {
       await f.close();
     }
+  });
+  it("snapshots template checks into future tasks and schedules without changing existing jobs",async()=>{
+    const f=await consoleFixture();
+    try {
+      await f.send("/project 1");
+      const content={name:"Verified output",prompt:"Produce report",model:"",effort:"",planMode:false,multiAgent:false,deliveryChecks:[{kind:"file",path:"report.txt",label:"Report",minBytes:1}]};
+      const saved:any=await f.runtime.command("templates.save",{revision:0,template:content});
+      const id=saved.items[0].id;
+      expect((await f.send(`/template ${id}`)).text).toContain("交付验收: 1 条");
+      await f.restart();
+      await f.runtime.command("templates.save",{revision:1,id,template:{...content,deliveryChecks:[]}});
+      await f.send("/new Captured contract");
+      const first=f.runtime.store.data.jobs[0];
+      expect(first.delivery?.checks).toEqual(content.deliveryChecks);
+      expect((await f.send("/schedule create 60 Recurring contract")).text).toContain("succeeded");
+      expect(f.runtime.desktop.data.schedules[0].deliveryChecks).toEqual(content.deliveryChecks);
+      await f.send("/template off");await f.send("/new No contract");
+      expect(f.runtime.store.data.jobs[1].delivery).toBeUndefined();
+      expect(first.delivery?.checks).toEqual(content.deliveryChecks);
+    } finally {await f.close();}
+  });
+  it("recovers schedule changes and deletion from their original receipts after lost reply checkpoints",async()=>{
+    let fail=false;
+    const f=await consoleFixture(async(file,value)=>{if(fail&&JSON.parse(String(value)).pending){fail=false;throw Error("Schedule reply lost");}await atomicWrite(file,value);});
+    try{
+      await f.send("/project 1");await f.send("/schedule create 60 Scheduled intent");
+      const task=f.runtime.desktop.data.schedules[0],revision=task.revision!;
+      fail=true;await expect(f.send(`/schedule pause ${task.id}`)).rejects.toThrow("Schedule reply lost");
+      expect(task.enabled).toBe(false);expect(task.revision).toBe(revision+1);
+      await f.restart();await f.bridge.pollOnce();expect(f.t.sent.at(-1).text).toContain("succeeded");expect(task.revision).toBe(revision+1);
+      fail=true;await expect(f.send(`/schedule remove ${task.id}`)).rejects.toThrow("Schedule reply lost");
+      expect(f.runtime.desktop.data.schedules).toHaveLength(0);
+      await f.restart();await f.bridge.pollOnce();expect(f.t.sent.at(-1).text).toContain("succeeded");expect(f.runtime.desktop.data.schedules).toHaveLength(0);
+    }finally{await f.close();}
+  });
+  it("confirms pending-run abandonment once and restores its receipt after restart",async()=>{
+    let fail=false;
+    const f=await consoleFixture(async(file,value)=>{if(fail&&JSON.parse(String(value)).pending){fail=false;throw Error("Abandon reply lost");}await atomicWrite(file,value);});
+    try{
+      await f.send("/project 1");await f.send("/schedule create 60 Frozen occurrence");
+      const task=f.runtime.desktop.data.schedules[0];
+      vi.spyOn(f.runtime.scheduler,"add").mockRejectedValueOnce(Error("Admission interrupted"));
+      await f.send(`/schedule run ${task.id}`);expect(task.pendingRun).toBeDefined();
+      const view=await f.send(`/schedule pending ${task.id}`);
+      expect(view.text).toContain("Frozen occurrence");
+      const confirm=buttons(view).find(button=>button.text==="确认放弃待创建运行")!.callback_data;
+      expect(task.pendingRun).toBeDefined();fail=true;
+      await expect(f.click(confirm)).rejects.toThrow("Abandon reply lost");expect(task.pendingRun).toBeUndefined();
+      await f.restart();await f.bridge.pollOnce();expect(f.t.sent.at(-1).text).toContain("待创建运行已放弃");
+      expect(f.runtime.store.data.jobs).toHaveLength(0);
+      expect((await f.click(confirm)).text).toContain("已过期");
+    }finally{await f.close();}
+  });
+  it("returns the admitted task card when pending-run handling only needs bookkeeping recovery",async()=>{
+    const f=await consoleFixture();
+    try{
+      await f.send("/project 1");await f.send("/schedule create 60 Existing admission");
+      const task=f.runtime.desktop.data.schedules[0],save=f.runtime.desktop.save.bind(f.runtime.desktop);let writes=0;
+      vi.spyOn(f.runtime.desktop,"save").mockImplementation(()=>++writes===2?Promise.reject(Error("Bookkeeping failed")):save());
+      await f.send(`/schedule run ${task.id}`);
+      const job=f.runtime.store.data.jobs[0],state=job.state;
+      const pending=await f.send(`/schedule pending ${task.id}`),confirm=buttons(pending).find(button=>button.text==="确认放弃待创建运行")!.callback_data;
+      const card=await f.click(confirm);expect(card.text).toContain("任务已经创建");
+      expect(buttons(card).some(button=>button.callback_data===`/task ${job.id}`)).toBe(true);
+      expect(task.pendingRun).toBeUndefined();expect(task.lastJobId).toBe(job.id);
+      expect(job.state).toBe(state);expect(f.runtime.store.data.jobs).toHaveLength(1);
+    }finally{await f.close();}
   });
   it("answers all questions using buttons and free text, rejects stale choices and keeps answer mode safe after restart", async () => {
     const f = await consoleFixture();
@@ -787,6 +1202,62 @@ it("uploads documents with multipart encoding without putting the bot token in a
   } finally {
     fetchMock.mockRestore();
   }
+});
+
+it("classifies a Bot API rejection without reflecting server descriptions or credentials", async () => {
+  const mock=vi.spyOn(globalThis,"fetch").mockResolvedValue(new Response(JSON.stringify({ok:false,description:`Private server text ${config.token}`}),{status:400}));
+  try {
+    const error=await telegramApi(config.token)("getFile",{file_id:"invalid"},new AbortController().signal).catch(e=>e);
+    expect(error).toBeInstanceOf(TelegramApiError);
+    expect(error).toMatchObject({method:"getFile",status:400});
+    expect(error.message).not.toContain(config.token);
+    expect(error.message).not.toContain("Private server text");
+  } finally {mock.mockRestore();}
+});
+
+it.skipIf(process.platform!=="linux")("answers a definitively rejected file and proceeds to later Telegram commands", async () => {
+  const f=await setup(),t=transport();
+  try {
+    const api:TelegramApi=async(method,body,signal)=>{
+      if(method==="getFile")throw new TelegramApiError(method,400);
+      return t.api(method,body,signal);
+    };
+    const bridge=await TelegramBridge.open(f.runtime,config,[f.workspace],api);
+    await bridge.initialize();
+    t.setUpdates([message(11,"",{document:{file_id:"unavailable-file",file_name:"missing.txt",file_size:10}}),message(12,"/projects")]);
+    await bridge.pollOnce();
+    expect(t.sent).toHaveLength(2);
+    expect(t.sent[0].text).toContain("请重新发送附件");
+    expect(t.sent[1].text).toContain("项目");
+    expect(JSON.parse(await fs.readFile(path.join(f.runtime.store.root,"telegram-state.json"),"utf8"))).toMatchObject({offset:13});
+    expect(f.runtime.store.data.jobs).toHaveLength(0);
+  } finally {await f.close();}
+});
+
+it.skipIf(process.platform!=="linux").each([401,403,404,429,500,502])("retains an incoming file through authentication, rate limit or service failures (HTTP %s)", async status => {
+  const f=await setup(),t=transport();let fail=true;
+  const download=vi.fn(async()=>Buffer.from("recovered"));
+  try {
+    const api:TelegramApi=async(method,body,signal)=>{
+      if(method==="getFile"){
+        if(fail)throw new TelegramApiError(method,status);
+        return {file_path:"documents/recovered.txt",file_size:9};
+      }
+      return t.api(method,body,signal);
+    };
+    const bridge=await TelegramBridge.open(f.runtime,config,[f.workspace],api,atomicWrite,Date.now,download);
+    await bridge.initialize();
+    t.setUpdates([message(11,"",{document:{file_id:"recoverable-file",file_name:"recovered.txt",file_size:9}})]);
+    await expect(bridge.pollOnce()).rejects.toThrow("metadata unavailable");
+    let state=JSON.parse(await fs.readFile(path.join(f.runtime.store.root,"telegram-state.json"),"utf8"));
+    expect(state).toMatchObject({offset:11,incoming:{updateId:11,media:{fileId:"recoverable-file"}}});
+    expect(download).not.toHaveBeenCalled();expect(t.sent).toHaveLength(0);
+    fail=false;await bridge.pollOnce();
+    state=JSON.parse(await fs.readFile(path.join(f.runtime.store.root,"telegram-state.json"),"utf8"));
+    expect(state.offset).toBe(12);expect(state.incoming).toBeUndefined();
+    expect(state.inbox).toHaveLength(1);expect(download).toHaveBeenCalledTimes(1);
+    expect(t.sent[0].text).toContain("附件已暂存");
+  } finally {await f.close();}
 });
 
 describe.skipIf(process.platform !== "linux")(
@@ -1022,6 +1493,7 @@ it.skipIf(process.platform !== "linux")(
     const f = await setup(),
       t = transport();
     let downloads = 0;
+    const sharedUpload = vi.spyOn(f.runtime.uploads, "put");
     const api: TelegramApi = async (method, body, signal) =>
       method === "getFile"
         ? { file_path: "documents/file_1.txt", file_size: 5 }
@@ -1064,6 +1536,7 @@ it.skipIf(process.platform !== "linux")(
       );
       await bridge.pollOnce();
       expect(downloads).toBe(1);
+      expect(sharedUpload).toHaveBeenCalledTimes(1);
       t.setUpdates([message(12, "/run 1 Use the document")]);
       await bridge.pollOnce();
       const job = f.runtime.store.data.jobs[0];
@@ -1108,7 +1581,9 @@ it.skipIf(process.platform !== "linux")("persists quiet-hour notifications and d
  now=Date.UTC(2026,9,24,8);t.failNextSend();await expect(bridge.pollOnce()).rejects.toThrow("lost send");
  bridge=await TelegramBridge.open(f.runtime,config,[f.workspace],t.api,atomicWrite,()=>now);await bridge.pollOnce();
  expect(t.sent.at(-1).text).toContain("Immutable completed result");expect(t.sent.at(-1).text).not.toContain("Later replacement");expect(t.sent.length-before).toBe(1);
- await bridge.pollOnce();expect(t.sent.length-before).toBe(1);now+=60000;await bridge.pollOnce();expect(t.sent.length-before).toBe(2);expect(t.sent.at(-1).text).toContain("Transient problem");
+ await bridge.pollOnce();expect(t.sent.length-before).toBe(1);expect(t.polls.at(-1).timeout).toBe(25);
+ now+=50000;await bridge.pollOnce();expect(t.sent.length-before).toBe(1);expect(t.polls.at(-1).timeout).toBe(25);
+ now+=10000;await bridge.pollOnce();expect(t.sent.length-before).toBe(2);expect(t.polls.at(-1).timeout).toBe(25);expect(t.sent.at(-1).text).toContain("Transient problem");
  await send("/notify off");expect(JSON.parse(await fs.readFile(path.join(f.runtime.store.root,"telegram-state.json"),"utf8")).notificationPolicy.mode).toBe("off");
  }finally{await f.close();}
 });

@@ -28,3 +28,5 @@
 .telegram-receipt.is-uncertain strong, .telegram-receipt.is-failed strong { color: #c58c44; }
 .telegram-receipt.is-sent strong { color: #5d9977; }
 @media (max-width: 680px) { .telegram-events { grid-template-columns: 1fr; } .telegram-settings button.telegram-remove { margin-left: 0; } }
+
+.telegram-history-tools{display:flex;gap:12px;flex-wrap:wrap;align-items:end;margin-bottom:15px}.telegram-history-tools label{display:grid;gap:6px;min-width:0;flex:1}.telegram-history-tools input,.telegram-history-tools select{min-width:0;width:100%;box-sizing:border-box;background:var(--panel,transparent);color:inherit;border:1px solid var(--border,#8886);border-radius:7px;padding:8px}.telegram-history-tools>span{font-size:12px;opacity:.7}.telegram-history-pages{display:flex;justify-content:center;align-items:center;gap:12px;margin-top:16px;font-size:12px}

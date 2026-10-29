@@ -2,6 +2,8 @@ import React, { useEffect, useState } from "react";
 import type { TaskTemplate, TemplateState } from "../core/templates";
 import { Dialog } from "./Dialog";
 import { t, useI18n, errorText } from "./i18n";
+import {DeliveryDialog} from "./DeliveryDialog";
+import type {DeliveryCheck} from "../shared/delivery";
 export function TaskTemplates({
   draft,
   preferences,
@@ -12,7 +14,7 @@ export function TaskTemplates({
   draft: string;
   preferences: Pick<
     TaskTemplate,
-    "model" | "effort" | "planMode" | "multiAgent"
+    "model" | "effort" | "planMode" | "multiAgent" | "deliveryChecks"
   >;
   call: (name: string, args?: unknown) => Promise<any>;
   apply: (template: TaskTemplate) => void;
@@ -25,6 +27,8 @@ export function TaskTemplates({
   const [editing, setEditing] = useState<TaskTemplate>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [checks,setChecks]=useState<DeliveryCheck[]>(()=>structuredClone(preferences.deliveryChecks||[]));
+  const [editingChecks,setEditingChecks]=useState(false);
   useEffect(() => {
     let alive = true;
     void call("templates.list")
@@ -46,6 +50,7 @@ export function TaskTemplates({
       setEditing(undefined);
       setName("");
       setPrompt("");
+      setChecks(structuredClone(preferences.deliveryChecks||[]));
     } catch (e) {
       setError(errorText(e));
       try {
@@ -59,6 +64,7 @@ export function TaskTemplates({
     <Dialog title={t("任务模板")} onClose={close} busy={busy}>
       <div className="task-templates">
         <p>{t("模板只插入草稿，由你确认后发送。")}</p>
+        <p>{t("模板中的验收条件只用于新任务，已有任务的条件保持不变。")}</p>
         {error && <p role="alert">{error}</p>}
         <form
           onSubmit={(e) => {
@@ -75,6 +81,7 @@ export function TaskTemplates({
                 effort: prefs.effort,
                 planMode: prefs.planMode,
                 multiAgent: prefs.multiAgent,
+                deliveryChecks: checks,
               },
             });
           }}
@@ -87,6 +94,7 @@ export function TaskTemplates({
               onChange={(e) => setName(e.target.value)}
             />
           </label>
+          <button type="button" disabled={busy} onClick={()=>setEditingChecks(true)}>{t("交付验收")} · {checks.length}</button>
           <label>
             {t("任务指令")}
             <textarea
@@ -108,6 +116,7 @@ export function TaskTemplates({
                 setEditing(undefined);
                 setName("");
                 setPrompt(draft);
+                setChecks(structuredClone(preferences.deliveryChecks||[]));
               }}
             >
               {t("取消编辑")}
@@ -122,13 +131,14 @@ export function TaskTemplates({
               <small>
                 {template.model || t("默认模型")}
                 {template.planMode ? ` · ${t("规划模式")}` : ""}
+                {` · ${t("交付验收")} ${template.deliveryChecks?.length||0}`}
               </small>
               <div className="queue-actions">
                 <button
                   disabled={busy}
                   onClick={() => {
-                    apply(template);
-                    close();
+                    try {apply(template);close();}
+                    catch(e) {setError(errorText(e));}
                   }}
                 >
                   {t("插入草稿")}
@@ -139,6 +149,7 @@ export function TaskTemplates({
                     setEditing(template);
                     setName(template.name);
                     setPrompt(template.prompt);
+                    setChecks(structuredClone(template.deliveryChecks||[]));
                   }}
                 >
                   {t("编辑")}
@@ -161,6 +172,7 @@ export function TaskTemplates({
         {state && !state.items.length && (
           <p>{t("还没有模板，可以把当前草稿保存为第一个模板。")}</p>
         )}
+        {editingChecks&&<DeliveryDialog purpose="plan" initial={checks} call={call} saveDraft={setChecks} close={()=>setEditingChecks(false)}/>}
       </div>
     </Dialog>
   );

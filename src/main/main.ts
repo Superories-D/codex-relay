@@ -1,5 +1,5 @@
 import { bulkPrioritySchema } from "../shared/task-priority";
-import {scheduleInputSchema} from "../core/schedule-command";
+import {scheduleInputSchema,scheduleAbandonSchema} from "../core/schedule-command";
 import { deliverySaveSchema } from "./validation";
 import {updateGoal} from "../core/goal-command";
 import { conversationExport } from "../core/conversation-export";
@@ -72,6 +72,8 @@ import { History } from "../core/history";
 import { rolloutRecords } from "../core/chat";
 import { findTranscript } from "../core/transcript";
 import { chatSendSchema } from "./validation";
+import {NativeFollowups} from "./native-followups";
+import {NativeCreations} from "./native-creations";
 import { Templates } from "../core/templates";
 import { Desktop } from "../core/desktop";
 import { Schedules } from "../core/schedules";
@@ -237,6 +239,14 @@ async function boot() {
     },
     process.platform==="win32"?new RecoveryDomains(store):undefined,
   );
+  let nativeFollowups:Promise<NativeFollowups>|undefined;
+  const followups=()=>nativeFollowups ||= NativeFollowups.open(scheduler).catch(error=>{
+    nativeFollowups=undefined;throw error;
+  });
+  let nativeCreations:Promise<NativeCreations>|undefined;
+  const creations=()=>nativeCreations ||= followups().then(service=>new NativeCreations(scheduler,service.identity)).catch(error=>{
+    nativeCreations=undefined;throw error;
+  });
   const workflowReports = new WorkflowReports(scheduler.chats, () => store.data.jobs);
   const telegram = new WindowsTelegram({
     root: dataRoot,
@@ -308,10 +318,10 @@ async function boot() {
       accounts.busy.add(j.accountId);
   let sleepBlocker: number | undefined;
   scheduler.on("snapshot", (snapshot) => {
-    telegram.observe(snapshot);
+    telegram.observe(snapshot,id=>scheduler.notificationSettled(id));
     if (window && !window.isDestroyed())
       window.webContents.send("relay:snapshot", snapshot);
-    const notices = notifications.update(snapshot.jobs,snapshot.approvals);
+    const notices = notifications.update(snapshot.jobs,snapshot.approvals,id=>scheduler.notificationSettled(id));
     if (desktop.data.preferences.notifications && !window?.isFocused() && Notification.isSupported()) {
       for (const event of notices) {
         const job = store.data.jobs.find(j=>j.id===event.id);
@@ -760,6 +770,9 @@ async function boot() {
       }
       case "schedule.save":
         return schedules.save(scheduleInputSchema.parse(args));
+      case "schedule.abandon": {
+        const a=scheduleAbandonSchema.parse(args);return schedules.abandonPending(a.id,a.runId);
+      }
       case "schedule.remove":
         return schedules.remove(idSchema.parse(args));
       case "schedule.run":
@@ -978,6 +991,11 @@ async function boot() {
           id: idSchema, messageId: z.string().uuid(), revision: z.number().int().nonnegative(),
           action: z.enum(["edit", "remove", "up", "down"]), text: z.string().trim().min(1).max(100000).optional(),
         }).strict().parse(args));
+      case "chat.submission.identity": return (await followups()).identity;
+      case "chat.submit": return (await followups()).submit(args);
+      case "chat.submission.cancel": return (await followups()).cancel(args);
+      case "chat.creation.submit": return (await creations()).submit(args);
+      case "chat.creation.cancel": return (await creations()).cancel(args);
       case "chat.send":
         return scheduler.send(chatSendSchema.parse(args));
       case "chat.model": {

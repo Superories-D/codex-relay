@@ -1,6 +1,15 @@
+import {PendingActionRecovery} from "./ActionRecovery";
+import {RemoteRepository} from "./RemoteRepository";
+import {OperationHistory} from "./OperationHistory";
+import {usePendingRetry} from "./PendingRetry";
+import {bindServerIdentity,serverHeaders} from "./identity";
 import {WorkflowOperations} from "./WorkflowOperations";
 import {RemoteSchedules} from "./RemoteSchedules";
 import {RemoteGoal} from "./RemoteGoal";
+import {RemoteDelivery} from "./RemoteDelivery";
+import {DeliveryDialog} from "../../renderer/DeliveryDialog";
+import {readDeliveryDraft,writeDeliveryDraft,clearDeliveryDraft} from "../../renderer/delivery-draft";
+import type {DeliveryCheck} from "../../shared/delivery";
 import {LiveControls} from "./LiveControls";
 import {RemoteArtifacts} from "./Artifacts";
 import { RemoteAttachments,readAttachments,saveAttachments } from "./Attachments";
@@ -10,7 +19,7 @@ import { CliSetupNotice } from "../../renderer/CliSetupNotice";
 import { RuntimeSettings } from "./RuntimeSettings";
 import { TaskTemplates } from "../../renderer/TaskTemplates";
 import { ChatSearch } from "../../renderer/ChatSearch";
-import { MessageQueue } from "../../renderer/MessageQueue";
+import {TaskManagement} from "./TaskManagement";
 import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { Job, Snapshot, ChatItem, NewJob } from "../../shared/types";
@@ -21,13 +30,14 @@ import {
   errorText,
   type Language,
 } from "../../renderer/i18n";
-import { RecoveryNotice, RecoveryHistory } from "../../renderer/RecoveryNotice";
+import { RecoveryHistory } from "../../renderer/RecoveryNotice";
 import { WorkflowBuilder } from "../../renderer/WorkflowBuilder";
 import { WorkflowReport } from "../../renderer/WorkflowReport";
 import { RemoteApproval } from "./Approvals";
 import { request, watch, CommandError } from "./client";
 import "./style.css";
-type Submission = { requestId: string; input: NewJob };
+type Submission = { requestId: string; input: NewJob;serverId?:string };
+type PendingMessage={id:string;requestId:string;text:string;attachments?:ChatAttachment[];serverId?:string};
 const readPending = () => {
   try {
     return JSON.parse(
@@ -37,6 +47,7 @@ const readPending = () => {
     return null;
   }
 };
+const newDeliveryKey="remote:new";
 setLanguage(
   (sessionStorage.getItem("relay.remote.language") || "auto") as Language,
 );
@@ -59,10 +70,12 @@ function App() {
       sessionStorage.getItem("relay.remote.token") || "",
     ),
     [entry, setEntry] = useState("");
+  const [serverId,setServerId]=useState<string>(),[serverVersion,setServerVersion]=useState("");
+  const submitting=useRef(new Set<string>());
   const [snapshot, setSnapshot] = useState<Snapshot>(),
     [status, setStatus] = useState("正在连接"),
     [roots, setRoots] = useState<string[]>([]);
-  const [selected, setSelected] = useState(""),
+  const [selected, setSelected] = useState(()=>{try{return sessionStorage.getItem("relay.remote.selected")||"";}catch{return "";}}),
     [query, setQuery] = useState(""),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
@@ -72,17 +85,19 @@ function App() {
       sessionStorage.getItem("relay.remote.draft") || "",
     );
   const [templateOptions, setTemplateOptions] = useState({effort:"",planMode:false,multiAgent:false});
+  const [newDeliveryChecks,setNewDeliveryChecks]=useState(()=>readDeliveryDraft(newDeliveryKey,sessionStorage));
+  const [newDeliveryOpen,setNewDeliveryOpen]=useState(false);
+  function saveNewDelivery(checks:DeliveryCheck[]){writeDeliveryDraft(newDeliveryKey,checks,sessionStorage);setNewDeliveryChecks(checks);}
+  function clearNewDelivery(checks:DeliveryCheck[]=[]){
+    clearDeliveryDraft(newDeliveryKey,checks,sessionStorage);
+    setNewDeliveryChecks(current=>JSON.stringify(current)===JSON.stringify(checks)?readDeliveryDraft(newDeliveryKey,sessionStorage):current);
+  }
   const [newAttachments,setNewAttachments]=useState<ChatAttachment[]>(()=>readAttachments("new"));
   const [followAttachments,setFollowAttachments]=useState<ChatAttachment[]>([]);
   const [newUploading,setNewUploading]=useState(false),[followUploading,setFollowUploading]=useState(false);
   useEffect(()=>setFollowAttachments(readAttachments(selected)),[selected]);
-  function clearAttachments(id:string,used:ChatAttachment[]=[]){const paths=new Set(used.map(a=>a.path));const next=readAttachments(id).filter(a=>!paths.has(a.path));saveAttachments(id,next);if(id==="new")setNewAttachments(next);else if(selection.current===id)setFollowAttachments(next);}
-  const [pendingMessage, setPendingMessage] = useState<{
-    id: string;
-    requestId: string;
-    text: string;
-    attachments?: ChatAttachment[];
-  } | null>(() => {
+  function clearAttachments(id:string,used:ChatAttachment[]=[]){try{const paths=new Set(used.map(a=>a.path));const next=readAttachments(id).filter(a=>!paths.has(a.path));saveAttachments(id,next);if(id==="new")setNewAttachments(next);else if(selection.current===id)setFollowAttachments(next);}catch(e){setError(errorText(e));}}
+  const [pendingMessage, setPendingMessage] = useState<PendingMessage|null>(() => {
     try {
       return JSON.parse(
         sessionStorage.getItem("relay.remote.message") || "null",
@@ -102,6 +117,7 @@ function App() {
       }
     })(),
   );
+  const pendingMessageRef=useRef(pendingMessage);pendingMessageRef.current=pendingMessage;
   const [pending, setPending] = useState<Submission | null>(readPending),
     [followup, setFollowup] = useState("");
   const [chat, setChat] = useState<ChatItem[]>([]),
@@ -118,6 +134,7 @@ function App() {
   const previews = useRef(new Map<string, any>());
   const selection = useRef(selected);
   selection.current = selected;
+  useEffect(()=>{try{if(selected)sessionStorage.setItem("relay.remote.selected",selected);else sessionStorage.removeItem("relay.remote.selected");}catch{}},[selected]);
   useEffect(()=>setRenaming(undefined),[selected]);
   const job = snapshot?.jobs.find((j) => j.id === selected);
   useEffect(() => {
@@ -143,21 +160,17 @@ function App() {
     void fetch("/api/meta", {
       headers: { Authorization: `Bearer ${token}` },
       signal: controller.signal,
+      redirect:"error",
     })
       .then(async (r) => {
         if (!r.ok) throw Error("令牌无效，请重新连接");
         const meta = await r.json();
+        if(!current)return;
+        bindServerIdentity(meta.serverId);
+        setServerId(meta.serverId);
+        setServerVersion(typeof meta.build?.version==="string"?meta.build.version:"");
         if (current) {
-          setRoots(meta.workspaces);
-          setDirectory((old) =>
-            meta.workspaces.includes(old) ? old : meta.workspaces[0] || "",
-          );
-        }
-      })
-      .catch((e) => {
-        if (current) setError(errorText(e));
-      });
-    void watch(
+          void watch(
       token,
       controller.signal,
       (value) => {
@@ -167,6 +180,15 @@ function App() {
         if (current) setStatus(value);
       },
     );
+          setRoots(meta.workspaces);
+          setDirectory((old) =>
+            meta.workspaces.includes(old) ? old : meta.workspaces[0] || "",
+          );
+        }
+      })
+      .catch((e) => {
+        if (current) setError(errorText(e));
+      });
     return () => {
       current = false;
       controller.abort();
@@ -179,6 +201,7 @@ function App() {
       );
       if (accepted) {
         clearAttachments("new",pending.input.attachments);
+        clearNewDelivery(pending.input.deliveryChecks);
         setSelected(accepted.id);
         setPending(null);
         setPrompt((current) =>
@@ -217,14 +240,14 @@ function App() {
       setError(errorText(e));
     }
   }
-  function acknowledgeMessage(message: { id: string; text: string; attachments?: ChatAttachment[] }) {
+  function acknowledgeMessage(message: { id: string; text: string; attachments?: ChatAttachment[];requestId:string }) {
     clearAttachments(message.id,message.attachments);
     if (followupDrafts.current[message.id] === message.text) {
       delete followupDrafts.current[message.id];
       saveFollowups();
       if (selection.current === message.id) setFollowup("");
     }
-    setPendingMessage(null);
+    setPendingMessage(current=>current?.requestId===message.requestId?null:current);
   }
   useEffect(() => {
     if (
@@ -235,14 +258,17 @@ function App() {
     )
       acknowledgeMessage(pendingMessage);
   }, [snapshot, pendingMessage]);
-  async function submitFollowup() {
-    if (!job || (pendingMessage && pendingMessage.id !== job.id)) return;
-    const message = pendingMessage || {
-      id: job.id,
+  async function submitFollowup(retry?:PendingMessage) {
+    if (!retry&&!pendingMessage&&!job) return;
+    const message = retry || pendingMessage || {
+      id: job!.id,
+      serverId:serverHeaders()["X-Relay-Server-ID"],
       text: followup,
       attachments:followAttachments,
       requestId: crypto.randomUUID(),
     };
+    if(submitting.current.has(message.requestId))return;
+    submitting.current.add(message.requestId);
     setPendingMessage(message);
     try {
       sessionStorage.setItem("relay.remote.message", JSON.stringify(message));
@@ -258,9 +284,9 @@ function App() {
       acknowledgeMessage(message);
     } catch (e) {
       setError(errorText(e));
-      if (e instanceof CommandError && [400, 401, 403, 422].includes(e.status))
-        setPendingMessage(null);
-    }
+      if (e instanceof CommandError && [400, 422].includes(e.status))
+        setPendingMessage(current=>current?.requestId===message.requestId?null:current);
+    }finally{submitting.current.delete(message.requestId);}
   }
   async function exportChat(id:string) {
     try {
@@ -269,7 +295,7 @@ function App() {
       const link=document.createElement("a");link.href=url;link.download=`conversation-${id.slice(0,8)}.md`;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
     } catch {}
   }
-  async function call(name: string, args?: any) {
+  async function call(name: string, args?: any, signal?:AbortSignal) {
     if (name === "workflow.report.save") {
       const preview = previews.current.get(args.previewId);
       if (!preview) throw Error("报告预览已过期，请重新生成");
@@ -289,7 +315,7 @@ function App() {
       setTimeout(() => URL.revokeObjectURL(url), 1000);
       return { saved: true };
     }
-    const result = await request(token, name, args);
+    const result = await request(token, name, args, signal);
     if (name === "workflow.report") {
       if (previews.current.size >= 5) previews.current.clear();
       previews.current.set(result.previewId, result);
@@ -311,8 +337,9 @@ function App() {
   const run = (name: string, args?: unknown) => {
     void action(name, args).catch(() => {});
   };
-  async function submit() {
-    const payload = pending || {
+  async function submit(retry?:Submission) {
+    const payload = retry || pending || {
+      serverId:serverHeaders()["X-Relay-Server-ID"],
       requestId: crypto.randomUUID(),
       input: {
         title: prompt.trim().split("\n")[0].slice(0, 120),
@@ -321,6 +348,7 @@ function App() {
         mode: "cli" as const,
         model,
         ...templateOptions,
+        deliveryChecks:newDeliveryChecks,
         bucket: "codex",
         approvalPolicy: "on-request" as const,
         sandbox: "workspaceWrite" as const,
@@ -328,20 +356,25 @@ function App() {
         attachments:newAttachments,
       },
     };
+    if(submitting.current.has(payload.requestId))return;
+    submitting.current.add(payload.requestId);
     setPending(payload);
     try {
       sessionStorage.setItem("relay.remote.pending", JSON.stringify(payload));
-      const accepted = await action("job.submit", payload);
+      const accepted = await action("job.submit", {requestId:payload.requestId,input:payload.input});
       clearAttachments("new",payload.input.attachments);
+      clearNewDelivery(payload.input.deliveryChecks);
       setSelected(accepted.id);
-      setPending(null);
+      setPending(current=>current?.requestId===payload.requestId?null:current);
       setPrompt((current) => (current === payload.input.prompt ? "" : current));
     } catch (e) {
       setError(errorText(e));
-      if (e instanceof CommandError && [400, 401, 403, 422].includes(e.status))
-        setPending(null); /* Keep the request ID on transport failures. */
-    }
+      if (e instanceof CommandError && [400, 422].includes(e.status))
+        setPending(current=>current?.requestId===payload.requestId?null:current);
+    }finally{submitting.current.delete(payload.requestId);}
   }
+  usePendingRetry(pending,serverId,!!token&&status==="已连接",submit);
+  usePendingRetry(pendingMessage,serverId,!!token&&status==="已连接",submitFollowup);
   useEffect(() => {
     if (!selected || !token) {
       setChat([]);
@@ -405,14 +438,10 @@ function App() {
     setEntry("");
     setSnapshot(undefined);
     setSelected("");
-    setPending(null);
-    setPendingMessage(null);
-    followupDrafts.current = {};
-    setFollowup("");
-    setPrompt("");
+    // Disconnect the viewer only. Keep exact pending requests and drafts so
+    // reconnecting with refreshed credentials can confirm the original IDs.
     previews.current.clear();
-    for (const key of ["token", "pending", "draft", "message", "followups"])
-      sessionStorage.removeItem(`relay.remote.${key}`);
+    sessionStorage.removeItem("relay.remote.token");
   }
   return (
     <div className="remote-shell">
@@ -478,17 +507,20 @@ function App() {
             className={`connection-bar ${status === "已连接" ? "online" : ""}`}
             role="status"
           >
-            {t(status)} · {t("断线只重新订阅状态，不重复提交任务。")}
+            {t(status)} · {serverVersion&&`${serverVersion} · `}{t("断线后自动恢复连接与待确认请求，不会重复创建任务。")}
           </div>
           {error && (
             <p className="error-banner" role="alert">
               {error}
             </p>
           )}
+          {snapshot&&status==="已连接"&&<PendingActionRecovery call={call}/>}
           {center && snapshot && <TaskCenter snapshot={snapshot} call={call} close={() => setCenter(false)} open={job => {setSelected(job.id);setCenter(false);}} />}
           {!center && <main className="remote-layout">
             <aside className="remote-sidebar">
-              <RemoteSchedules roots={roots} call={call}/>
+              <RemoteSchedules roots={roots} call={call} open={setSelected}/>
+              <OperationHistory call={call} jobs={snapshot?.jobs||[]} open={setSelected}/>
+              <RemoteRepository key={job?.projectCwd||job?.cwd||directory} roots={roots} cwd={job?.projectCwd||job?.cwd||directory} call={call}/>
               <section className="new-task">
                 <h2>{t("新建任务")}</h2>
                 <button disabled={!!pending || busy} onClick={() => setTemplates(true)}>{t("任务模板")}</button>
@@ -532,11 +564,12 @@ function App() {
                     />
                   </label>
                   <RemoteAttachments id="new" token={token} value={newAttachments} onChange={setNewAttachments} onBusy={setNewUploading} disabled={busy||!!pending}/>
+                  <button type="button" disabled={busy||!!pending} onClick={()=>setNewDeliveryOpen(true)}>{t("交付验收")} · {newDeliveryChecks.length}</button>
                   <button type="submit" disabled={busy || newUploading || !directory}>
                     {t(pending ? "重试同一提交" : "创建并排队")}
                   </button>
                   {pending && (
-                    <p>{t("提交结果尚未确认，重试会沿用同一请求编号。")}</p>
+                    <p>{t(pending?.serverId?"提交结果尚未确认，正在自动使用原请求编号恢复。":"提交结果尚未确认，重试会沿用同一请求编号。")}</p>
                   )}
                 </form>
                 <button
@@ -612,40 +645,6 @@ function App() {
                     </div>
                     <div className="row">
                       <span className="state-pill">{t(labels[job.state])}</span>
-                      {["paused", "needs_attention"].includes(job.state) ? (
-                        <button
-                          disabled={busy}
-                          onClick={() =>
-                            run("job.control", { id: job.id, action: "resume" })
-                          }
-                        >
-                          {t("继续")}
-                        </button>
-                      ) : (
-                        !["completed", "cancelled"].includes(job.state) && (
-                          <button
-                            disabled={busy}
-                            onClick={() =>
-                              run("job.control", {
-                                id: job.id,
-                                action: "pause",
-                              })
-                            }
-                          >
-                            {t("暂停")}
-                          </button>
-                        )
-                      )}
-                      {!["completed", "cancelled"].includes(job.state) && (
-                        <button
-                          disabled={busy}
-                          onClick={() =>
-                            run("job.control", { id: job.id, action: "cancel" })
-                          }
-                        >
-                          {t("取消任务")}
-                        </button>
-                      )}
                       <button disabled={busy} onClick={() => void exportChat(job.id)}>{t("导出 Markdown")}</button>
                       <button onClick={() => setSearching(job.id)}>{t("搜索会话内容")}</button>
                       {job.workflow && (
@@ -655,22 +654,23 @@ function App() {
                       )}
                     </div>
                   </div>
-                  <RecoveryNotice
-                    job={job}
-                    onPause={() =>
-                      run("job.control", { id: job.id, action: "pause" })
-                    }
-                    pending={busy}
-                  />
+                  <TaskManagement key={`management-${job.id}`} job={job} call={call} busy={busy}/>
                   {job.workflow&&<WorkflowOperations key={`workflow-${job.workflow.id}`} job={job} jobs={snapshot?.jobs||[]} call={call} open={setSelected}/>}
                   <RecoveryHistory job={job} />
                   <LiveControls key={`live-${job.id}`} job={job} call={call}/>
                   <RemoteGoal key={`goal-${job.id}`} job={job} call={call}/>
+                  <RemoteDelivery key={`delivery-${job.id}`} job={job} call={call} repair={text=>{
+                    if(pendingMessageRef.current?.id===job.id) throw Error(t("该会话有待确认消息，请先等待回执。"));
+                    const next=[followupDrafts.current[job.id],text].filter(Boolean).join("\n\n");
+                    if(next.length>100000)throw Error(t("修复要求超过消息上限，请精简条件或手动填写追问。"));
+                    const drafts={...followupDrafts.current,[job.id]:next};
+                    sessionStorage.setItem("relay.remote.followups",JSON.stringify(drafts));followupDrafts.current=drafts;
+                    if(selection.current===job.id)setFollowup(next);
+                  }}/>
                   <RemoteArtifacts key={`artifacts-${job.id}`} id={job.id} call={call}/>
                   <label>{t("任务优先级")}<select aria-label={t("任务优先级")} value={job.priority || "normal"} disabled={busy} onChange={e => run("chat.priority",{id:job.id,priority:e.target.value})}>
                     <option value="high">{t("高")}</option><option value="normal">{t("普通优先级")}</option><option value="low">{t("低")}</option>
                   </select></label>
-                  <MessageQueue key={`queue-${job.id}`} job={job} pending={busy} onChange={args => run("chat.queue",args)} />
                   {snapshot?.approvals
                     .filter((a) => a.jobId === job.id)
                     .map((a) => (
@@ -731,7 +731,7 @@ function App() {
                       {t(pendingMessage ? "重试同一提交" : "加入待发送队列")}
                     </button>
                     {pendingMessage && (
-                      <p>{t("提交结果尚未确认，重试会沿用同一请求编号。")}</p>
+                      <p>{t(pendingMessage?.serverId?"提交结果尚未确认，正在自动使用原请求编号恢复。":"提交结果尚未确认，重试会沿用同一请求编号。")}</p>
                     )}
                     <span>
                       {t("待发送队列")} · {job.queuedMessages?.length || 0}
@@ -747,7 +747,9 @@ function App() {
             </section>
           </main>}
           {settingsOpen && snapshot && <RuntimeSettings settings={snapshot.settings} call={call} close={() => setSettingsOpen(false)} />}
-          {templates && <TaskTemplates draft={prompt} preferences={{model,...templateOptions}} call={call} close={() => setTemplates(false)} apply={template => {
+          {newDeliveryOpen&&<DeliveryDialog initial={newDeliveryChecks} call={call} saveDraft={saveNewDelivery} close={()=>setNewDeliveryOpen(false)}/>}
+          {templates && <TaskTemplates draft={prompt} preferences={{model,...templateOptions,deliveryChecks:newDeliveryChecks}} call={call} close={() => setTemplates(false)} apply={template => {
+            saveNewDelivery(template.deliveryChecks||[]);
             setPrompt(value => value ? value + "\n\n" + template.prompt : template.prompt);
             setModel(template.model); setTemplateOptions({effort:template.effort,planMode:template.planMode,multiAgent:template.multiAgent}); setTemplates(false);
           }} />}

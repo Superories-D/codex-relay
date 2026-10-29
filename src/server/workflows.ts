@@ -1,3 +1,4 @@
+import {deliveryAccepted} from "../shared/delivery";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
@@ -48,7 +49,7 @@ export class ServerWorkflows {
     if (
       jobs.some((j, i) =>
         i < step - 1
-          ? j.state !== "completed"
+          ? j.state !== "completed" || j.recoveryRequired || !deliveryAccepted(j.delivery)
           : j.recoveryRequired ||
             !["paused", "cancelled", "completed", "needs_attention"].includes(
               j.state,
@@ -84,6 +85,7 @@ export class ServerWorkflows {
           .map((key) => [key, (job as any)[key]]),
       );
       delete input.attachments;
+      if(job.delivery?.checks.length)input.deliveryChecks=structuredClone(job.delivery.checks);
       input.prompt = handoff
         ? `${job.prompt}\n\n[Recorded handoff from workflow ${id}; unverified historical results]\n${handoff}`
         : job.prompt;

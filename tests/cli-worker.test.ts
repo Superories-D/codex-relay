@@ -79,7 +79,7 @@ const auth = {
   chatgptAccountId: "account",
   chatgptPlanType: "plus",
 };
-function worker(refresh = async () => auth,domain?:WorkerContext["domain"]) {
+function worker(refresh = async () => auth,domain?:WorkerContext["domain"], shouldStart = () => true) {
   return new CliWorker({
     domain,
     job,
@@ -98,7 +98,7 @@ function worker(refresh = async () => auth,domain?:WorkerContext["domain"]) {
         }
       }
     },
-    shouldStart: () => true,
+    shouldStart,
     refresh,
   });
 }
@@ -422,6 +422,106 @@ it("preserves a native Goal budget stop while waiting for children to stop", asy
     threadId: "child",
     turnId: "child-turn",
   });
+  await w.close();
+});
+function usageGoal(patch: Record<string, unknown> = {}) {
+  return { threadId: "thread-1", objective: "Keep the existing evidence",
+    status: "usageLimited", tokenBudget: 5000, tokensUsed: 42, ...patch };
+}
+it("automatically reconnects an authorized usage-limited Goal when live quota is available", async () => {
+  const w = worker();
+  await w.start(auth);
+  rpc.notify("thread/goal/updated", { threadId: job.threadId, goal: usageGoal() });
+  endParent();
+  await vi.advanceTimersByTimeAsync(1000);
+  expect((await w.done).kind).toBe("recoverable");
+  expect(job.goalResumeAfterQuota).toBe(true);
+  expect(rpc.call.mock.calls.some(([m]) => m === "thread/goal/set")).toBe(false);
+  await w.close();
+  const original=rpc.call.getMockImplementation()!;
+  rpc.call.mockImplementation((m,p)=>m==="thread/goal/set"?Promise.resolve({goal:usageGoal({status:"active"})}):original(m,p));
+  const resumed=worker(); await resumed.start(auth);
+  expect(rpc.call).toHaveBeenCalledWith("thread/goal/set",{threadId:job.threadId,status:"active",origin:"automatic"});
+  expect(rpc.call.mock.calls.filter(([m])=>m==="turn/start")).toHaveLength(1);
+  expect(job.turnId).toBe("native-goal-turn");
+  await resumed.close();
+});
+it("reconnects a usage-limited Goal between rounds without finishing while children still own a turn", async()=>{
+  job.threadId="thread-1";job.goalStartRequested=true;rpc.goals.set(job.threadId,usageGoal({status:"active"}));
+  const w=worker();await w.start(auth);
+  rpc.notify("turn/completed",{threadId:job.threadId,turn:{id:job.turnId,status:"completed"}});
+  await vi.advanceTimersByTimeAsync(1000);
+  beginChild();rpc.interruptEmits=false;const done=vi.fn();w.done.then(done);
+  rpc.notify("thread/goal/updated",{threadId:job.threadId,goal:usageGoal()});
+  await vi.advanceTimersByTimeAsync(0);expect(done).not.toHaveBeenCalled();
+  rpc.notify("turn/completed",{threadId:"child",turn:{id:"child-turn",status:"interrupted"}});
+  expect((await w.done).kind).toBe("recoverable");expect(job.goalResumeAfterQuota).toBe(true);
+  await w.close();
+});
+it("does not reactivate an interrupted Goal admission after user control revoked its start", async()=>{
+  job.threadId="thread-1";job.goalResumeAfterQuota=true;rpc.goals.set(job.threadId,usageGoal());
+  const w=worker(undefined,undefined,()=>false);await w.start(auth);
+  expect((await w.done).kind).toBe("interrupted");
+  expect(rpc.call.mock.calls.some(([m])=>["thread/goal/set","thread/resume","turn/start"].includes(m))).toBe(false);
+  await w.close();
+});
+it("serializes a user Goal pause after automatic activation before loading the thread", async()=>{
+  job.threadId="thread-1";job.goalResumeAfterQuota=true;rpc.goals.set(job.threadId,usageGoal());
+  const original=rpc.call.getMockImplementation()!;let activate!:(value:any)=>void;
+  rpc.call.mockImplementation((m,p)=>m==="thread/goal/set"?(p.origin==="automatic"?new Promise(resolve=>{activate=resolve;}):Promise.resolve({goal:usageGoal({status:p.status})})):original(m,p));
+  const w=worker(),starting=w.start(auth);await vi.advanceTimersByTimeAsync(0);
+  const pause=w.operation("thread/goal/set",{status:"paused",origin:"user"});
+  expect(rpc.call.mock.calls.filter(([m])=>m==="thread/goal/set")).toHaveLength(1);
+  activate({goal:usageGoal({status:"active"})});await pause;await starting;
+  expect((await w.done).kind).toBe("goalStopped");expect(rpc.calls).not.toContain("thread/resume");
+  expect(rpc.call.mock.calls.filter(([m])=>m==="thread/goal/set").map(([,p])=>p.status)).toEqual(["active","paused"]);
+  await w.close();
+});
+it("does not overwrite a newer budget-stop notification with an old automatic activation reply",async()=>{
+  job.threadId="thread-1";job.goalResumeAfterQuota=true;rpc.goals.set(job.threadId,usageGoal());
+  const original=rpc.call.getMockImplementation()!;
+  rpc.call.mockImplementation((m,p)=>{
+    if(m==="thread/goal/set"){
+      rpc.notify("thread/goal/updated",{threadId:job.threadId,goal:usageGoal({status:"budgetLimited",tokensUsed:5000})});
+      return Promise.resolve({goal:usageGoal({status:"active"})});
+    }return original(m,p);
+  });
+  const w=worker();await w.start(auth);expect((await w.done).kind).toBe("goalStopped");
+  expect(rpc.calls).not.toContain("thread/resume");await w.close();
+});
+it("rechecks quota and stops children when usage limitation arrives between native Goal turns", async () => {
+  job.threadId = "thread-1";
+  job.goalStartRequested = true;
+  rpc.goals.set(job.threadId, usageGoal({status:"active"}));
+  const w = worker(); await w.start(auth);
+  rpc.notify("turn/completed", {threadId:job.threadId,turn:{id:job.turnId,status:"completed"}});
+  await vi.advanceTimersByTimeAsync(1000);
+  beginChild(); rpc.used=100;
+  rpc.notify("thread/goal/updated", {threadId:job.threadId,goal:usageGoal()});
+  await vi.advanceTimersByTimeAsync(1000);
+  expect((await w.done).kind).toBe("quota");
+  expect(job.goalResumeAfterQuota).toBe(true);
+  expect(rpc.call).toHaveBeenCalledWith("turn/interrupt", {threadId:"child",turnId:"child-turn"});
+  await w.close();
+});
+it("holds a reached Token budget even when the native status says usageLimited", async () => {
+  const w=worker(); await w.start(auth);
+  rpc.notify("thread/goal/updated",{threadId:job.threadId,goal:usageGoal({tokensUsed:5000})});
+  endParent(); await vi.advanceTimersByTimeAsync(1000);
+  expect((await w.done).kind).toBe("goalStopped");
+  expect(job.goalResumeAfterQuota).not.toBe(true);
+  await w.close();
+});
+it.each(["unknown quota","unknown budget","reached budget"])("does not activate a Goal with %s", async(reason)=>{
+  job.threadId="thread-1"; job.goalResumeAfterQuota=true;
+  const original=rpc.call.getMockImplementation()!;
+  rpc.goals.set(job.threadId,usageGoal(reason==="unknown budget"?{tokenBudget:undefined}:reason==="reached budget"?{tokensUsed:5000}:{}));
+  rpc.call.mockImplementation((m,p)=>m==="account/rateLimits/read"&&reason==="unknown quota"?Promise.resolve({}):m==="thread/goal/set"?Promise.resolve({goal:usageGoal({status:p.status})}):original(m,p));
+  const w=worker();
+  if(reason==="reached budget"){await w.start(auth);expect((await w.done).kind).toBe("goalStopped");}
+  else await expect(w.start(auth)).rejects.toBeInstanceOf(RecoveryError);
+  expect(rpc.calls).not.toContain("thread/resume");
+  expect(rpc.call.mock.calls.some(([m])=>m==="thread/goal/set"||m==="turn/start")).toBe(false);
   await w.close();
 });
 it("restores only status after quota rotation with automatic provenance and no objective or budget reset", async () => {

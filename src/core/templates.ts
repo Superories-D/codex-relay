@@ -3,6 +3,8 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { atomicWrite } from "./store";
+import {deliveryChecksSchema} from "../shared/delivery";
+const MAX_TEMPLATE_BYTES=16*1024*1024;
 const content = z
   .object({
     name: z.string().trim().min(1).max(100),
@@ -11,6 +13,7 @@ const content = z
     effort: z.string().max(20),
     planMode: z.boolean(),
     multiAgent: z.boolean(),
+    deliveryChecks: deliveryChecksSchema.optional(),
   })
   .strict();
 const item = content.extend({ id: z.string().uuid(), updatedAt: z.number() });
@@ -34,7 +37,7 @@ export class Templates {
     if (this.state) return this.state;
     const file = path.join(this.root, "task-templates.json");
     try {
-      if ((await fs.stat(file)).size > 16 * 1024 * 1024)
+      if ((await fs.stat(file)).size > MAX_TEMPLATE_BYTES)
         throw Error("模板文件过大");
       this.state = stateSchema.parse(
         JSON.parse(await fs.readFile(file, "utf8")),
@@ -54,9 +57,11 @@ export class Templates {
       .catch(() => {})
       .then(async () => {
         const next = fn(await this.load());
+        const document=JSON.stringify(next,null,2);
+        if(Buffer.byteLength(document)>MAX_TEMPLATE_BYTES)throw Error("模板总大小超过 16 MiB，请精简内容后重试");
         await this.write(
           path.join(this.root, "task-templates.json"),
-          JSON.stringify(next, null, 2),
+          document,
         );
         this.state = next;
         return structuredClone(next);

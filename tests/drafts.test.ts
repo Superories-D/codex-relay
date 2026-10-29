@@ -4,7 +4,15 @@ import {
   saveDraftState,
   remainingDraft,
   remainingFiles,
+  confirmNativeDraft,
 } from "../src/renderer/drafts";
+it("clears only the recovered intent's matching files and confirms draft cleanup atomically",()=>{
+ const s=storage(),old={type:"mention" as const,name:"old",path:"/old"},next={type:"mention" as const,name:"new",path:"/new"};
+ const current={drafts:{job:"Newer draft",other:"Other draft"},files:{job:[{...old},next]}};
+ const cleared=confirmNativeDraft(s,current,"request","job","Original draft",[old]);expect(cleared.drafts).toEqual(current.drafts);expect(cleared.files.job).toEqual([next]);
+ saveDraftState(s,{drafts:{job:"Original draft"},files:{job:[old]}});
+ expect(confirmNativeDraft(s,{drafts:{job:"Original draft"},files:{job:[old]}},"request","job","Original draft",[old])).toEqual({drafts:{job:"Original draft"},files:{job:[old]}});
+});
 function storage() {
   const values = new Map<string, string>();
   return {

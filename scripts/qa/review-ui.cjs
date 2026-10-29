@@ -59,6 +59,7 @@ function fixture({ theme, language }) {
     command: async (name, args) => {
       window.reviewCalls.push({ name, args });
       if (name === "desktop.read") return structuredClone(desktop);
+      if (name === "chat.submission.identity") return "0f03f652-ecf6-4f64-8ed0-5eb782981fa2";
       if (name === "chat.read") return { items: [], total: 0 };
       if (name === "account.models") return [];
       if (name === "history.importAll.status") return {};

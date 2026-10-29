@@ -469,6 +469,10 @@
     opacity: 0.4;
   }
 }
+.native-followup-pending p, .native-creation-pending p, .native-creation-result p { margin: 0 0 6px; overflow-wrap: anywhere; }
+.native-followup-pending button, .native-creation-pending button, .native-creation-result button { max-width: 100%; white-space: normal; }
+.native-followup-list { max-height: 180px; overflow: auto; }
+.native-followup-list > div { padding-top: 10px; }
 .agent-history-note {
   font-size: 11px;
   line-height: 1.6;

@@ -43,7 +43,7 @@ Send `/start` to open the inline-button dashboard. Select a project, create a ta
 
 `/run 1 instruction` remains supported. New tasks become the selected task. `/task ID` also selects a task. Project and task selections, model defaults and template contents survive service restarts. Choosing a project clears the selected task, so plain text cannot accidentally continue work in the previous project. Selecting a task does not change the selected project for future task creation.
 
-Task cards offer **latest result, conversation, queue, pause, resume, cancel, export and diagnostics**. Pause/resume/cancel buttons open a confirmation card bound to the task's current state. Confirmation tokens expire after five minutes and become invalid after a task/queue change, use, or bridge restart. Typed `/pause`, `/resume` and `/cancel` remain direct explicit commands.
+Task cards offer **latest result, conversation, queue, pause, resume, cancel, export and diagnostics**. Pause/resume/cancel buttons open a confirmation card bound to the task's current state. Confirmation tokens expire after five minutes and become invalid after a task/queue change, use, or bridge restart. Typed `/pause`, `/resume` and `/cancel` remain direct explicit commands. Controls and queue edits now save a durable receipt before execution. A lost reply checkpoint is reconciled from the original receipt after restart, even though the one-use confirmation token is gone. New control requests carry the observed task/control version and are checked inside serialized execution; a pause/resume cycle does not reactivate an old button. Pending or uncertain receipts describe the original operation and never replay it against later task state.
 
 Ordinary text follows the selected task. Replying to a known task card, result page, export or notification targets that specific task without changing the selection. The last 200 successfully acknowledged task-message mappings are retained. An unknown/expired reply target fails with an explanation; it never falls back to a different task. `/forget` clears task selection.
 
@@ -53,15 +53,20 @@ Ordinary text follows the selected task. Replying to a known task card, result p
 |---|---|
 | `/start`, `/home`, `/help` | Dashboard and complete command guide |
 | `/projects [PAGE]`, `/project NUMBER` | Browse ten allowed workspaces per page / select a workspace |
+| `/repo [PROJECT_NUMBER]` | Inspect the selected or numbered project’s Git branch, index and working changes; buttons open file diffs |
 | `/new instruction`, `/run NUMBER instruction` | Create and select an interactive CLI task |
 | `/status [STATE\|all] [PAGE]` | Browse eight tasks per page; default excludes archived tasks; pinned tasks appear first |
 | `/task TASK_ID` | Select a task and show state, project, model, queue and recovery details |
 | `/send TASK_ID instruction` | Explicitly enqueue a follow-up without changing selection |
+| `/follow instruction` | Enqueue to the selected task, or the task whose card you reply to; also works in a single attachment's caption |
 | `/result [TASK_ID]` | Latest recorded assistant response, paginated |
 | `/history [TASK_ID]` | Paginated exported conversation |
 | `/search phrase` | Search the selected conversation; show up to 30 newest matching excerpts |
 | `/export [TASK_ID]` | Download a redacted Markdown conversation document |
 | `/report [TASK_ID]` | Download a redacted JSON task diagnostic report |
+| `/delivery [TASK_ID]` | Inspect acceptance conditions, current revision, latest file findings and recorded SHA256 evidence |
+| `/verify [TASK_ID]` | Read current output files and record a new acceptance report, with a durable operation receipt |
+| `/repair [TASK_ID]` | Preview a follow-up derived from failed checks; a separate confirmation submits it through normal task messaging |
 | `/queue [TASK_ID]` | Queue revision, first five messages and up/down/remove buttons |
 | `/queueall [TASK_ID]` | Paginated full queue text |
 | `/edit MESSAGE_ID REVISION new text` | Edit a queued message in the selected task |
@@ -75,6 +80,8 @@ Ordinary text follows the selected task. Replying to a known task card, result p
 Task, template, workflow and queued-message IDs accept unique prefixes of at least eight characters. Commands with `[TASK_ID]` use the selected task when omitted. Queue edits always carry a revision; old buttons or stale revisions cannot silently edit a changed queue. Queue buttons expire after five minutes, and are consumed before dispatch to avoid repeating an uncertain operation.
 
 Result/history/search pages are **immutable snapshots**, retained for 20 minutes (up to 12 snapshots per bridge). Navigation after expiry/restart asks the user to reopen the view. This prevents a new answer from shifting text between pages. Conversation exports inherit the shared export limit of the newest 5,000 messages / 4 MiB, and explicitly mark omitted older content. Individual Telegram documents/views also have an 8 Mi-character cap with an omission notice. Markdown and JSON exports are generated documents; project output files are not uploaded automatically.
+
+Delivery views distinguish pending checks, failed/unverified reports, old contract revisions and explicitly stale evidence. A historical pass describes files at the time of that check. Verification refuses active or unsafe-recovery tasks and does not invoke a model or shell. A pass follows the scheduler's existing delivery gate rules and can release dependent work; other pause/recovery gates remain authoritative. Lost reply checkpoints reconcile the original verification receipt without running the check again. Repair confirmation expires after five minutes and is invalidated by a task, queue or evidence change; it is consumed before sending. Confirming a repair can queue an idle task for execution, just like an ordinary explicit follow-up.
 
 ### Workflows and task defaults
 
@@ -103,6 +110,8 @@ Creation is atomic and idempotent across restart/retry. Workflows contain 2–12
 | `/plan on\|off` | Set plan mode for future tasks |
 
 Templates prepend their saved prompt to new task/stage instructions and supply model, effort, plan and multi-agent preferences. Changing defaults never modifies an existing task. New tasks retain `on-request` approval and `workspaceWrite` sandbox policy; Telegram does not disable either.
+
+Templates can also carry file, content, SHA256 or JSON acceptance checks. Selecting a template snapshots those checks into persistent Telegram defaults; later edits to the saved template do not change that selection. `/new`, every `/workflow` stage and `/schedule create` copy the selected checks into independent task/run contracts with empty reports. `/defaults` shows the count and `/template off` clears future defaults. Existing task conditions are unchanged. Legacy templates without checks remain readable and select an empty contract.
 
 ### Approvals and guided questions
 
@@ -145,7 +154,19 @@ The dated implementation and acceptance record is available in [Telegram console
 
 ## Incoming files (iteration 1)
 
-Send a document or photo to stage it durably (8 MiB per file, up to 10 pending files). `/inbox` lists staged files; `/inbox clear` clears the selection without deleting files already referenced by tasks. The next `/new`, `/run` or task follow-up includes that attachment snapshot. Captions do not execute instructions automatically. Files are downloaded only from Telegram's official file endpoint with streaming size limits, saved under an opaque upload ID with checksum receipts, and reused across lost replies/restarts. Workflows require an empty inbox; attach files to individual stages instead.
+Send a document or photo to stage it durably (8 MiB per file, up to 10 pending files). `/inbox` lists staged files; `/inbox clear` clears the selection without deleting files already referenced by tasks. The next `/new`, `/run` or task follow-up includes that attachment snapshot. Ordinary captions only describe the file. A single photo/document can carry an explicit `/new`, `/run`, `/send` or `/follow` command in its caption to submit the file and instruction together. Files are downloaded only from Telegram's official file endpoint with streaming size limits, saved under an opaque upload ID with checksum receipts, and reused across lost replies/restarts. Workflows require an empty inbox; attach files to individual stages instead.
+
+For example, send a screenshot with `/run 1 Fix the layout shown here`, or reply to a task card with a document captioned `/follow Check this evidence`. `/new` uses the selected project; `/send TASK_ID instruction` names a task explicitly. A reply with an unknown task-message mapping fails without falling back to the selected task. Follow-up captions freeze the task ID and its control version before downloading: a later pause/cancel prevents an unaccepted old input from restarting work, while an existing acceptance receipt is still recognized.
+
+Before admission, the bridge persists the resolved instruction, original project/task, and exact attachment snapshot. Failures around upload staging, command handoff, inbox cleanup or reply persistence reuse the same update-derived request ID; successful admission does not download or enqueue the input again. Already staged files remain available when a command is rejected. Albums continue staging each file and explicitly ask for a separate instruction after all files arrive, so a caption on the first album item cannot run with an incomplete attachment set. Unsupported caption commands are not executed.
+
+A `getFile` rejection with HTTP 400, 413 or 422 produces a retained error reply asking the user to resend the attachment, then permits later updates to proceed. Network failures, authentication/permission errors, 404, rate limits and service failures retain the original incoming attachment for retry; they are not silently discarded. API errors expose only the method and HTTP status, without reflecting the remote error description or token. Download interruptions continue to use the existing durable retry path.
+
+Temporary upload storage failures (`ENOSPC`, `EDQUOT`, `EMFILE`, `ENFILE`, `EIO`, `EBUSY`) retain the incoming intent too. If its checksum receipt was already saved, retry reads the original file instead of downloading it again. Permanent receipt/content validation errors remain explicit failures.
+
+Schedule pause/enable commands carry the observed configuration revision so another client's newer prompt or contract cannot be overwritten. If a reply checkpoint fails after a schedule was changed or removed, the bridge reads the original durable receipt before looking up/reconstructing the current plan. A repeated update therefore confirms the earlier operation instead of changing the plan again or failing because the deleted plan is now absent.
+
+`/schedule pending SCHEDULE_ID` opens the retained occurrence snapshot and a five-minute confirmation button. Confirming abandons only the named unadmitted occurrence, preserves all files and leaves the schedule configured for future runs. If its task was already admitted, Relay repairs bookkeeping and returns that task's card without stopping it. Confirmation tokens are consumed before dispatch; after a lost reply checkpoint/restart the original action receipt is reconciled before looking for the token. `/schedule abandon SCHEDULE_ID RUN_UUID` provides the same explicit operation for typed commands. Successful manual `/schedule run` replies now include the created task card and its controls.
 
 ## Recorded output downloads (iteration 3)
 
@@ -155,13 +176,19 @@ Send a document or photo to stage it durably (8 MiB per file, up to 10 pending f
 
 `/notify all|errors|watched|off` 选择全部、仅异常/审批/自动恢复、仅关注任务或关闭；`/watch [任务ID]` 关注当前/指定任务并进入 watched 模式，`/unwatch ID` 取消关注。`/quiet 22-7` 设置跨午夜静默窗口，小时均为 **UTC**；`/quiet off` 关闭，起止相同表示全天静默。`/throttle 60` 设置通知发送间隔（0–3600 秒）。`/digest` 查看模式和排队摘要。
 
-每次轮询捕获到的变化先保存不可变通知内容，静默期间继续排队，重启后恢复发送；每轮最多 5 条，最多保留最近 200 条，溢出数量在摘要中显示。关闭通知会清空待发内容；切换过滤模式会剔除不匹配的通知。发送回执丢失可能导致单条重复（at-least-once），不会因此重跑任务。轮询之间已经发生又消失的瞬态状态不保证捕获。
+每次通知检查捕获到的变化先保存不可变通知内容，静默期间继续排队，重启后恢复发送；每轮最多 5 条，最多保留最近 200 条，溢出数量在摘要中显示。关闭通知会清空待发内容；切换过滤模式会剔除不匹配的通知。发送回执丢失可能导致单条重复（at-least-once），不会因此重跑任务。两次检查之间已经发生又消失的瞬态状态不保证捕获。
+
+服务运行时，任务事件也会触发通知检查，待发队列每秒检查一次；完成结果和已排队通知不必等待收消息的 25 秒长轮询返回。收消息保持一个长轮询连接，通知与指令处理使用同一串行保存队列，保留更新偏移、回复路由和输入意图。发送失败后退避重试，同时可先保存后来观察到的新结果；已有指令回复优先发送，新通知正文先于网络重试落盘。停止会移除观察者和定时器，等待在途通知结束；尚未消费的新更新保持原偏移以便重启读取。
+
+任务每次由工作进程确认完成后都会保存独立的完成编号；两次观察看到的状态同为 completed，也能识别新的结果。重命名和更新时间变化不产生重复完成提醒。摘要只取本轮时间范围与回合对应的助手文本（不受最后 80 条显示记录限制）；没有新文本时会提示查看工具结果与产物，不引用上一轮回答。审批编号复用但内容更新时重新提醒，自动恢复的每次重试不会反复提醒。升级旧通知状态会建立一次历史基线，避免集中重发旧结果；完成编号识别也用于桌面原生通知与 Windows Telegram 通知发件箱。多个回合完全发生在两次通知检查之间时，提醒取最后观察到的完成记录，不作为全部回合的审计日志。
+
+任务仍持有执行、恢复或控制保存锁时，不发布临时 completed 状态；释放归属并保存最终状态后再提醒。这个门同时用于桌面原生通知与 Windows Telegram 发件箱，元数据编辑期间保持原通知游标，不会产生额外完成提醒。
 
 ### 文件、实时控制、Goal 与自动化
 
 | 操作 | 命令 / 交互 |
 | --- | --- |
-| 上传任务文件 | 发送照片或文档，`/inbox` 检查，下一条 `/new` 或追问附带文件；字幕不自动执行 |
+| 上传任务文件 | 单个图片/文档说明可写 `/new`、`/run`、`/send` 或 `/follow`；普通说明仅暂存，相册到齐后另发指令；`/inbox` 检查 |
 | 下载已记录结果 | `/files [任务ID] [页码]`，点文件按钮；单文件最多 8 MiB |
 | 立即干预运行 | `/steer 补充指令`，作用于当前选中且正在运行的任务 |
 | 模型等待恢复 | `/models` 查看缓存；`/switchmodel MODEL [EFFORT]` 切换并恢复模型等待任务 |
@@ -172,3 +199,17 @@ Send a document or photo to stage it durably (8 MiB per file, up to 10 pending f
 | 从阶段返工 | `/wf preview WORKFLOW_ID STAGE`，审阅后 `/wf retry PREVIEW_ID`；分支默认暂停，原历史保留 |
 
 实时控制、Goal、定时和工作流操作在服务器先记意图，再执行。普通网络中断按同一请求编号确认；原生调用结果无法确定时返回未知状态，避免双重执行。修改 Goal 正文、立即执行定时任务和启动目标均需用户明确发出对应命令。工作流返工预览有效期十分钟。
+
+### 远程操作记录
+
+`/actions` 查看最近 20 条有持久回执的远程操作，`/receipt UUID` 查看原回执。网页侧栏“远程操作记录”提供分页、刷新、回执详情及任务跳转。列表只返回操作摘要，不包含原参数、结果正文或请求指纹；损坏记录显示为不可读取。pending/uncertain 表示需要核查原任务，不会提供自动重放原生调用的按钮。
+
+### Read-only project inspection
+
+`/repo` uses the selected **project**, independently of the selected task. `/repo NUMBER` inspects a configured project without changing either selection. The listing keeps an immutable 20-minute snapshot, ten entries per page, up to 500 visible entries. Refresh is bound to the original project and creates a new snapshot; older buttons never point at newly reordered files. Staged and working-file buttons read current differences and include a read timestamp. A lost send acknowledgment retains that complete reply for delivery after restart without reading files again. Repository navigation expires on bridge restart.
+
+Reads use isolated copies of Git metadata and safe built-in configuration. Custom clean/smudge/process filters, textconv, external diffs and fsmonitor programs are not invoked; repositories depending on custom filters may therefore differ from local Git’s filtered view. Submodule contents and nested repositories are not expanded. Nested repositories can be added as separate configured projects. Working-file previews copy at most 2 MiB through a checked file descriptor; external links, hard links, non-regular files, changed reads and private server metadata are refused. Binary or non-UTF-8 new files show a notice. Git metadata output is capped and subprocess work shares a 15-second deadline. No source file, index, branch or commit is changed, no model is called and no write/apply action is exposed.
+
+Preview classification is explicit: new binary files and non-UTF-8 files/diffs return an unavailable-text notice, never replacement characters presented as the original code. The web dialog also hides the text-copy action for these cases. Before publishing a listing or difference, the service rechecks the configured directory’s canonical path and directory identity; replacing a project root during a read invalidates the result. Owned index copies keep a conservative source timestamp so Git’s racy-stat checks still detect rapid same-size edits.
+
+Confirmed repair follow-ups are frozen as an ordinary reliable `/send` intent before the one-use preview grant is consumed. The original confirmation update ID, destination and complete body survive a lost checkpoint acknowledgment or a service restart; recovery does not need another click or the expired preview token. A stored control revision prevents an undelivered old repair from undoing a later explicit pause/resume/cancel. If the message was already accepted, its original message receipt confirms delivery without changing the task’s later control state. Shutdown/abort errors preserve the incoming intent instead of converting it into a permanent error reply. Outgoing Telegram acknowledgments still follow the documented at-least-once behavior; this recovery does not enqueue the repair twice.

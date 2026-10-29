@@ -56,6 +56,141 @@ class FakeWorker extends EventEmitter implements Worker {
   }
   respond() {}
 }
+it("stops for service restart without publishing a user pause or changing Goal authority",async()=>{
+ const job=await scheduler.add({...input,cwd:root,interactive:true});await until(()=>workers[0]?.started);job.goal={threadId:job.threadId!,status:"active"} as any;job.controlRevision=7;
+ workers[0].operation.mockImplementation(async()=>({goal:{...job.goal,status:"paused"}}));
+ await scheduler.shutdown({resumeOnRestart:true});expect(workers[0].operation).not.toHaveBeenCalled();expect(job.goal?.status).toBe("active");expect(job.controlRevision).toBe(7);expect(job.stopIntent).toBeUndefined();expect(job.state).toBe("queued");expect(job.goalStartRequested).toBe(true);
+});
+it("keeps the desktop's explicit shutdown pause semantics",async()=>{
+ const job=await scheduler.add({...input,cwd:root,interactive:true});await until(()=>workers[0]?.started);job.goal={threadId:job.threadId!,status:"active"} as any;workers[0].operation.mockImplementation(async()=>({goal:{...job.goal,status:"paused"}}));
+ await scheduler.shutdown();expect(job.state).toBe("paused");expect(job.stopIntent).toBe("pause");expect(job.goal?.status).toBe("paused");expect(job.controlRevision).toBeGreaterThan(0);expect(job.resumeAfterShutdown).toBeUndefined();
+});
+it.each(["pause","cancel"] as const)("keeps a later user %s authoritative during service shutdown",async(action)=>{
+ const job=await scheduler.add({...input,cwd:root,interactive:true});await until(()=>workers[0]?.started);
+ let release!:()=>void,entered!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve;}),stopping=new Promise<void>(resolve=>{entered=resolve;});workers[0].stop=async()=>{entered();await gate;workers[0].settle({kind:"interrupted"});};
+ const shutdown=scheduler.shutdown({resumeOnRestart:true});await stopping;const manual=scheduler.control(job.id,action);await until(()=>job.stopIntent===action);release();await Promise.all([manual,shutdown]);expect(job.state).toBe(action==="pause"?"paused":"cancelled");expect(job.stopIntent).toBe(action);expect(job.resumeAfterShutdown).toBeUndefined();
+});
+it("keeps a successful completion receipt when service restart begins during process cleanup",async()=>{
+ const job=await scheduler.add({...input,cwd:root,interactive:true});await until(()=>workers[0]?.started);
+ let release!:()=>void,entered!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve;}),closing=new Promise<void>(resolve=>{entered=resolve;});workers[0].close=async()=>{entered();await gate;};workers[0].settle({kind:"completed"});await closing;
+ const shutdown=scheduler.shutdown({resumeOnRestart:true});release();await shutdown;
+ expect(job.stopIntent).toBeUndefined();expect(job.completionPending).toBe(true);expect(job.completion?.revision).toBe(1);
+ const disk=new Store(root);await disk.load();expect(disk.data.jobs[0]).toMatchObject({completionPending:true,recoveryRequired:true,state:"needs_attention"});expect(workers).toHaveLength(1);
+});
+it("requeues a worker that settles while service shutdown is still draining background work",async()=>{
+ const job=await scheduler.add({...input,cwd:root,interactive:true});await until(()=>workers[0]?.started);
+ let release!:()=>void,entered!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve;}),draining=new Promise<void>(resolve=>{entered=resolve;});
+ vi.spyOn(scheduler.warmups,"shutdown").mockImplementation(async()=>{entered();await gate;});const shutdown=scheduler.shutdown({resumeOnRestart:true});await draining;workers[0].settle({kind:"interrupted"});await(scheduler as any).currentRun;
+ expect(job.resumeAfterShutdown).toBe(true);expect(job.stopIntent).toBeUndefined();release();await shutdown;expect(job.state).toBe("queued");expect(job.resumeAfterShutdown).toBeUndefined();
+});
+it.each(["goalStopped","error","incomplete"] as const)("does not turn an authoritative %s into another model turn on service restart",async(kind)=>{
+ const job=await scheduler.add({...input,cwd:root,interactive:true});await until(()=>workers[0]?.started);
+ if(kind==="goalStopped")job.goal={threadId:job.threadId!,status:"budgetLimited"} as any;
+ if(kind==="incomplete"){job.completionRetries=3;job.maxCompletionRetries=3;}
+ workers[0].stop=async()=>{workers[0].settle({kind,...(kind==="error"?{error:Error("invalid configuration")}:{})});};await scheduler.shutdown({resumeOnRestart:true});
+ expect(job.state).toBe("needs_attention");expect(job.stopIntent).toBeUndefined();expect(job.resumeAfterShutdown).toBeUndefined();expect(job.goal?.status).not.toBe("active");expect(workers).toHaveLength(1);
+});
+it("preserves a budget stop that settles while the shutdown checkpoint is awaiting storage",async()=>{
+ const job=await scheduler.add({...input,cwd:root,interactive:true});await until(()=>workers[0]?.started);job.goal={threadId:job.threadId!,status:"budgetLimited"} as any;
+ let release!:()=>void,entered!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve;}),saving=new Promise<void>(resolve=>{entered=resolve;}),save=store.save.bind(store);
+ vi.spyOn(store,"save").mockImplementationOnce(async()=>{entered();await gate;await save();});const shutdown=scheduler.shutdown({resumeOnRestart:true});await saving;workers[0].settle({kind:"goalStopped"});await(scheduler as any).currentRun;release();await shutdown;
+ expect(job.state).toBe("needs_attention");expect(job.resumeAfterShutdown).toBeUndefined();expect(job.stopIntent).toBeUndefined();expect(job.goal?.status).toBe("budgetLimited");
+});
+it("automatically finalizes a known result after the last shutdown save fails",async()=>{
+ const job=await scheduler.add({...input,cwd:root,interactive:true});await until(()=>workers[0]?.started);
+ let release!:()=>void,entered!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve;}),cleaning=new Promise<void>(resolve=>{entered=resolve;});workers[0].close=async()=>{entered();await gate;};workers[0].settle({kind:"completed"});await cleaning;
+ let finalizing=false,failed=false;vi.spyOn(scheduler.accounts,"cancelLogin").mockImplementation(async()=>{finalizing=true;});const save=store.save.bind(store);vi.spyOn(store,"save").mockImplementation(async()=>{if(finalizing&&!failed){failed=true;throw Error("Final shutdown save failed");}await save();});
+ const shutdown=scheduler.shutdown({resumeOnRestart:true});release();await expect(shutdown).rejects.toThrow("Final shutdown save failed");expect(job.completionPending).toBe(true);expect(job.autoRecovery).toBeDefined();
+ job.autoRecovery!.nextAttemptAt=0;await(scheduler as any).tick();await until(()=>job.state==="completed");expect(workers).toHaveLength(1);expect(job.completionPending).toBeUndefined();
+});
+it("recovers a successful turn after cleanup failed without starting another worker",async()=>{
+ const job=await scheduler.add({...input,cwd:root,interactive:true});await until(()=>workers[0]?.started);
+ workers[0].failClose=true;workers[0].settle({kind:"completed"});await(scheduler as any).currentRun;
+ expect(job.recoveryRequired).toBe(true);workers[0].failClose=false;job.autoRecovery!.nextAttemptAt=0;
+ await(scheduler as any).tick();await until(()=>!job.recoveryRequired);await until(()=>!(scheduler as any).recoveryTasks.size);
+ await(scheduler as any).tick();expect(job.state).toBe("completed");expect(workers).toHaveLength(1);expect(job.completion?.revision).toBe(1);
+});
+it("automatically flushes a retained completed answer after storage recovers without another worker or UI read",async()=>{
+ const job=await scheduler.add({...input,cwd:root,interactive:true});await until(()=>workers[0]?.started);
+ const append=fs.appendFile.bind(fs);let offline=true,release!:()=>void,entered!:()=>void;
+ const gate=new Promise<void>(r=>{release=r;}),writing=new Promise<void>(r=>{entered=r;});
+ const fault=vi.spyOn(fs,"appendFile").mockImplementation(async(file,data,options)=>{
+  if(String(file)===scheduler.chats.file(job.id)&&offline){if(String(data).includes('"kind":"plan"')){entered();await gate;}throw Error("journal storage offline");}await append(file,data,options);
+ });
+ let restoreClock=()=>{};
+ try{
+ workers[0].emit("chat","turn/plan/updated",{turnId:job.turnId,plan:[]});await writing;
+ workers[0].emit("chat","item/completed",{turnId:job.turnId,item:{id:"final",type:"agentMessage",text:"Recovered exact answer"}});workers[0].settle({kind:"completed"});
+ await until(()=>!!job.completionPending);const checkpointAt=job.completion!.finishedAt,originalNow=Date.now.bind(Date),clock=vi.spyOn(Date,"now").mockImplementation(()=>originalNow()+1000);restoreClock=()=>clock.mockRestore();
+ release();await(scheduler as any).currentRun;
+ expect(job.recoveryRequired).toBe(true);expect(job.completionPending).toBe(true);offline=false;job.autoRecovery!.nextAttemptAt=0;
+ await(scheduler as any).tick();await until(()=>!(scheduler as any).recoveryTasks.size);await(scheduler as any).tick();expect(job.state).toBe("completed");expect(workers).toHaveLength(1);
+ const answer=await scheduler.chats.latestAssistant(job.id,job.completion);expect(answer).toMatchObject({text:"Recovered exact answer",status:"completed",turnId:job.turnId});expect(answer!.at).toBeGreaterThan(checkpointAt);
+ }finally{offline=false;release();restoreClock();fault.mockRestore();}
+});
+it.each([true,false])("recovers the saved success then rechecks delivery (artifact exists: %s) without inference",async(exists)=>{
+ const job=await scheduler.add({...input,cwd:root,interactive:true,deliveryChecks:[{kind:"file",path:"artifact",label:"Artifact",minBytes:1}]});await until(()=>workers[0]?.started);
+ if(exists)await fs.writeFile(path.join(root,"artifact"),"done");workers[0].failClose=true;workers[0].settle({kind:"completed"});await(scheduler as any).currentRun;
+ expect(job.delivery?.reports).toHaveLength(0);workers[0].failClose=false;job.autoRecovery!.nextAttemptAt=0;
+ await(scheduler as any).tick();await until(()=>!(scheduler as any).recoveryTasks.size);await(scheduler as any).tick();
+ expect(job.state).toBe(exists?"completed":"needs_attention");expect(job.delivery?.reports.at(-1)).toMatchObject({source:"recovery",status:exists?"passed":"failed"});expect(workers).toHaveLength(1);
+ expect(job.completionPending).toBeUndefined();expect(job.completion?.revision).toBe(1);
+});
+it.each(["pause","cancel"] as const)("keeps a later %s authoritative while recovering a saved completion",async(action)=>{
+ const job=await scheduler.add({...input,cwd:root,interactive:true});await until(()=>workers[0]?.started);
+ workers[0].failClose=true;workers[0].settle({kind:"completed"});await(scheduler as any).currentRun;workers[0].failClose=false;
+ let release!:()=>void,entered!:()=>void;const blocked=new Promise<void>(r=>{release=r;}),checking=new Promise<void>(r=>{entered=r;});
+ (scheduler as any).recover=async()=>{entered();await blocked;};job.autoRecovery!.nextAttemptAt=0;await(scheduler as any).tick();await checking;
+ const stopped=scheduler.control(job.id,action);await until(()=>job.stopIntent===action);release();await stopped;
+ await until(()=>!(scheduler as any).recoveryTasks.size);await(scheduler as any).tick();expect(job.state).toBe(action==="pause"?"paused":"cancelled");expect(workers).toHaveLength(1);expect(job.completionPending).toBeUndefined();
+});
+it("lets an explicit resume finalize a saved success after failed cleanup without another worker",async()=>{
+ const job=await scheduler.add({...input,cwd:root,interactive:true});await until(()=>workers[0]?.started);workers[0].failClose=true;workers[0].settle({kind:"completed"});await(scheduler as any).currentRun;
+ workers[0].failClose=false;await scheduler.control(job.id,"resume");await(scheduler as any).tick();expect(job.state).toBe("completed");expect(workers).toHaveLength(1);
+});
+it("retains the completion receipt after final state persistence fails",async()=>{
+ const job=await scheduler.add({...input,cwd:root,interactive:true});await until(()=>workers[0]?.started);
+ const original=store.save.bind(store);let failed=false;vi.spyOn(store,"save").mockImplementation(async()=>{if(!failed&&job.state==="completed"&&!job.completionPending){failed=true;throw Error("final state interrupted");}await original();});
+ workers[0].settle({kind:"completed"});await(scheduler as any).currentRun;expect(failed).toBe(true);expect(job.completionPending).toBe(true);
+ job.autoRecovery!.nextAttemptAt=0;await(scheduler as any).tick();await until(()=>!(scheduler as any).recoveryTasks.size);await(scheduler as any).tick();expect(job.state).toBe("completed");expect(workers).toHaveLength(1);
+});
+it("rolls back a failed completion handoff while preserving a newly accepted queue message",async()=>{
+ const job=await scheduler.add({...input,cwd:root,interactive:true});await until(()=>workers[0]?.started);
+ await scheduler.send({id:job.id,text:"NEXT INPUT",attachments:[],action:"queue"});const nextId=job.queuedMessages![0].id;
+ const original=store.save.bind(store);let failed=false,release!:()=>void,entered!:()=>void;
+ const blocked=new Promise<void>(r=>{release=r;}),writing=new Promise<void>(r=>{entered=r;});
+ vi.spyOn(store,"save").mockImplementation(async()=>{if(!failed&&job.state==="queued"&&!job.completionPending&&job.pendingMessage==="NEXT INPUT"){failed=true;entered();await blocked;throw Error("handoff state interrupted");}await original();});
+ workers[0].settle({kind:"completed"});await writing;
+ await scheduler.send({id:job.id,text:"LATER INPUT",attachments:[],action:"queue"},crypto.randomUUID());release();await(scheduler as any).currentRun;
+ expect(job.completionPending).toBe(true);expect(job.pendingMessage).toBeUndefined();expect(job.queuedMessages?.map(m=>m.text)).toEqual(["NEXT INPUT","LATER INPUT"]);expect(job.queuedMessages?.[0].id).toBe(nextId);expect(job.messageReceipts).toHaveLength(1);
+ job.autoRecovery!.nextAttemptAt=0;await(scheduler as any).tick();await until(()=>!(scheduler as any).recoveryTasks.size);await(scheduler as any).tick();await until(()=>workers[1]?.started);
+ expect(workers).toHaveLength(2);expect(workers[1].submitted).toBe("NEXT INPUT");expect(job.queuedMessages?.map(m=>m.text)).toEqual(["LATER INPUT"]);expect(job.completion?.revision).toBe(1);
+});
+it("persists a completion receipt before cleanup so a restart only finalizes the known result",async()=>{
+ const job=await scheduler.add({...input,cwd:root,interactive:true});await until(()=>workers[0]?.started);
+ let release!:()=>void,entered!:()=>void;const gate=new Promise<void>(r=>{release=r;}),closing=new Promise<void>(r=>{entered=r;});
+ workers[0].close=async()=>{entered();await gate;};workers[0].settle({kind:"completed"});
+ let saved:string;
+ try{await closing;saved=await fs.readFile(path.join(root,"state.json"),"utf8");expect(JSON.parse(saved).jobs[0].completionPending).toBe(true);}
+ finally{release();await(scheduler as any).currentRun;}
+ await fs.writeFile(path.join(root,"state.json"),saved!);const disk=new Store(root);await disk.load();store.data=disk.data;
+ const restored=store.data.jobs[0];expect(restored.recoveryRequired).toBe(true);restored.autoRecovery!.nextAttemptAt=0;
+ const recover=vi.fn(async()=>{});(scheduler as any).recover=recover;await(scheduler as any).tick();await until(()=>!restored.recoveryRequired);await until(()=>!(scheduler as any).recoveryTasks.size);
+ await(scheduler as any).tick();expect(recover).toHaveBeenCalledOnce();expect(restored.state).toBe("completed");expect(restored.completionPending).toBeUndefined();expect(workers).toHaveLength(1);
+ const verified=new Store(root);await verified.load();expect(verified.data.jobs[0].state).toBe("completed");
+});
+it("persists distinct completed worker generations with reused turn IDs but does not count a stopped worker",async()=>{
+ const job=await scheduler.add({...input,cwd:root,interactive:true});await until(()=>workers[0]?.started);
+ workers[0].settle({kind:"completed"});await(scheduler as any).currentRun;
+ expect(job.completion?.revision).toBe(1);expect(job.completion?.turnId).toBe("first-turn");
+ expect(job.completion!.finishedAt).toBeGreaterThanOrEqual(job.completion!.startedAt);
+ const first={...job.completion!};await scheduler.send({id:job.id,text:"Second turn",attachments:[],action:"queue"});
+ await(scheduler as any).tick();await until(()=>workers[1]?.started);workers[1].settle({kind:"completed"});await(scheduler as any).currentRun;
+ expect(job.completion?.revision).toBe(2);expect(job.completion?.turnId).toBe(first.turnId);
+ const disk=new Store(root);await disk.load();expect(disk.data.jobs[0].completion).toEqual(job.completion);
+ await scheduler.send({id:job.id,text:"Stop this turn",attachments:[],action:"queue"});await(scheduler as any).tick();await until(()=>workers[2]?.started);
+ await scheduler.control(job.id,"pause");expect(job.state).toBe("paused");expect(job.completion?.revision).toBe(2);
+});
 it("reports real scheduler ownership and captures distinct changes before renderer snapshot coalescing",async()=>{
   scheduler.runtimeReady=()=>false;const job=await scheduler.add({...input,cwd:root,interactive:true});
   expect(scheduler.operations().cards.find(c=>c.id===job.id)?.gates.map(g=>g.code)).toContain("cli");
@@ -1140,6 +1275,18 @@ it("keeps a Goal budget stop unfinished without rotating accounts or draining qu
   expect(job.queuedMessages).toHaveLength(1);
   expect(job.lastError).toContain("预算");
 });
+it.each(["quota","recoverable","interrupted"] as const)("keeps a later native Goal pause authoritative over %s during cleanup",async(kind)=>{
+  const job=await scheduler.add({...input,cwd:root,interactive:true});await until(()=>workers[0]?.started);
+  job.goal={threadId:job.threadId!,status:"paused"} as any;
+  workers[0].settle({kind});await(scheduler as any).currentRun;
+  expect(job.state).toBe("paused");expect(job.autoRecovery).toBeUndefined();expect(workers).toHaveLength(1);expect(job.rotations).toBe(0);
+});
+it("recognizes a masked budget stop without rotating accounts or sending another turn",async()=>{
+  const job=await scheduler.add({...input,cwd:root,interactive:true});await until(()=>workers[0]?.started);
+  job.goal={threadId:job.threadId!,status:"usageLimited",tokenBudget:100,tokensUsed:100} as any;
+  workers[0].settle({kind:"recoverable"});await(scheduler as any).currentRun;
+  expect(job.state).toBe("needs_attention");expect(job.lastError).toContain("预算");expect(job.autoRecovery).toBeUndefined();expect(job.rotations).toBe(0);
+});
 it("pauses Goal continuation before stopping the user's task and cancels automatic quota recovery", async () => {
   const job = await scheduler.add({ ...input, cwd: root, interactive: true });
   await until(() => job.state === "running");
@@ -2149,4 +2296,39 @@ it("persists task organization atomically and cannot archive active work",async(
  await scheduler.metadata(job.id,{title:"Renamed",pinned:true});expect(job.title).toBe("Renamed");
  const save=vi.spyOn(store,"save").mockRejectedValueOnce(Error("disk full"));
  await expect(scheduler.metadata(job.id,{title:"Lost"})).rejects.toThrow("disk full");expect(job.title).toBe("Renamed");save.mockRestore();
+});
+it("keeps batch workflow delivery gates durable and blocks dependent stages until actual verification",async()=>{
+ await scheduler.dispatch(true);
+ const check={kind:"file" as const,path:"result.txt",label:"Required output",minBytes:1};
+ const jobs=await scheduler.addWorkflow("gated-workflow","Gated",[{...input,cwd:root,deliveryChecks:[check]},{...input,cwd:root}]);
+ expect(jobs[0].delivery).toEqual({revision:1,checks:[check],reports:[]});expect((jobs[0] as any).deliveryChecks).toBeUndefined();
+ jobs[0].state="completed";expect((scheduler as any).dependenciesBlocked(jobs[1])).toBe(true);
+ await fs.writeFile(path.join(root,"result.txt"),"verified");await scheduler.checkDelivery(jobs[0].id);expect((scheduler as any).dependenciesBlocked(jobs[1])).toBe(false);
+ const loaded=new Store(root);await loaded.load();expect(loaded.data.jobs[0].delivery?.reports.at(-1)?.status).toBe("passed");
+});
+it("counts isolated schedule worktrees against their source project's concurrency limit",async()=>{
+ await scheduler.dispatch(true);
+ const folders=["isolated-a","isolated-b","unrelated"].map(name=>path.join(root,name));for(const folder of folders)await fs.mkdir(folder);
+ const occurrence=(id:string)=>({taskId:id,runId:id,requestedAt:Date.now(),sourceCwd:root});
+ const a=await scheduler.add({...input,cwd:folders[0]},undefined,occurrence("a")),b=await scheduler.add({...input,cwd:folders[1]},undefined,occurrence("b")),c=await scheduler.add({...input,cwd:folders[2]});
+ await scheduler.projectLimit(root,1);await scheduler.dispatch(false);await (scheduler as any).tick();await until(()=>workers.length===2&&workers.every(w=>w.started));
+ expect(workers.map(w=>w.ctx.job.id)).toEqual([a.id,c.id]);expect(b.state).toBe("queued");
+ const loaded=new Store(root);await loaded.load();expect(loaded.data.jobs[1].projectCwd).toBe(root);
+ await scheduler.dispatch(true,root);
+ workers[0].settle({kind:"completed"});await until(()=>!(scheduler as any).active.has(a.id));await (scheduler as any).tick();expect(workers).toHaveLength(2);
+ await scheduler.dispatch(false,root);await (scheduler as any).tick();await until(()=>workers[2]?.started);expect(workers[2].ctx.job.id).toBe(b.id);
+});
+it("isolates throwing state observers without rejecting committed workflows or deleting their journals",async()=>{
+ await scheduler.dispatch(true);let healthy=0;
+ scheduler.on("operationsObserved",()=>{throw Error("api_key: observer-secret");});scheduler.on("operationsObserved",()=>{healthy++;});
+ const steps=[{...input,cwd:root},{...input,cwd:root}];const jobs=await scheduler.addWorkflow("observer-flow","Observed",steps);
+ expect(healthy).toBeGreaterThan(0);expect(store.data.jobs).toHaveLength(2);expect((await scheduler.chats.read(jobs[0].id)).items.some(i=>i.role==="user")).toBe(true);
+ const repeated=await scheduler.addWorkflow("observer-flow","Observed",steps);expect(repeated.map(j=>j.id)).toEqual(jobs.map(j=>j.id));
+ scheduler.changed();scheduler.changed();expect(store.data.logs.filter(l=>l.message.includes("状态订阅处理失败"))).toHaveLength(1);expect(JSON.stringify(store.data.logs)).not.toContain("observer-secret");
+});
+it("keeps healthy and once snapshot listeners working after synchronous and asynchronous listener failures",async()=>{
+ let healthy=0,once=0;scheduler.on("snapshot",()=>{throw Error("sync observer");});scheduler.on("snapshot",async()=>{throw Error("async observer");});
+ scheduler.on("snapshot",()=>{healthy++;});scheduler.once("snapshot",()=>{once++;});
+ scheduler.changed();await until(()=>healthy===1&&store.data.logs.some(l=>l.message.includes("async observer")));
+ scheduler.changed();await until(()=>healthy===2);expect(once).toBe(1);expect(store.data.logs.filter(l=>l.message.includes("状态订阅处理失败"))).toHaveLength(2);
 });

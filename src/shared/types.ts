@@ -104,7 +104,7 @@ export interface Job {
   priority?: "high" | "normal" | "low";
   enqueuedAt?: number;
   recoveryHistory?: RecoveryEvent[];
-  schedule?: { taskId: string; runId: string; requestedAt: number };
+  schedule?: { taskId: string; runId: string; requestedAt: number; sourceCwd?:string };
   projectCwd?: string;
   agentOrigin?: { jobId: string; parentThreadId: string };
   preserveNativePermissions?: boolean;
@@ -164,6 +164,18 @@ export interface Job {
   recoveryRequired?: boolean;
   // Persist user intent before stopping so crash recovery never undoes it.
   stopIntent?: "pause" | "cancel";
+  // Distinguish later control states even after a pause/resume cycle returns to
+  // the same status and no timestamp has changed.
+  controlRevision?: number;
+  // A worker completion is distinct from metadata edits or a later delivery
+  // recheck. Persist its generation even if observers miss intermediate states.
+  completion?: {revision:number;startedAt:number;finishedAt:number;threadId?:string;turnId?:string};
+  // A successful worker result saved before its owner has finished cleanup.
+  // Recovery must prove ownership idle and finalize, rather than infer again.
+  completionPending?: boolean;
+  // System shutdown may pause a worker without revoking the user's authority
+  // to continue. Survives a crash between process cleanup and final requeue.
+  resumeAfterShutdown?: boolean;
   recoveryAttempts?: number;
   autoRecovery?: {
     reason: "process" | "interrupted" | "unknown";
