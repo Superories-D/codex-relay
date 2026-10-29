@@ -1,5 +1,5 @@
 import {expect,it} from 'vitest';
-import {discardQueueEdit,queueEditStatus,readQueueEdits,setQueueEdit} from '../src/renderer/queue-edits';
+import {discardQueueEdit,queueEditStatus,readQueueEdits,setQueueEdit,validQueueEdits} from '../src/renderer/queue-edits';
 it('keeps the original base while typing and identifies remote conflicts without losing text',()=>{
  let edits=setQueueEdit({},'one','original','my first',1);
  edits=setQueueEdit(edits,'one','remote changed','my final',2);
@@ -16,4 +16,11 @@ it('isolates message edits and bounds malformed local storage without treating d
  expect(edits.a.text).toBe('changed a');
  expect(readQueueEdits('{bad')).toEqual({});
  expect(readQueueEdits(JSON.stringify({bad:{base:'x',text:4,updatedAt:1},good:{base:'x',text:'y',updatedAt:1}}))).toEqual({good:{base:'x',text:'y',updatedAt:1}});
+});
+
+it('blocks automatic overwrite of corrupt or future queue editing records',()=>{
+ expect(validQueueEdits(null)).toBe(true);
+ expect(validQueueEdits(JSON.stringify(setQueueEdit({},'a','before','after',1)))).toBe(true);
+ expect(validQueueEdits('{bad')).toBe(false);
+ expect(validQueueEdits(JSON.stringify({a:{base:'a',text:'b',updatedAt:1,future:true}}))).toBe(false);
 });
