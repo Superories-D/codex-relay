@@ -1,3 +1,4 @@
+import { workspaceEnglish } from "./workspace-shell";
 import {  legacyEnglish } from "./legacy-en";
 import { nativeEnglish } from "./native-en";
 import { vaultEnglish } from "./vault";
@@ -5,6 +6,7 @@ import { operationsEnglish } from "./operations";
 import {recoveryEnglish} from "./recovery";
 import {checkpointEnglish} from "./checkpoints";
 export const english: Record<string, string> = {
+...workspaceEnglish,
 ...vaultEnglish,
 ...operationsEnglish,
 ...recoveryEnglish,

@@ -1,3 +1,5 @@
+import { WorkspaceHome } from "./WorkspaceHome";
+import { CommandPalette } from "./CommandPalette";
 import { t, useI18n, setLanguage, errorText } from "./i18n";
 import { MessageQueue } from "./MessageQueue";
 import { loadDraftState, saveDraftState, remainingDraft, remainingFiles } from "./drafts";
@@ -100,6 +102,7 @@ import {
 } from "lucide-react";
 import "./agent.css";
 import "./desktop.css";
+import "./workspace-shell.css";
 
 const names: Record<string, string> = {
   queued: "排队中",
@@ -177,6 +180,8 @@ export function AgentApp({
   );
   const [screen, setScreen] = useState("chat");
   const [sidebarHidden, setSidebarHidden] = useState(false);
+  const [focusMode, setFocusMode] = useState(() => localStorage.getItem("relay.focusMode") === "true");
+  useEffect(() => localStorage.setItem("relay.focusMode", String(focusMode)), [focusMode]);
   const [terminal, setTerminal] = useState(false);
   const [composerMenu, setComposerMenu] = useState(false);
   const [threadMenu, setThreadMenu] = useState(false);
@@ -401,6 +406,10 @@ export function AgentApp({
       if (mod && e.key === "b") {
         e.preventDefault();
         setSidebarHidden((v) => !v);
+      }
+      if (mod && e.shiftKey && e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        setFocusMode(v => !v);
       }
       if (mod && e.key === "j") {
         e.preventDefault();
@@ -810,12 +819,13 @@ export function AgentApp({
           {t("帮助")}
         </button>
       </div>
-      <span className="desktop-window-title">Codex Relay</span>
+      <button className="workspace-command-trigger" onClick={() => setPalette(true)} aria-label={t("搜索与快捷操作")}><Search size={14}/><span>{t("搜索与快捷操作")}</span><kbd>Ctrl K</kbd></button>
+      <button className="workspace-focus-toggle" aria-pressed={focusMode} title={t("专注模式 · Ctrl+Shift+F")} onClick={() => setFocusMode(v => !v)}><Target size={15}/>{t(focusMode ? "退出专注" : "专注模式")}</button>
     </div>
   );
   return (
     <div
-      className={`desktop-shell ${sidebarHidden ? "sidebar-hidden" : ""} ${desktop.preferences?.reduceMotion ? "reduce-motion" : ""}`}
+      className={`desktop-shell ${focusMode ? "workspace-focus" : ""} ${sidebarHidden ? "sidebar-hidden" : ""} ${desktop.preferences?.reduceMotion ? "reduce-motion" : ""}`}
       data-theme={desktop.preferences?.theme || "dark"}
       data-color-scheme={
         desktop.preferences?.theme === "light" ||
@@ -1325,40 +1335,10 @@ export function AgentApp({
                 >
                   <div className="agent-transcript" ref={transcript}>
                     {!job && (
-                      <div className="agent-welcome">
-                        <span className="agent-welcome-mark">
-                          <Command size={38} strokeWidth={1.1} />
-                        </span>
-                        <h1>{t("今天想做些什么？")}</h1>
-                        <p>
-                          {t("从一个问题、一个想法，或一行待完成的代码开始。")}
-                        </p>
-                        <div className="agent-suggestions">
-                          {[
-                            t("了解这个项目的结构"),
-                            t("查找并修复一个问题"),
-                            t("为项目补充测试"),
-                          ].map((t) => (
-                            <button
-                              key={t}
-                              onClick={() =>
-                                setDrafts((d) => ({ ...d, new: t }))
-                              }
-                            >
-                              <span>{t}</span>
-                              <ArrowUp size={14} />
-                            </button>
-                          ))}
-                        </div>
-                        <button
-                          className="agent-project-picker"
-                          onClick={() => action(chooseProject)}
-                        >
-                          <Folder size={15} />{" "}
-                          {cwd ? basename(cwd) : t("选择项目目录")}
-                          <ChevronDown size={13} />
-                        </button>
-                      </div>
+                      <WorkspaceHome snapshot={snapshot} cwd={cwd} projects={desktop.projects || []} open={select}
+                        project={value => {setCwd(value);localStorage.setItem("relay.project",value);messageInput.current?.focus();}}
+                        choose={() => action(chooseProject)} tasks={() => setScreen("tasks")}
+                        prompt={value => {setDrafts(d => ({...d,[key]: d[key]?.trim() ? `${d[key]}\n\n${value}` : value}));messageInput.current?.focus();}}/>
                     )}
                     {job?.historySource && (
                       <div className="agent-history-note">
@@ -2314,19 +2294,19 @@ export function AgentApp({
           </>
         )}
         {palette && (
-          <SearchPalette
-            jobs={snapshot?.jobs || []}
-            close={() => setPalette(false)}
-            choose={(j) => {
-              select(j);
-              setArchived(!!j.archived);
-              setPalette(false);
-            }}
-            newChat={() => {
-              select();
-              setPalette(false);
-            }}
-          />
+          <CommandPalette jobs={snapshot?.jobs || []} close={() => setPalette(false)}
+            choose={j => {select(j);setManage("");setArchived(!!j.archived);}}
+            commands={[
+              {id:"new",label:t("新聊天"),hint:"Ctrl Shift O",run:()=>{select();setManage("");}},
+              {id:"tasks",label:t("打开任务工作台"),run:()=>{setManage("");setScreen("tasks");}},
+              {id:"project",label:t("选择项目目录"),run:()=>action(chooseProject)},
+              {id:"focus",label:t(focusMode ? "退出专注" : "专注模式"),hint:"Ctrl Shift F",run:()=>setFocusMode(v=>!v)},
+              {id:"settings",label:t("设置"),hint:"Ctrl ,",run:()=>setManage("settings")},
+              {id:"schedules",label:t("定时任务"),run:()=>{setManage("");setScreen("schedules");refreshDesktop();}},
+              {id:"extensions",label:t("插件与 Skills"),run:()=>{setManage("");setScreen("plugins");}},
+              {id:"terminal",label:t("集成终端"),hint:"Ctrl J",run:()=>{setManage("");setScreen("chat");setTerminal(v=>!v);}},
+            ]}/>
+
         )}
         <ModalPresence>
           {history && (
@@ -2413,108 +2393,6 @@ export function AgentApp({
   );
 }
 
-function SearchPalette({
-  jobs,
-  choose,
-  close,
-  newChat,
-}: {
-  jobs: Job[];
-  choose: (job: Job) => void;
-  close: () => void;
-  newChat: () => void;
-}) {
-  useI18n();
-
-  const [query, setQuery] = useState(""),
-    [index, setIndex] = useState(0);
-  const results = jobs
-    .filter((j) =>
-      `${j.title} ${j.cwd}`.toLowerCase().includes(query.toLowerCase()),
-    )
-    .sort(
-      (a, b) =>
-        Number(!!b.pinned) - Number(!!a.pinned) || b.updatedAt - a.updatedAt,
-    )
-    .slice(0, 30);
-  return (
-    <div
-      className="search-backdrop"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) close();
-      }}
-    >
-      <section
-        className="search-palette"
-        role="dialog"
-        aria-label={t("搜索全部聊天")}
-      >
-        <div className="search-palette-input">
-          <Search size={19} />
-          <input
-            autoFocus
-            aria-label={t("查找聊天或项目")}
-            placeholder={t("搜索聊天和项目…")}
-            value={query}
-            onChange={(e) => {
-              setQuery(e.target.value);
-              setIndex(0);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "ArrowDown") {
-                e.preventDefault();
-                setIndex((v) => Math.min(results.length - 1, v + 1));
-              }
-              if (e.key === "ArrowUp") {
-                e.preventDefault();
-                setIndex((v) => Math.max(0, v - 1));
-              }
-              if (e.key === "Enter" && results[index]) {
-                e.preventDefault();
-                choose(results[index]);
-              }
-            }}
-          />
-          <kbd>Esc</kbd>
-        </div>
-        <div className="search-palette-results">
-          <span>
-            {query
-              ? t("{p0} 个匹配的聊天", { p0: results.length })
-              : t("最近的聊天")}
-          </span>
-          {results.map((j, i) => (
-            <button
-              className={i === index ? "selected" : ""}
-              key={j.id}
-              onClick={() => choose(j)}
-              onMouseEnter={() => setIndex(i)}
-            >
-              <MessageSquare size={17} />
-              <span>
-                <strong>{j.title}</strong>
-                <small>
-                  {basename(j.cwd)} · {t(jobLabel(j))}
-                  {j.archived ? t(" · 已归档") : ""}
-                </small>
-              </span>
-              {j.pinned && <Pin size={13} />}
-              <ChevronRight size={15} />
-            </button>
-          ))}
-          {!results.length && <p>{t("没有匹配的聊天")}</p>}
-        </div>
-        <footer>
-          <button onClick={newChat}>
-            <SquarePen size={15} />
-            {t("新聊天")}
-          </button>
-          <span>{t("↑↓ 选择 · Enter 打开")}</span>
-        </footer>
-      </section>
-    </div>
-  );
-}
 function Message({ item }: { item: ChatItem }) {
   useI18n();
 
