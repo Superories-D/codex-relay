@@ -1,4 +1,5 @@
 import { HandoffCenter } from "./HandoffCenter";
+import { loadSavedTaskViews, savedTaskViewKey, sameTaskCriteria, writeSavedTaskView, type SavedTaskView } from "../shared/task-saved-views";
 import { WorkflowReport } from "./WorkflowReport";
 import { WorkspaceCheckpoints } from "./WorkspaceCheckpoints";
 import { DeliveryCenter } from "./DeliveryCenter";
@@ -48,6 +49,27 @@ export function TaskCenter({ snapshot, call, open, close, approval, manage }: {
   const [project, setProject] = useState("");
   const [query, setQuery] = useState("");
   const [view, setView] = useState(() => readTaskView(localStorage));
+  const [savedState, setSavedState] = useState(() => {try {return loadSavedTaskViews(localStorage.getItem(savedTaskViewKey));}catch{return {views:[] as SavedTaskView[],invalid:true};}});
+  const [savedId,setSavedId]=useState("");
+  const [viewName,setViewName]=useState("");
+  const [viewNotice,setViewNotice]=useState("");
+  const currentCriteria={query,project,filter,sort:view.sort,layout:view.layout};
+  const activeSaved=savedState.views.find(item=>item.id===savedId);
+  const savedDirty=!!activeSaved&&!sameTaskCriteria(activeSaved,currentCriteria);
+  function persistViews(next:SavedTaskView[]) { localStorage.setItem(savedTaskViewKey,JSON.stringify(next));setSavedState({views:next,invalid:false}); }
+  function applySaved(id:string) {
+    setSavedId(id);const item=savedState.views.find(v=>v.id===id);if(!item)return;
+    setQuery(item.query);setProject(item.project);setFilter(item.filter);setView({layout:item.layout,sort:item.sort});setViewName(item.name);setViewNotice("");
+  }
+  function saveNamed(update:boolean) {
+    try {
+      if(savedState.invalid)throw Error("视图存储无法读取，请先导出或重置");
+      if(!viewName.trim()||viewName.trim().length>60)throw Error("视图名称需要 1 至 60 个字符");
+      const value={...currentCriteria,id:update&&activeSaved?activeSaved.id:crypto.randomUUID(),name:viewName.trim()};
+      persistViews(writeSavedTaskView(savedState.views,value));setSavedId(value.id);setViewNotice("任务视图已保存");
+    }catch(e){setViewNotice(errorText(e));}
+  }
+  function removeNamed() {try{persistViews(savedState.views.filter(v=>v.id!==savedId));setSavedId("");setViewName("");setViewNotice("已删除保存的视图，当前筛选保持不变");}catch(e){setViewNotice(errorText(e));}}
   const [selected, setSelected] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const actionLock = useRef(false);
@@ -65,7 +87,7 @@ export function TaskCenter({ snapshot, call, open, close, approval, manage }: {
   const pauseTargets = targets.filter(job => canControlTask(job, "pause"));
   const resumeTargets = targets.filter(job => canControlTask(job, "resume"));
   const hiddenSelection = selected.filter(id => jobs.some(job => job.id === id) && !filtered.some(job => job.id === id)).length;
-  const projects = [...new Map([...jobs.map(job => job.projectCwd || job.cwd), ...(snapshot.dispatch?.projects || []), ...(snapshot.projectLimits || []).map(limit => limit.cwd)]
+  const projects = [...new Map([...(project ? [project] : []), ...jobs.map(job => job.projectCwd || job.cwd), ...(snapshot.dispatch?.projects || []), ...(snapshot.projectLimits || []).map(limit => limit.cwd)]
     .map(cwd => [projectKey(cwd, snapshot.platform), cwd])).values()];
   const projectPaused = snapshot.dispatch?.projects.some(cwd => projectKey(cwd, snapshot.platform) === projectKey(project, snapshot.platform));
   async function action(name: string, args: unknown) {
@@ -138,6 +160,16 @@ export function TaskCenter({ snapshot, call, open, close, approval, manage }: {
     <header className="tw-header"><div className="tw-heading"><span className="tw-eyebrow"><ListTodo size={14}/>{t("项目执行工作台")}</span><h1>{t("任务中心")}</h1><p>{t("把待办变成进展，让需要你的任务先被看见。")}</p></div><div className="tw-header-actions"><button onClick={close}><ArrowLeft size={15}/>{t("返回聊天")}</button><button className="tw-primary workflow-trigger" onClick={() => setBuilding(true)}><Plus size={16}/>{t("新建工作流")}</button></div></header>
     <nav className="tw-tools" aria-label={t("任务工作台工具")}><button onClick={()=>setHandoffs(true)}><GitBranch size={15}/>{t("任务成果交接")}</button><button onClick={() => setDeliveryCenter(true)}><CheckCheck size={15}/>{t("交付中心")}</button><button onClick={() => setCockpit(true)}><SlidersHorizontal size={15}/>{t("任务运行台")}</button><button onClick={() => setCheckpoints(true)}><GitBranch size={15}/>{t("工作区检查点")}</button><span className={`tw-dispatch-state ${snapshot.dispatch?.paused ? "is-paused" : ""}`}><i/>{t(snapshot.dispatch?.paused ? "调度已暂停" : "自动调度已开启")}</span></nav>
     <details className="tw-dispatch"><summary><SlidersHorizontal size={14}/>{t("调度与并发设置")}<ChevronDown size={14}/></summary><div className="tw-dispatch-content"><p>{t("暂停调度只阻止新任务启动，当前任务会继续完成。设置在重启后保留。")}</p><button disabled={busy} onClick={() => void action("scheduler.dispatch", { paused: !snapshot.dispatch?.paused })}>{t(snapshot.dispatch?.paused ? "开启全局调度" : "暂停全局调度")}</button>{project && <><button disabled={busy} onClick={() => void action("scheduler.dispatch", { paused: !projectPaused, cwd: project })}>{t(projectPaused ? "开启此项目调度" : "暂停此项目调度")}</button><label>{t("项目并发上限")}<select disabled={busy} value={projectLimit(snapshot, { cwd: project }, snapshot.platform) || ""} onChange={event => void action("scheduler.projectLimit", { cwd: project, limit: event.target.value ? Number(event.target.value) : null })}><option value="">{t("跟随全局上限")}</option>{[1,2,3,4,5,6,7,8].map(n => <option value={n} key={n}>{n}</option>)}</select></label><small>{t("降低上限不会中断正在运行的任务；名额释放后自动继续排队任务。")}</small></>}</div></details>
+    <section className="tw-saved-views" aria-label={t("保存的任务视图")}>
+      <div><strong>{t("保存的任务视图")}</strong><small>{t("保存搜索、项目、状态、排序和布局，下次一键继续。")}</small></div>
+      <select data-testid="task-saved-view" aria-label={t("保存的任务视图")} value={savedId} onChange={event=>applySaved(event.target.value)}><option value="">{t("当前自定义视图")}</option>{savedState.views.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select>
+      <input data-testid="task-view-name" aria-label={t("任务视图名称")} placeholder={t("为当前视图命名")} maxLength={60} value={viewName} onChange={event=>setViewName(event.target.value)}/>
+      <button data-testid="task-view-save" disabled={savedState.invalid||!viewName.trim()} onClick={()=>saveNamed(false)}>{t("另存为新视图")}</button>
+      {activeSaved&&<><button data-testid="task-view-update" disabled={savedState.invalid||!viewName.trim()} onClick={()=>saveNamed(true)}>{t("更新名称与筛选")}{savedDirty?" *":""}</button><button data-testid="task-view-delete" disabled={savedState.invalid} onClick={removeNamed}>{t("删除视图")}</button></>}
+      {savedDirty&&<small className="tw-view-dirty">{t("当前筛选有未保存的更改")}</small>}
+      {savedState.invalid&&<p role="alert">{t("视图存储无法读取，请先导出或重置")}<button onClick={()=>{try{const raw=localStorage.getItem(savedTaskViewKey)||"";const blob=new Blob([raw],{type:"application/json"}),url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download="task-views-backup.json";a.click();URL.revokeObjectURL(url);}catch(e){setViewNotice(errorText(e));}}}>{t("导出原始视图备份")}</button><button onClick={()=>{try{persistViews([]);setSavedId("");setViewName("");setViewNotice("已重置保存的视图");}catch(e){setViewNotice(errorText(e));}}}>{t("重置保存的视图")}</button></p>}
+      {viewNotice&&<p role="status">{t(viewNotice)}</p>}
+    </section>
     <div className="tw-filters"><label className="tw-search"><Search size={16}/><input aria-label={t("搜索任务")} placeholder={t("搜索任务、项目或工作流")} value={query} onChange={event => setQuery(event.target.value)}/>{query && <button onClick={() => setQuery("")} aria-label={t("清除搜索")}><X size={14}/></button>}</label><select aria-label={t("筛选项目")} value={project} onChange={event => setProject(event.target.value)}><option value="">{t("全部项目")}</option>{projects.map(cwd => <option key={cwd} value={cwd}>{cwd}</option>)}</select><select data-testid="task-sort" aria-label={t("任务排序")} value={view.sort} onChange={event => setView(previous => ({ ...previous, sort: event.target.value as TaskSort }))}><option value="priority">{t("按优先级")}</option><option value="recent">{t("最近更新")}</option><option value="oldest">{t("最早创建")}</option></select><div className="tw-view-switch" role="group" aria-label={t("任务视图")}><button data-testid="task-layout-list" aria-pressed={view.layout === "list"} title={t("列表视图")} aria-label={t("列表视图")} onClick={() => setView(previous => ({ ...previous, layout: "list" }))}><List size={17}/></button><button data-testid="task-layout-board" aria-pressed={view.layout === "board"} title={t("看板视图")} aria-label={t("看板视图")} onClick={() => setView(previous => ({ ...previous, layout: "board" }))}><Columns3 size={17}/></button></div></div>
     <div className="tw-filter-tabs" role="group" aria-label={t("任务状态筛选")}>{filters.map(item => <button key={item.value} data-testid={`task-filter-${item.value}`} aria-pressed={filter === item.value} onClick={() => setFilter(item.value)}>{t(item.label)}<span>{scoped.filter(job => matchesTaskFilter(job, item.value, snapshot.approvals)).length}</span></button>)}</div>
     <div className="tw-selection"><label><input type="checkbox" aria-label={t("选择当前列表")} disabled={busy || !eligible.length} checked={eligible.length > 0 && eligible.every(job => selected.includes(job.id))} onChange={event => setSelected(event.target.checked ? eligible.slice(0,100).map(job => job.id) : selected.filter(id => !eligible.some(job => job.id === id)))}/>{t("显示 {count} 项任务", { count: filtered.length })}</label>{selected.length > 0 && <><span>{t("已选择 {count} 项", { count: targets.length })}</span><button disabled={busy || !pauseTargets.length} onClick={() => void run("pause", pauseTargets)}><Pause size={13}/>{t("暂停所选")} ({pauseTargets.length})</button><button disabled={busy || !resumeTargets.length} onClick={() => void run("resume", resumeTargets)}><Play size={13}/>{t("恢复所选")} ({resumeTargets.length})</button><label className="tw-bulk-priority">{t("批量优先级")}<select data-testid="task-bulk-priority" aria-label={t("批量优先级")} disabled={busy || !priorityTargets.length} value={priority} onChange={event => setPriority(event.target.value as TaskPriority)}><option value="high">{t("优先执行")}</option><option value="normal">{t("普通优先级")}</option><option value="low">{t("空闲时执行")}</option></select></label><button data-testid="task-bulk-priority-apply" disabled={busy || !priorityTargets.length} onClick={() => void setPriorities()}>{t("应用到 {count} 项", { count: priorityTargets.length })}</button><button disabled={busy} onClick={() => setSelected([])}>{t("清除选择")}</button></>}{hiddenSelection > 0 && <small>{t("另有 {count} 项选择已被筛选隐藏", { count: hiddenSelection })}</small>}</div>
