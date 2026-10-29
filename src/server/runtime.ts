@@ -1,3 +1,4 @@
+import { bulkPrioritySchema } from "../shared/task-priority";
 import {randomUUID} from "node:crypto";
 import {ServerWorkflows} from "./workflows";
 import { Desktop } from "../core/desktop";
@@ -341,6 +342,8 @@ export class ServerRuntime {
         const {id,...patch}=z.object({id:idSchema,title:z.string().trim().min(1).max(120).optional(),pinned:z.boolean().optional(),archived:z.boolean().optional()}).strict().parse(args);
         return this.scheduler.metadata(id,patch);
       }
+      case "jobs.priority":
+        return this.scheduler.priorityMany(bulkPrioritySchema.parse(args));
       case "chat.priority": {
         const a = z.object({id:idSchema,priority:z.enum(["high","normal","low"])}).strict().parse(args);
         return this.scheduler.priority(a.id,a.priority);

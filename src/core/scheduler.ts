@@ -1,3 +1,4 @@
+import { bulkPrioritySchema, priorityRejection, priorityErrors, type BulkPriorityInput, type BulkPriorityResult, type PriorityResult } from "../shared/task-priority";
 import { dispatchHeld, projectKey, projectHasCapacity } from "../shared/dispatch";
 import { operationCard, accountGateReasons,indexOperations, type AccountGateCode } from "./operations";
 import { operationObservation } from "./operations-observation";
@@ -1766,6 +1767,44 @@ export class Scheduler extends EventEmitter {
       Object.assign(job,patch);
       try{await this.store.save();}catch(error){Object.assign(job,previous);throw error;}
       this.changed();
+    });
+  }
+  priorityMany(input: BulkPriorityInput): Promise<BulkPriorityResult> {
+    const { ids, priority } = bulkPrioritySchema.parse(input);
+    return this.queueMaintenance(async () => {
+      this.maintaining = true;
+      try {
+        await this.tickInFlight;
+        const accepted: { job: Job; previous: Job["priority"] }[] = [];
+        const results: PriorityResult[] = [...new Set(ids)].map(id => {
+          const job = this.store.data.jobs.find(item => item.id === id);
+          const code = this.closing ? "closing" : priorityRejection(job);
+          if (code) return { id, ok: false, code, error: priorityErrors[code] };
+          accepted.push({ job: job!, previous: job!.priority });
+          return { id, ok: true };
+        });
+        if (!accepted.length) return { priority, results };
+        for (const { job } of accepted) job.priority = priority;
+        try {
+          // One save for the accepted subset. No success is returned until the
+          // complete priority update is durable; controls queue behind it.
+          await this.store.save();
+        } catch {
+          for (const { job, previous } of accepted) {
+            if (previous === undefined) delete job.priority;
+            else job.priority = previous;
+          }
+          for (const result of results) if (result.ok) {
+            result.ok = false;
+            result.code = "save_failed";
+            result.error = priorityErrors.save_failed;
+          }
+          this.changed();
+          return { priority, results };
+        }
+        this.changed();
+        return { priority, results };
+      } finally { this.maintaining = false; }
     });
   }
   priority(id: string, priority: NonNullable<Job["priority"]>) {

@@ -27,6 +27,7 @@ const allowed = new Set([
   "job.control",
   "job.metadata",
   "jobs.control",
+  "jobs.priority",
   "chat.send",
   "chat.submit",
   "chat.priority",

@@ -1,9 +1,11 @@
+import { taskWorkspaceJapanese } from "./task-workspace";
 import { workspaceJapanese } from "./workspace-shell";
 import { vaultJapanese } from "./vault";
 import { operationsJapanese } from "./operations";
 import {recoveryJapanese} from "./recovery";
 import {checkpointJapanese} from "./checkpoints";
 export const japanese: Record<string, string> = {
+...taskWorkspaceJapanese,
 ...workspaceJapanese,
 ...vaultJapanese,
 ...operationsJapanese,

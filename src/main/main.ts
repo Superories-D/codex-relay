@@ -1,3 +1,4 @@
+import { bulkPrioritySchema } from "../shared/task-priority";
 import {scheduleInputSchema} from "../core/schedule-command";
 import { deliverySaveSchema } from "./validation";
 import {updateGoal} from "../core/goal-command";
@@ -966,6 +967,8 @@ async function boot() {
         }
         return scheduler.chats.read(a.id, a.before);
       }
+      case "jobs.priority":
+        return scheduler.priorityMany(bulkPrioritySchema.parse(args));
       case "chat.priority": {
         const a = z.object({ id: idSchema, priority: z.enum(["high", "normal", "low"]) }).strict().parse(args);
         return scheduler.priority(a.id, a.priority);
