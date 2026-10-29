@@ -1,0 +1,38 @@
+export const filesIterationsEnglish:Record<string,string>={
+  "项目文件浏览器": "Project file browser",
+  "搜索当前目录及子目录": "Search this folder and subfolders",
+  "清除文件搜索": "Clear file search",
+  "隐藏点文件": "Hide dotfiles",
+  "显示点文件": "Show dotfiles",
+  "刷新文件列表": "Refresh files",
+  "目录路径": "Folder path",
+  "递归搜索文件名与相对路径": "Searches file names and relative paths recursively",
+  "方向键浏览 · Enter 打开 · Backspace 上一级": "Arrows to navigate · Enter to open · Backspace to go up",
+  "已检查 {count} 个目录；结果可能不完整。": "Checked {count} folders; results may be incomplete.",
+  " {count} 个目录无法读取。": " {count} folders could not be read.",
+  "文件与目录": "Files and folders",
+  "上一级目录": "Parent folder",
+  "没有匹配的文件或目录": "No matching files or folders",
+  "显示更多文件（{count}）": "Show more files ({count})",
+  "{count} 个项目": "{count} items",
+  " · 搜索范围：{path}": " · Scope: {path}"
+};
+export const filesIterationsJapanese:Record<string,string>={
+  "项目文件浏览器": "プロジェクトファイルブラウザー",
+  "搜索当前目录及子目录": "このフォルダーと配下を検索",
+  "清除文件搜索": "ファイル検索をクリア",
+  "隐藏点文件": "ドットファイルを非表示",
+  "显示点文件": "ドットファイルを表示",
+  "刷新文件列表": "ファイル一覧を更新",
+  "目录路径": "フォルダーパス",
+  "递归搜索文件名与相对路径": "ファイル名と相対パスを再帰検索",
+  "方向键浏览 · Enter 打开 · Backspace 上一级": "矢印で移動 · Enter で開く · Backspace で上へ",
+  "已检查 {count} 个目录；结果可能不完整。": "{count} フォルダーを確認しました。結果が不完全な可能性があります。",
+  " {count} 个目录无法读取。": " {count} フォルダーを読み取れませんでした。",
+  "文件与目录": "ファイルとフォルダー",
+  "上一级目录": "親フォルダー",
+  "没有匹配的文件或目录": "一致するファイルやフォルダーがありません",
+  "显示更多文件（{count}）": "ファイルをさらに表示（{count}）",
+  "{count} 个项目": "{count} 項目",
+  " · 搜索范围：{path}": " · 検索範囲：{path}"
+};

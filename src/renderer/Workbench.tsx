@@ -1,3 +1,4 @@
+import { FileBrowser } from "./FileBrowser";
 import { t, useI18n, errorText } from "./i18n";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { DiffReview } from "./DiffReview";
@@ -97,93 +98,6 @@ export type WorkbenchTab =
   | "changes"
   | "agents"
   | "questions";
-type Entry = { name: string; path: string; directory: boolean };
-function Tree({
-  cwd,
-  at = ".",
-  call,
-  select,
-  level = 0,
-}: {
-  cwd: string;
-  at?: string;
-  call: Call;
-  select: (path: string) => void;
-  level?: number;
-}) {
-  useI18n();
-
-  const [entries, setEntries] = useState<Entry[]>([]),
-    [opened, setOpened] = useState<string[]>([]),
-    [error, setError] = useState("");
-  useEffect(() => {
-    let alive = true;
-    void call("workspace.files", { cwd, path: at })
-      .then((v) => {
-        if (alive) setEntries(v);
-      })
-      .catch((e) => {
-        if (alive) setError(String(e));
-      });
-    return () => {
-      alive = false;
-    };
-  }, [cwd, at]);
-  return (
-    <div className="file-tree">
-      {error && <p className="panel-error">{error}</p>}
-      {entries.map((e) => (
-        <React.Fragment key={e.path}>
-          <button
-            style={{ paddingLeft: 12 + level * 14 }}
-            title={e.path}
-            onClick={() =>
-              e.directory
-                ? setOpened((v) =>
-                    v.includes(e.path)
-                      ? v.filter((p) => p !== e.path)
-                      : [...v, e.path],
-                  )
-                : select(e.path)
-            }
-          >
-            {e.directory ? (
-              opened.includes(e.path) ? (
-                <ChevronDown size={12} />
-              ) : (
-                <ChevronRight size={12} />
-              )
-            ) : (
-              <span className="tree-indent" />
-            )}
-            {e.directory ? (
-              opened.includes(e.path) ? (
-                <FolderOpen size={15} />
-              ) : (
-                <Folder size={15} />
-              )
-            ) : (
-              <FileCode2 size={15} />
-            )}
-            <span>{e.name}</span>
-          </button>
-          {e.directory && opened.includes(e.path) && (
-            <Tree
-              cwd={cwd}
-              at={e.path}
-              call={call}
-              select={select}
-              level={level + 1}
-            />
-          )}
-        </React.Fragment>
-      ))}
-      {!entries.length && !error && (
-        <p className="file-tree-empty">{t("此目录为空")}</p>
-      )}
-    </div>
-  );
-}
 export function Workbench({
   tab,
   setTab,
@@ -334,7 +248,7 @@ export function Workbench({
             <div className="panel-section-label">
               {cwd.split(/[\\/]/).at(-1)}
             </div>
-            <Tree cwd={cwd} call={call} select={setFile} />
+            <FileBrowser key={cwd} cwd={cwd} call={call} select={setFile} />
           </div>
         ) : (
           <PanelEmpty text={t("选择一个项目来浏览文件")} />
