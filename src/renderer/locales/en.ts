@@ -1,3 +1,4 @@
+import { composerInboxEnglish } from "./composer-inbox-iterations";
 import { reviewWorkspaceEnglish } from "./review-workspace";
 import { taskWorkspaceEnglish } from "./task-workspace";
 import { workspaceEnglish } from "./workspace-shell";
@@ -11,6 +12,7 @@ import {recoveryEnglish} from "./recovery";
 import {checkpointEnglish} from "./checkpoints";
 import {handoffEnglish} from "./handoff";
 export const english: Record<string, string> = {
+...composerInboxEnglish,
 ...reviewWorkspaceEnglish,
 ...taskWorkspaceEnglish,
 ...workspaceEnglish,

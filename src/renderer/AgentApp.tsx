@@ -1,3 +1,4 @@
+import { DraftHistory } from "./DraftHistory";
 import { recordWorkspaceRoute, workspaceHistoryTarget, type WorkspaceNavigation } from "./workspace-navigation";
 import { WorkspaceHome } from "./WorkspaceHome";
 import { CommandPalette } from "./CommandPalette";
@@ -1610,7 +1611,8 @@ export function AgentApp({
                         {t(job?.stage || jobLabel(job!))}
                       </div>
                     )}
-                    {job && <MessageQueue key={job.id} job={job} pending={pending} onChange={(args) => action(() => call("chat.queue", args))} />}
+                    <DraftHistory key={key} scope={key} text={draft} files={attachments} disabled={pending || !!pendingCreation || !!pasting[key]} restore={(text,files)=>{setDrafts(d=>({...d,[key]:text}));setFiles(d=>({...d,[key]:files}));messageInput.current?.focus();}}/>
+                    {job && <MessageQueue key={job.id} job={job} pending={pending} onChange={(args) => call("chat.queue", args)} />}
                   </div>
                 </div>
                 <div className="agent-composer-wrap">
@@ -2511,7 +2513,7 @@ export function AgentApp({
         </ModalPresence>
         <ModalPresence>{reportOpen && job && <TaskReport id={job.id} call={call} close={() => setReportOpen(false)} />}</ModalPresence>
         <ModalPresence>{deliveryOpen&&<DeliveryDialog key={key} job={job} initial={deliveryDraft} call={call} close={()=>setDeliveryOpen(false)} saveDraft={checks=>{writeDeliveryDraft(key,checks);setDeliveryVersion(value=>value+1);}} repair={text=>{setDrafts(old=>({...old,[key]:[old[key],text].filter(Boolean).join("\n\n")}));setTimeout(()=>messageInput.current?.focus(),250);}}/>}</ModalPresence>
-        <ModalPresence>{templatesOpen && <TaskTemplates draft={draft} preferences={{ model, effort, planMode, multiAgent, deliveryChecks:job?.delivery?.checks||deliveryDraft }} call={call} close={() => setTemplatesOpen(false)} apply={(template) => {
+        <ModalPresence>{templatesOpen && <TaskTemplates cwd={currentCwd} draft={draft} preferences={{ model, effort, planMode, multiAgent, deliveryChecks:job?.delivery?.checks||deliveryDraft }} call={call} close={() => setTemplatesOpen(false)} apply={(template) => {
           if(!job){writeDeliveryDraft(key,template.deliveryChecks||[]);setDeliveryVersion(value=>value+1);}
           setDrafts((d) => ({ ...d, [key]: [d[key], template.prompt].filter(Boolean).join("\n\n") }));
           setModel(template.model); setEffort(template.effort); setPlanMode(template.planMode); setMultiAgent(template.multiAgent);

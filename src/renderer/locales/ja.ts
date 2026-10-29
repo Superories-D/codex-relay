@@ -1,3 +1,4 @@
+import { composerInboxJapanese } from "./composer-inbox-iterations";
 import { reviewWorkspaceJapanese } from "./review-workspace";
 import { taskWorkspaceJapanese } from "./task-workspace";
 import { workspaceJapanese } from "./workspace-shell";
@@ -9,6 +10,7 @@ import {recoveryJapanese} from "./recovery";
 import {checkpointJapanese} from "./checkpoints";
 import {handoffJapanese} from "./handoff";
 export const japanese: Record<string, string> = {
+...composerInboxJapanese,
 ...reviewWorkspaceJapanese,
 ...taskWorkspaceJapanese,
 ...workspaceJapanese,
