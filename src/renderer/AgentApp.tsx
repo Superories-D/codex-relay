@@ -199,6 +199,8 @@ export function AgentApp({
   const [threadMenu, setThreadMenu] = useState(false);
   const [palette, setPalette] = useState(false);
   const [inboxOpen,setInboxOpen]=useState(false);
+  const [inboxClock,setInboxClock]=useState(Date.now());
+  useEffect(()=>{const update=()=>setInboxClock(Date.now()),timer=setInterval(update,15000);window.addEventListener("storage",update);return()=>{clearInterval(timer);window.removeEventListener("storage",update);};},[]);
   const [planMode, setPlanMode] = useState(false);
   const [goalMode, setGoalMode] = useState(false);
   const [goalBudget, setGoalBudget] = useState("");
@@ -883,7 +885,7 @@ export function AgentApp({
         {management(manage.slice(9))}
       </div>
     );
-  const attentionCount=snapshot?inboxItems(snapshot).filter(i=>i.kind!=="complete"&&!isSnoozed(i,readInbox(localStorage).state,Date.now())).length:0;
+  const attentionCount=snapshot?inboxItems(snapshot).filter(i=>i.kind!=="complete"&&!isSnoozed(i,readInbox(localStorage).state,inboxClock)).length:0;
   const ready =
     snapshot?.accounts.filter((a) => a.enabled && a.status === "ready")
       .length ?? 0;
@@ -1616,7 +1618,7 @@ export function AgentApp({
                         {t(job?.stage || jobLabel(job!))}
                       </div>
                     )}
-                    <DraftHistory key={key} scope={key} text={draft} files={attachments} disabled={pending || !!pendingCreation || !!pasting[key]} restore={(text,files)=>{setDrafts(d=>({...d,[key]:text}));setFiles(d=>({...d,[key]:files}));messageInput.current?.focus();}}/>
+                    <DraftHistory key={`draft-history:${key}`} scope={key} text={draft} files={attachments} disabled={pending || !!pendingCreation || !!pendingNative || !!pasting[key]} restore={(text,files)=>{setDrafts(d=>({...d,[key]:text}));setFiles(d=>({...d,[key]:files}));requestAnimationFrame(()=>messageInput.current?.focus());}}/>
                     {job && <MessageQueue key={job.id} job={job} pending={pending} onChange={(args) => call("chat.queue", args)} />}
                   </div>
                 </div>
@@ -2456,7 +2458,7 @@ export function AgentApp({
             </div>
           </>
         )}
-        {inboxOpen && snapshot && <AttentionInbox snapshot={snapshot} close={()=>setInboxOpen(false)} open={(target,questions)=>{select(target);setArchived(!!target.archived);if(questions){setWorkspaceTab("questions");setInspector(true);}setInboxOpen(false);}}/>}
+        {inboxOpen && snapshot && <AttentionInbox snapshot={snapshot} close={()=>setInboxOpen(false)} open={(target,questions)=>{select(target);setArchived(!!target.archived);if(questions){setFocusMode(false);setWorkspaceTab("questions");setInspector(true);}setInboxOpen(false);}}/>}
         {palette && (
           <CommandPalette jobs={snapshot?.jobs || []} close={() => setPalette(false)}
             choose={j => {select(j);setManage("");setArchived(!!j.archived);}}

@@ -24,6 +24,7 @@ it("shows a readable localized IPC error without rewriting file paths or model o
   expect(errorText("Error: C:/My Project/Error:notes.txt")).toBe(
     "C:/My Project/Error:notes.txt",
   );
+  expect(errorText(Error("文件已被其他程序修改，请重新读取后保存"))).toBe("The file changed on disk. Read the current version before saving.");
   setLanguage("zh-TW");
   expect(errorText(Error("目标已完成，请设置新的目标"))).toBe(
     "目標已完成，請設定新的目標",

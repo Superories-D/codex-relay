@@ -1,0 +1,139 @@
+{
+  "syntheticIPC": true,
+  "nativeWindows": false,
+  "modelRequests": 0,
+  "checks": [
+    "R1 draft restore keeps displaced versions, quick scope exit flushes the latest edit, explicit clear stays cleared and no task is sent",
+    "R2 inbox snooze persists without controlling tasks, changed request/completion versions reappear and attention opens the actual task",
+    "R3 named task views restore full search/status/sort/layout across reload and can be renamed",
+    "R4 archive partial failures preserve selection, undo restores exact successful task revisions while stale undo is rejected and archived work is recoverable across reload",
+    "R7 queue edits survive reload, conflict requires explicit resolution, removal requires confirmation and orphaned edits remain copy-only",
+    "R5 scoped recursive file search, hidden files and keyboard directory navigation open the expected workspace file",
+    "R6 file drafts survive navigation/reload without disk writes; same-mtime save conflict retains editor and requires fresh disk comparison before guarded save",
+    "R8 templates search/favorite, refreshed previews need reconfirmation, clone stays independent and stale/unsaved forms require explicit resolution",
+    "R9 conversation search pages both directions, filters roles, renders literal text and retries failed search/detail without stale content",
+    "R10 failure filter preserves narration and next-failure navigation reveals the actual failed tool output"
+  ],
+  "layouts": [
+    {
+      "theme": "dark",
+      "language": "en",
+      "width": 1440,
+      "overflow": false
+    },
+    {
+      "theme": "light",
+      "language": "zh-CN",
+      "width": 1280,
+      "overflow": false
+    },
+    {
+      "view": "inbox",
+      "theme": "light",
+      "language": "zh-CN",
+      "width": 1280,
+      "modalWithinViewport": true,
+      "modalNoHorizontalClipping": true,
+      "lastControlReachable": true,
+      "overflow": false
+    },
+    {
+      "view": "templates",
+      "theme": "light",
+      "language": "zh-CN",
+      "width": 1280,
+      "modalWithinViewport": true,
+      "modalNoHorizontalClipping": true,
+      "lastControlReachable": true,
+      "overflow": false
+    },
+    {
+      "view": "draft-history",
+      "theme": "light",
+      "language": "zh-CN",
+      "width": 1280,
+      "modalWithinViewport": true,
+      "modalNoHorizontalClipping": true,
+      "lastControlReachable": true,
+      "overflow": false
+    },
+    {
+      "view": "conversation-search",
+      "theme": "light",
+      "language": "zh-CN",
+      "width": 1280,
+      "modalWithinViewport": true,
+      "modalNoHorizontalClipping": true,
+      "lastControlReachable": true,
+      "overflow": false
+    },
+    {
+      "view": "commands",
+      "theme": "light",
+      "language": "zh-CN",
+      "width": 1280,
+      "modalWithinViewport": true,
+      "modalNoHorizontalClipping": true,
+      "lastControlReachable": true,
+      "overflow": false
+    },
+    {
+      "theme": "dark",
+      "language": "ja",
+      "width": 900,
+      "overflow": false
+    },
+    {
+      "view": "inbox",
+      "theme": "dark",
+      "language": "ja",
+      "width": 900,
+      "modalWithinViewport": true,
+      "modalNoHorizontalClipping": true,
+      "lastControlReachable": true,
+      "overflow": false
+    },
+    {
+      "view": "templates",
+      "theme": "dark",
+      "language": "ja",
+      "width": 900,
+      "modalWithinViewport": true,
+      "modalNoHorizontalClipping": true,
+      "lastControlReachable": true,
+      "overflow": false
+    },
+    {
+      "view": "draft-history",
+      "theme": "dark",
+      "language": "ja",
+      "width": 900,
+      "modalWithinViewport": true,
+      "modalNoHorizontalClipping": true,
+      "lastControlReachable": true,
+      "overflow": false
+    },
+    {
+      "view": "conversation-search",
+      "theme": "dark",
+      "language": "ja",
+      "width": 900,
+      "modalWithinViewport": true,
+      "modalNoHorizontalClipping": true,
+      "lastControlReachable": true,
+      "overflow": false
+    },
+    {
+      "view": "commands",
+      "theme": "dark",
+      "language": "ja",
+      "width": 900,
+      "modalWithinViewport": true,
+      "modalNoHorizontalClipping": true,
+      "lastControlReachable": true,
+      "overflow": false
+    }
+  ],
+  "errors": [],
+  "status": "passed"
+}

@@ -62,3 +62,11 @@
 @container (max-width: 540px) { .workspace-home-columns { grid-template-columns: 1fr; gap: 20px; } .workspace-starters > div:last-child { grid-template-columns: 1fr; } .workspace-home-symbol { display: none; } .workspace-status-strip button:last-child { margin-left: 0; } .workspace-section-heading > span { display: none; } }
 @media (max-width: 1000px) { .desktop-shell .desktop-menu { display: none; } .desktop-shell .workspace-command-trigger { min-width: 0; } .workspace-command-trigger > span { display: none; } }
 @media (prefers-reduced-motion: reduce) { .workspace-home *, .workspace-command-palette * { scroll-behavior: auto; transition: none; } }
+/* Size the surface, then let its content shrink inside the viewport/zoom limit.
+   Fixed viewport-width children can otherwise overrun the default 650px dialog. */
+.desktop-shell .modal:has(> .attention-inbox),
+.desktop-shell .modal:has(> .template-workspace) { width: 844px; }
+.desktop-shell .modal:has(> .draft-history) { width: 914px; }
+.desktop-shell .modal:has(> .chat-search-workspace) { width: 1024px; }
+.desktop-shell .modal:has(> .workspace-command-palette) { width: 684px; }
+.desktop-shell .modal > :is(.attention-inbox,.draft-history,.template-workspace,.chat-search-workspace,.workspace-command-palette) { width: 100%; min-width: 0; }

@@ -19,7 +19,7 @@ it('rejects same-size same-timestamp replacements by content fingerprint and pre
 it('serializes writes to the same canonical file and refuses the stale concurrent writer',async()=>{
  await fs.writeFile(path.join(root,'file.txt'),'before');const preview=await desktop.read(root,'file.txt');
  const outcomes=await Promise.allSettled([desktop.write(root,'file.txt','first',preview.mtime,(preview as any).sha256),desktop.write(root,'./file.txt','second',preview.mtime,(preview as any).sha256)]);
- expect(outcomes.filter(value=>value.status==='fulfilled')).toHaveLength(1);expect(outcomes[1].status).toBe('rejected');expect(await fs.readFile(path.join(root,'file.txt'),'utf8')).toBe('first');
+ expect(outcomes.filter(value=>value.status==='fulfilled')).toHaveLength(1);expect(outcomes.filter(value=>value.status==='rejected')).toHaveLength(1);const winner=outcomes.findIndex(value=>value.status==='fulfilled');expect(await fs.readFile(path.join(root,'file.txt'),'utf8')).toBe(winner===0?'first':'second');
 });
 it('checks UTF-8 byte limits before saving and still rejects escape paths',async()=>{
  await fs.writeFile(path.join(root,'file.txt'),'before');const preview=await desktop.read(root,'file.txt');

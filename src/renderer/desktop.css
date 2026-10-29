@@ -3150,14 +3150,14 @@ body:lang(ja) {
   margin-right: auto;
 }
 .desktop-shell .modal {
-  background: #252525;
-  color: #ccc;
-  border-color: #454545;
+  background: var(--surface);
+  color: var(--text);
+  border-color: var(--line);
   border-radius: 17px;
 }
 .desktop-shell .modal button {
-  color: #bbb;
-  background: #333;
+  color: var(--text);
+  background: var(--control);
   font-size: 12px;
 }
 .desktop-shell .modal .primary {
@@ -3167,9 +3167,9 @@ body:lang(ja) {
 .desktop-shell .modal input,
 .desktop-shell .modal textarea,
 .desktop-shell .modal select {
-  background: #202020;
-  color: #ddd;
-  border-color: #444;
+  background: var(--control);
+  color: var(--text);
+  border-color: var(--line);
 }
 .desktop-shell .modal-shade {
   z-index: 70;

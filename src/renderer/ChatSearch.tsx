@@ -38,7 +38,7 @@ export function ChatSearch({id, call, close}: {id: string; call: (name: string, 
   function reset(nextQuery = query, nextRole = role) { setQuery(nextQuery); setRole(nextRole); setOffsets([0]); setPageIndex(0); chooseEdge.current = "first"; }
   useEffect(() => {
     let alive = true;
-    setSelected(""); setDetail(undefined); setError("");
+    setSelected(""); setDetail(undefined); setLoaded(undefined); setError("");
     if (!query.trim()) { setLoading(false); return; }
     setLoading(true);
     const timer = setTimeout(() => {
@@ -53,7 +53,7 @@ export function ChatSearch({id, call, close}: {id: string; call: (name: string, 
   }, [context, retry]);
   useEffect(() => {
     let alive = true;
-    setDetailError(""); setHit(0);
+    setDetailError(""); setDetail(undefined); setHit(0);
     if (!selectedItem) { setDetailLoading(false); return; }
     setDetailLoading(true);
     void callRef.current("chat.searchItem", {id, itemId: selected}).then(value => {
@@ -86,7 +86,7 @@ export function ChatSearch({id, call, close}: {id: string; call: (name: string, 
     }}/><select data-search-role aria-label={t("消息角色")} value={role} onChange={e => reset(query, e.target.value)}><option value="">{t("全部角色")}</option>{Object.entries(labels).map(([value,label]) => <option key={value} value={value}>{t(label)}</option>)}</select></div>
     {error && <div className="conversation-search-error" role="alert">{error}<button onClick={() => setRetry(v => v + 1)}>{t("重新搜索")}</button></div>}
     <div className="conversation-search-summary"><span role="status">{loading ? t("正在搜索…") : !query.trim() ? t("输入关键词开始搜索") : t("找到 {count} 条消息", {count: result.total})}</span><div><button data-search-prev-match disabled={!canPrevious} onClick={() => move(-1)} title={t("上一条匹配")} aria-label={t("上一条匹配")}><ArrowUp size={15}/></button><span>{selectedItem ? `${offset + index + 1} / ${result.total}` : "—"}</span><button data-search-next-match disabled={!canNext} onClick={() => move(1)} title={t("下一条匹配")} aria-label={t("下一条匹配")}><ArrowDown size={15}/></button></div></div>
-    <div className="conversation-search-body"><div className="search-results" ref={list} role="listbox" id={listId} aria-label={t("搜索结果")} aria-busy={loading}>{!loading && result.items.map((item,i) => <button key={item.id} id={`${listId}-${i}`} data-search-result={item.id} role="option" aria-selected={selected === item.id} onClick={() => setSelected(item.id)}><small>{t(labels[item.role])} · {formatDate(item.at)}</small><span><Highlight text={item.excerpt} query={query}/></span></button>)}{!loading && query.trim() && !error && !result.items.length && <p>{t("没有匹配内容，试试其他关键词或角色")}</p>}</div>
+    <div className="conversation-search-body"><div className="search-results" ref={list} role="listbox" id={listId} aria-label={t("搜索结果")} aria-busy={loading}>{!loading && result.items.map((item,i) => <button key={item.id} id={`${listId}-${i}`} data-search-result={item.id} role="option" tabIndex={selected === item.id ? 0 : -1} aria-selected={selected === item.id} onClick={() => setSelected(item.id)}><small>{t(labels[item.role])} · {formatDate(item.at)}</small><span><Highlight text={item.excerpt} query={query}/></span></button>)}{!loading && query.trim() && !error && !result.items.length && <p>{t("没有匹配内容，试试其他关键词或角色")}</p>}</div>
     <section className="search-detail" data-search-detail ref={detailView} aria-label={t("消息上下文")} aria-busy={detailLoading}>
       {detailLoading && <p role="status">{t("正在加载消息…")}</p>}{detailError && <div role="alert">{detailError}<button onClick={() => setDetailRetry(v => v + 1)}>{t("重新加载消息")}</button></div>}
       {!detailLoading && currentDetail && <><div className="search-detail-toolbar"><strong>{selectedItem ? t(labels[selectedItem.role]) : t("消息上下文")}</strong><CopyButton text={detailText} label={t("复制消息上下文")}/><div><button data-search-occurrence="prev" disabled={!occurrences.matches.length} aria-label={t("上一处关键词")} onClick={() => setHit((hit - 1 + occurrences.matches.length) % occurrences.matches.length)}><ChevronLeft size={14}/></button><span>{occurrences.matches.length ? `${hit + 1} / ${occurrences.matches.length}${occurrences.limited ? "+" : ""}` : t("未找到原文匹配")}</span><button data-search-occurrence="next" disabled={!occurrences.matches.length} aria-label={t("下一处关键词")} onClick={() => setHit((hit + 1) % occurrences.matches.length)}><ChevronRight size={14}/></button></div></div><pre><Highlight text={detailText} query={query} active={hit}/></pre>{currentDetail.truncated && <p>{t("内容较长，仅显示前段，请导出会话查看完整内容。")}</p>}{occurrences.limited && <p>{t("匹配较多，仅高亮前 1000 处；原文保持完整。")}</p>}</>}

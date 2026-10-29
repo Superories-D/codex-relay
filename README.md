@@ -1,5 +1,7 @@
 # Codex Relay
 
+**分支整合后完成十轮 Windows 体验升级：** 草稿版本找回、待办收件箱、命名任务视图、可撤销批量归档、文件导航与冲突恢复、排队编辑、项目模板库、会话搜索和执行记录工作台。完整套件 1,115 通过、13 跳过，详见 [十轮功能、截图与验证](docs/iterations/WINDOWS-TEN-ROUNDS.md) · [全部分支审计](docs/iterations/BRANCH-INTEGRATION-20261029.md)。
+
 **Windows 工作台三轮升级：** 可操作首页、命令搜索与真实导航历史；列表／看板任务规划和持久化批量优先级；内容指纹驱动的审阅进度、笔记与报告导出。修复检查点 Git 流传输竞态。完整套件 752 通过、12 跳过，详见 [功能与验证记录](docs/iterations/WINDOWS-WORKSPACE-3.md)。
 **2026-10-28 Telegram 附件指令：** 单个图片/文档的说明可直接创建任务或追问，`/follow` 支持回复指定任务卡片；附件、原指令和目标一起持久恢复，后续暂停仍优先。[使用说明](docs/TELEGRAM.md#incoming-files-iteration-1) · [验证记录](docs/ITERATIONS-20261028.md)。属于源码更新，尚未替换已发布安装包。
 

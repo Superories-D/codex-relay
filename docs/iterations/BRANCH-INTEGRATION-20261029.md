@@ -154,3 +154,7 @@ Required regression after integration: TypeScript build; full unit/integration s
 ## 本次合并完成记录
 
 先合并 continuation，再合并 handoff；保留双方的恢复和任务工作台功能。合并后 TypeScript 通过。初次完整测试中1022通过，50项因 handoff 测试相对 Windows 临时路径失败；移植路径后73/75通过，剩余2项揭示真实 stdout 接收竞态。修复并加入延迟消费者／提前返回回归，受影响的服务、图审阅、流输出15项全部通过。最终完整套件将在后续十轮集成后重新执行。远端分支保留，无删除、重置或历史重写。
+
+## 十轮完成后的最终验证
+
+144 个测试文件：143 通过、1 Windows 专项跳过；1,115 项通过、13 项跳过、0 失败。十轮生产渲染器场景、13 组窗口／主题／语言及弹窗内层边界检查通过。所有远端功能分支均通过 `git merge-base --is-ancestor <tip> main`，参见 [精确 tip 包含证据](ten-branch-containment.json)。没有新建替代远端分支或删除原分支。

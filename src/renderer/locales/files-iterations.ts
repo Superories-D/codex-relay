@@ -1,4 +1,5 @@
 export const filesIterationsEnglish:Record<string,string>={
+  "文件已被其他程序修改，请重新读取后保存": "The file changed on disk. Read the current version before saving.",
   "请先恢复或丢弃已有草稿":"Recover or discard the existing draft first",
   "项目文件浏览器": "Project file browser",
   "搜索当前目录及子目录": "Search this folder and subfolders",
@@ -37,6 +38,7 @@ export const filesIterationsEnglish:Record<string,string>={
   "文本编辑最多支持 2 MB": "Text editing supports up to 2 MB"
 };
 export const filesIterationsJapanese:Record<string,string>={
+  "文件已被其他程序修改，请重新读取后保存": "ファイルがディスク上で変更されました。現在の内容を読み直してから保存してください。",
   "请先恢复或丢弃已有草稿":"先に既存の下書きを復元または破棄してください",
   "项目文件浏览器": "プロジェクトファイルブラウザー",
   "搜索当前目录及子目录": "このフォルダーと配下を検索",

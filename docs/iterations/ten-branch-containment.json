@@ -1,0 +1,17 @@
+[
+  {
+    "branch": "origin/codex/auto-recovery-20261022",
+    "commit": "f7c739384eabf157ab7726ea262ef55ce2b7f506",
+    "containedInMain": true
+  },
+  {
+    "branch": "origin/codex/continuation-20261027",
+    "commit": "c5c951fea4b405977eaca6455102b43596581015",
+    "containedInMain": true
+  },
+  {
+    "branch": "origin/wip/windows-handoff-20261025-5011a26c",
+    "commit": "2d1b5a32511604f5ba22d263d0d5e1dcb6297ca3",
+    "containedInMain": true
+  }
+]
