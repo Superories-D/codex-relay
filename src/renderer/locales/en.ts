@@ -1,3 +1,7 @@
+import { searchActivityEnglish } from "./search-activity-iterations";
+import { queueTemplateIterationsEnglish } from "./queue-template-iterations";
+import { filesIterationsEnglish } from "./files-iterations";
+import { taskIterationsEnglish } from "./task-iterations";
 import { composerInboxEnglish } from "./composer-inbox-iterations";
 import { reviewWorkspaceEnglish } from "./review-workspace";
 import { taskWorkspaceEnglish } from "./task-workspace";
@@ -12,6 +16,10 @@ import {recoveryEnglish} from "./recovery";
 import {checkpointEnglish} from "./checkpoints";
 import {handoffEnglish} from "./handoff";
 export const english: Record<string, string> = {
+...searchActivityEnglish,
+...queueTemplateIterationsEnglish,
+...filesIterationsEnglish,
+...taskIterationsEnglish,
 ...composerInboxEnglish,
 ...reviewWorkspaceEnglish,
 ...taskWorkspaceEnglish,

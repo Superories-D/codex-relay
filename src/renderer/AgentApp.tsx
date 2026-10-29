@@ -1,3 +1,5 @@
+import { AttentionInbox } from "./AttentionInbox";
+import { inboxItems,readInbox,isSnoozed } from "./attention-inbox";
 import { DraftHistory } from "./DraftHistory";
 import { recordWorkspaceRoute, workspaceHistoryTarget, type WorkspaceNavigation } from "./workspace-navigation";
 import { WorkspaceHome } from "./WorkspaceHome";
@@ -196,6 +198,7 @@ export function AgentApp({
   const [composerMenu, setComposerMenu] = useState(false);
   const [threadMenu, setThreadMenu] = useState(false);
   const [palette, setPalette] = useState(false);
+  const [inboxOpen,setInboxOpen]=useState(false);
   const [planMode, setPlanMode] = useState(false);
   const [goalMode, setGoalMode] = useState(false);
   const [goalBudget, setGoalBudget] = useState("");
@@ -880,6 +883,7 @@ export function AgentApp({
         {management(manage.slice(9))}
       </div>
     );
+  const attentionCount=snapshot?inboxItems(snapshot).filter(i=>i.kind!=="complete"&&!isSnoozed(i,readInbox(localStorage).state,Date.now())).length:0;
   const ready =
     snapshot?.accounts.filter((a) => a.enabled && a.status === "ready")
       .length ?? 0;
@@ -977,6 +981,7 @@ export function AgentApp({
           >
             <Home size={23} strokeWidth={1.7} />
           </button>
+          <button className="inbox-trigger" data-testid="inbox-trigger" aria-label={t("待处理收件箱")} title={t("待处理收件箱")} onClick={()=>setInboxOpen(true)}><Bell size={20}/>{attentionCount>0&&<small>{attentionCount}</small>}</button>
           <button
             title={t("导入历史对话")}
             aria-label={t("导入历史对话")}
@@ -1459,7 +1464,7 @@ export function AgentApp({
                     {!job && (
                       <WorkspaceHome snapshot={snapshot} cwd={cwd} projects={desktop.projects || []} open={select}
                         project={value => {setCwd(value);localStorage.setItem("relay.project",value);messageInput.current?.focus();}}
-                        choose={() => action(chooseProject)} tasks={() => setScreen("tasks")}
+                        choose={() => action(chooseProject)} tasks={() => setScreen("tasks")} attention={() => setInboxOpen(true)}
                         prompt={value => {setDrafts(d => ({...d,[key]: d[key]?.trim() ? `${d[key]}\n\n${value}` : value}));messageInput.current?.focus();}}/>
                     )}
                     {job?.historySource && (
@@ -2451,11 +2456,13 @@ export function AgentApp({
             </div>
           </>
         )}
+        {inboxOpen && snapshot && <AttentionInbox snapshot={snapshot} close={()=>setInboxOpen(false)} open={(target,questions)=>{select(target);setArchived(!!target.archived);if(questions){setWorkspaceTab("questions");setInspector(true);}setInboxOpen(false);}}/>}
         {palette && (
           <CommandPalette jobs={snapshot?.jobs || []} close={() => setPalette(false)}
             choose={j => {select(j);setManage("");setArchived(!!j.archived);}}
             commands={[
               {id:"new",label:t("新聊天"),hint:"Ctrl Shift O",run:()=>{select();setManage("");}},
+              {id:"inbox",label:t("待处理收件箱"),run:()=>setInboxOpen(true)},
               {id:"tasks",label:t("打开任务工作台"),run:()=>{setManage("");setScreen("tasks");}},
               {id:"project",label:t("选择项目目录"),run:()=>action(chooseProject)},
               {id:"focus",label:t(focusMode ? "退出专注" : "专注模式"),hint:"Ctrl Shift F",run:()=>setFocusMode(v=>!v)},

@@ -1,3 +1,7 @@
+import { searchActivityJapanese } from "./search-activity-iterations";
+import { queueTemplateIterationsJapanese } from "./queue-template-iterations";
+import { filesIterationsJapanese } from "./files-iterations";
+import { taskIterationsJapanese } from "./task-iterations";
 import { composerInboxJapanese } from "./composer-inbox-iterations";
 import { reviewWorkspaceJapanese } from "./review-workspace";
 import { taskWorkspaceJapanese } from "./task-workspace";
@@ -10,6 +14,10 @@ import {recoveryJapanese} from "./recovery";
 import {checkpointJapanese} from "./checkpoints";
 import {handoffJapanese} from "./handoff";
 export const japanese: Record<string, string> = {
+...searchActivityJapanese,
+...queueTemplateIterationsJapanese,
+...filesIterationsJapanese,
+...taskIterationsJapanese,
 ...composerInboxJapanese,
 ...reviewWorkspaceJapanese,
 ...taskWorkspaceJapanese,
