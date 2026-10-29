@@ -33,3 +33,8 @@ export async function searchWorkspaceFiles(options: {
   }
   return {entries,scanned,incomplete:incomplete||!options.active(),errors};
 }
+
+export function readBrowserLocation(storage:Pick<Storage,'getItem'>,cwd:string) {
+  try{const value=storage.getItem(`relay.files.at:${cwd}`);if(value&&value.length<32700&&!/^(?:[a-z]:|[\\/])/i.test(value)&&!value.split(/[\\/]/).includes('..'))return normalizeBrowserPath(value);}catch{}
+  return '.';
+}

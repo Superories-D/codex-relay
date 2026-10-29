@@ -74,6 +74,7 @@ export class Desktop {
     preferences: { theme: "dark", notifications: true, language: "auto" },
   };
   private writes: Promise<void> = Promise.resolve();
+  private fileWrites = new Map<string, Promise<unknown>>();
   constructor(readonly root: string) {}
   async load() {
     try {
@@ -216,19 +217,31 @@ export class Desktop {
       path: relative,
       kind: "text",
       content,
+      sha256: createHash("sha256").update(buffer).digest("hex"),
+      canonicalPath: file,
+      workspaceRoot: await fs.realpath(cwd),
       mtime: stat.mtimeMs,
       size: stat.size,
     };
   }
-  async write(cwd: string, relative: string, text: string, mtime: number) {
+  async write(cwd: string, relative: string, text: string, mtime: number, expectedHash?: string) {
+    if (Buffer.byteLength(text, "utf8") > 2 * 1024 * 1024)
+      throw new Error("文本编辑最多支持 2 MB");
     const file = await this.resolve(cwd, relative);
-    const preview = await this.read(cwd, relative);
-    if (preview.mtime !== mtime)
-      throw new Error("文件已被其他程序修改，请重新读取后保存");
-    if (preview.kind !== "text")
-      throw new Error("内置编辑器仅支持 UTF-8 文本，请在外部编辑器中修改此文件");
-    await atomicWrite(file, text);
-    return this.read(cwd, relative);
+    const key = process.platform === "win32" ? file.toLowerCase() : file;
+    const previous = this.fileWrites.get(key) || Promise.resolve();
+    const writing = previous.catch(() => {}).then(async () => {
+      const preview = await this.read(cwd, relative);
+      if (preview.mtime !== mtime || (expectedHash !== undefined && (preview.kind !== "text" || preview.sha256 !== expectedHash)))
+        throw new Error("文件已被其他程序修改，请重新读取后保存");
+      if (preview.kind !== "text")
+        throw new Error("内置编辑器仅支持 UTF-8 文本，请在外部编辑器中修改此文件");
+      await atomicWrite(file, text);
+      return this.read(cwd, relative);
+    });
+    this.fileWrites.set(key, writing);
+    try { return await writing; }
+    finally { if (this.fileWrites.get(key) === writing) this.fileWrites.delete(key); }
   }
   async git(cwd: string, args: string[], input?: string) {
     const execution = execute("git", ["-C", cwd, ...args], {

@@ -9,10 +9,20 @@
 .file-browser-scope { display:flex;align-items:center;justify-content:space-between;padding:8px 12px;color:var(--subtle);font-size:10px; }
 .file-browser-notice { margin:4px 10px;padding:8px;border:1px solid var(--line);border-radius:6px;color:var(--subtle);font-size:11px;line-height:1.6; }
 .file-browser-list { display:flex;flex-direction:column;min-height:0; }
-.desktop-shell .file-browser-list button { display:flex;align-items:center;gap:8px;padding:8px 12px;text-align:left;border-radius:0;min-width:0; }
+.desktop-shell .file-browser-list button { width:100%;display:flex;align-items:center;gap:8px;padding:8px 12px;text-align:left;border-radius:0;min-width:0; }
 .file-browser-list button > span { min-width:0;flex:1; }
 .file-browser-list strong,.file-browser-list small { display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;font-weight:400; }
 .file-browser-list small { color:var(--subtle);font-size:10px;margin-top:3px; }
 .file-browser-list svg { color:var(--subtle); }
 .file-browser footer { color:var(--subtle);font-size:10px;padding:10px 12px;border-top:1px solid var(--line);margin-top:8px;overflow-wrap:anywhere; }
 .desktop-shell .file-browser-more { font-size:11px;padding:8px;margin:8px;border:1px solid var(--line); }
+.editor-draft-banner { margin:8px;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--surface);font-size:11px;line-height:1.6; }
+.editor-draft-banner strong,.editor-draft-banner small { display:block; }
+.editor-draft-banner small { color:var(--subtle); }
+.editor-draft-banner p { margin:5px 0;overflow-wrap:anywhere; }
+.desktop-shell .editor-draft-banner button { display:inline-flex;align-items:center;gap:5px;padding:5px 7px;margin:4px 4px 0 0;border:1px solid var(--line);border-radius:5px;font-size:11px; }
+.editor-warning { border-color:color-mix(in srgb, #b99155 55%,var(--line)); }
+.editor-disk-comparison { margin:8px;font-size:11px; }
+.editor-disk-comparison pre { max-height:180px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;padding:9px;border:1px solid var(--line);background:var(--surface); }
+.editor-dirty-status { display:block;color:var(--accent);font-size:10px;margin-top:3px; }
+.editable-file-preview .file-editor { min-height:180px; }

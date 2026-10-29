@@ -23,3 +23,8 @@ it('reports result and per-directory limits rather than presenting a partial sea
 it('builds clickable relative breadcrumbs for Windows separators',()=>{
  expect(browserBreadcrumbs('src\\renderer\\components')).toEqual([{name:'.',path:'.'},{name:'src',path:'src'},{name:'renderer',path:'src/renderer'},{name:'components',path:'src/renderer/components'}]);
 });
+it('restores only safe relative directory locations when returning from a preview',async()=>{
+ const {readBrowserLocation}=await import('../src/renderer/file-browser');
+ for(const value of ['../secret','C:/outside','/outside','src/../../outside'])expect(readBrowserLocation({getItem:()=>value},'root')).toBe('.');
+ expect(readBrowserLocation({getItem:()=> 'src/ui'},'root')).toBe('src/ui');
+});

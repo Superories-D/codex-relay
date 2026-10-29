@@ -1,3 +1,4 @@
+import { EditableFilePreview } from "./EditableFilePreview";
 import { FileBrowser } from "./FileBrowser";
 import { t, useI18n, errorText } from "./i18n";
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -235,7 +236,7 @@ export function Workbench({
       {checkpoints&&<WorkspaceCheckpoints call={call} initialCwd={cwd} initialJob={job} jobs={job?[job]:[]} close={()=>setCheckpoints(false)} open={onOpenConversation}/>}
       {handoffs&&<HandoffCenter call={call} initialJob={job} jobs={job?[job]:[]} close={()=>setHandoffs(false)} open={onOpenConversation}/>}
       {file ? (
-        <FilePreview
+        <EditableFilePreview
           cwd={repositoryPreview ? gitPreview.root : cwd}
           file={file}
           call={call}
@@ -527,169 +528,6 @@ function AssetList({
           </div>
         </details>
       )}
-    </div>
-  );
-}
-function FilePreview({
-  cwd,
-  file,
-  call,
-  close,
-  jobId,
-}: {
-  cwd: string;
-  file: string;
-  call: Call;
-  close: () => void;
-  jobId?: string;
-}) {
-  useI18n();
-
-  const [data, setData] = useState<any>(),
-    [text, setText] = useState(""),
-    [edit, setEdit] = useState(false),
-    [error, setError] = useState(""),
-    [busy, setBusy] = useState(false),
-    [reload, setReload] = useState(0);
-  useEffect(() => {
-    let alive = true;
-    setData(undefined);
-    setError("");
-    setEdit(false);
-    void window.relay
-      .command("chat.asset.read", { cwd, path: file, id: jobId })
-      .then((value: any) => {
-        if (alive) {
-          setData(value);
-          setText(value.content);
-        }
-      })
-      .catch((e) => {
-        if (alive) setError(errorText(e));
-      });
-    return () => {
-      alive = false;
-    };
-  }, [cwd, file, jobId, reload]);
-  return (
-    <div className="file-preview">
-      <header>
-        <button aria-label={t("返回文件列表")} onClick={close}>
-          <ArrowLeft size={15} />
-        </button>
-        <span title={file}>{file.split(/[\\/]/).at(-1)}</span>
-        {data?.kind === "text" && !data.readOnly && (
-          <button
-            title={edit ? t("预览文件") : t("编辑文件")}
-            onClick={() => setEdit(!edit)}
-          >
-            <Pencil size={14} />
-          </button>
-        )}
-        <button
-          title={t("在默认应用中打开")}
-          onClick={() =>
-            void window.relay
-              .command("chat.asset.open", { cwd, path: file, id: jobId })
-              .catch((e) => setError(errorText(e)))
-          }
-        >
-          <Upload size={14} />
-        </button>
-        {edit && (
-          <button
-            title={t("保存文件")}
-            disabled={busy || text === data.content}
-            onClick={() => {
-              setBusy(true);
-              void window.relay
-                .command("workspace.write", {
-                  cwd,
-                  path: file,
-                  text,
-                  mtime: data.mtime,
-                })
-                .then(setData)
-                .catch((e) => setError(errorText(e)))
-                .finally(() => setBusy(false));
-            }}
-          >
-            <Save size={14} />
-          </button>
-        )}
-      </header>
-      {error ? (
-        <div className="file-preview-error">
-          <p role="alert" className="panel-error">
-            {error}
-          </p>
-          <button onClick={() => setReload((v) => v + 1)}>
-            <RefreshCw size={14} />
-            {t("重试")}
-          </button>
-        </div>
-      ) : !data ? (
-        <div className="panel-loading">
-          <LoaderCircle className="spin" size={20} />
-          {t("读取文件…")}
-        </div>
-      ) : data.kind === "image" ? (
-        <div className="image-preview">
-          <img src={data.content} alt={file} />
-        </div>
-      ) : data.kind === "pdf" ? (
-        <div className="panel-empty">
-          <FileText size={36} />
-          <p>
-            {t("PDF 文档 ·")}
-            {(data.size / 1024).toFixed(0)} KB
-          </p>
-          <button
-            onClick={() =>
-              void call("chat.asset.open", { cwd, path: file, id: jobId })
-            }
-          >
-            {t("在 PDF 阅读器中打开")}
-          </button>
-        </div>
-      ) : data.kind === "binary" ? (
-        <PanelEmpty text={t("此文件使用二进制格式，请在默认应用中打开")} />
-      ) : data.kind === "encoded" ? (
-        <PanelEmpty text={t("无法按 UTF-8 读取此文件，请在外部编辑器中打开以保留原始编码")} />
-      ) : edit ? (
-        <textarea
-          className="file-editor"
-          aria-label={t("编辑文件内容")}
-          spellCheck={false}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-        />
-      ) : /\.mdx?$/i.test(file) ? (
-        <div className="file-markdown">
-          <MarkdownText text={text} />
-        </div>
-      ) : (
-        <div className="source-preview">
-          <pre>
-            {text.split("\n").map((line, i) => (
-              <div key={i}>
-                <span>{i + 1}</span>
-                <code>{line || " "}</code>
-              </div>
-            ))}
-          </pre>
-        </div>
-      )}
-      <footer>
-        {data &&
-          t("{p0}{p1} KB", {
-            p0:
-              data.kind === "text"
-                ? t("{p0} 行 · UTF-8 · ", { p0: text.split("\n").length })
-                : "",
-            p1: (data.size / 1024).toFixed(1),
-          })}
-      </footer>
     </div>
   );
 }

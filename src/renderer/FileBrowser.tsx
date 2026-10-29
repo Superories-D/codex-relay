@@ -1,15 +1,15 @@
 import React,{useEffect,useRef,useState} from 'react';
 import {ArrowLeft,ChevronRight,Eye,EyeOff,FileCode2,Folder,FolderOpen,LoaderCircle,RefreshCw,Search,X} from 'lucide-react';
 import {t,useI18n,errorText} from './i18n';
-import {browserBreadcrumbs,browserVisible,normalizeBrowserPath,searchWorkspaceFiles,type FileEntry,type FileSearchResult} from './file-browser';
+import {browserBreadcrumbs,browserVisible,normalizeBrowserPath,readBrowserLocation,searchWorkspaceFiles,type FileEntry,type FileSearchResult} from './file-browser';
 import './file-workspace.css';
 type Call=(name:string,args?:unknown)=>Promise<any>;
 export function FileBrowser({cwd,call,select}:{cwd:string;call:Call;select:(path:string)=>void}) {
   useI18n();
-  const [at,setAt]=useState('.'),[query,setQuery]=useState(''),[hidden,setHidden]=useState(()=>localStorage.getItem('relay.files.hidden')==='true');
+  const [at,setAt]=useState(()=>readBrowserLocation(localStorage,cwd)),[query,setQuery]=useState(''),[hidden,setHidden]=useState(()=>localStorage.getItem('relay.files.hidden')==='true');
   const [entries,setEntries]=useState<FileEntry[]>([]),[search,setSearch]=useState<FileSearchResult>(),[error,setError]=useState(''),[loading,setLoading]=useState(false),[reload,setReload]=useState(0),[focused,setFocused]=useState(0),[limit,setLimit]=useState(150);
   const list=useRef<HTMLDivElement>(null),generation=useRef(0);
-  useEffect(()=>{setAt('.');setQuery('');setEntries([]);},[cwd]);
+  useEffect(()=>{try{localStorage.setItem(`relay.files.at:${cwd}`,at);}catch{}},[cwd,at]);
   useEffect(()=>{try{localStorage.setItem('relay.files.hidden',String(hidden));}catch{}},[hidden]);
   useEffect(()=>{
     const request=++generation.current;let alive=true;
