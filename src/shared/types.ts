@@ -136,6 +136,7 @@ export interface Job {
     serviceTier?: string;
   }[];
   archived?: boolean;
+  archiveRevision?: number;
   historySource?: {
     threadId: string;
     source: string;

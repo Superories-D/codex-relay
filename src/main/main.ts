@@ -1,3 +1,4 @@
+import { bulkArchiveSchema } from "../shared/task-archive";
 import { bulkPrioritySchema } from "../shared/task-priority";
 import {scheduleInputSchema,scheduleAbandonSchema} from "../core/schedule-command";
 import { deliverySaveSchema } from "./validation";
@@ -694,6 +695,7 @@ async function boot() {
               .max(2 * 1024 * 1024)
               .optional(),
             mtime: z.number().optional(),
+            expectedHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
           })
           .strict()
           .parse(args);
@@ -704,7 +706,7 @@ async function boot() {
         if (name === "workspace.write") {
           if (a.text === undefined || a.mtime === undefined)
             throw new Error("缺少文件内容或版本");
-          return desktop.write(a.cwd, a.path, a.text, a.mtime);
+          return desktop.write(a.cwd, a.path, a.text, a.mtime, a.expectedHash);
         }
         return shell.openPath(await desktop.resolve(a.cwd, a.path));
       }
@@ -1009,6 +1011,8 @@ async function boot() {
         }
         return scheduler.chats.read(a.id, a.before);
       }
+      case "jobs.archive":
+        return scheduler.archiveMany(bulkArchiveSchema.parse(args));
       case "jobs.priority":
         return scheduler.priorityMany(bulkPrioritySchema.parse(args));
       case "chat.priority": {

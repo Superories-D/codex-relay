@@ -1,3 +1,4 @@
+import { bulkArchiveSchema } from "../shared/task-archive";
 import { bulkPrioritySchema } from "../shared/task-priority";
 import {sourceVersion} from "../shared/build-info";
 import {ProjectGit} from "./project-git";
@@ -381,6 +382,8 @@ export class ServerRuntime {
         const {id,...patch}=z.object({id:idSchema,title:z.string().trim().min(1).max(120).optional(),pinned:z.boolean().optional(),archived:z.boolean().optional()}).strict().parse(args);
         return this.scheduler.metadata(id,patch);
       }
+      case "jobs.archive":
+        return this.scheduler.archiveMany(bulkArchiveSchema.parse(args));
       case "jobs.priority":
         return this.scheduler.priorityMany(bulkPrioritySchema.parse(args));
       case "chat.priority": {

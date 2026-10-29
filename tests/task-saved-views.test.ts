@@ -1,6 +1,6 @@
 import {expect,it} from 'vitest';
 import {loadSavedTaskViews,writeSavedTaskView,sameTaskCriteria,type SavedTaskView} from '../src/shared/task-saved-views';
-const view=(name='Release',id='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'):SavedTaskView=>({id,name,query:'release',project:'D:\\项目',filter:'attention',sort:'recent',layout:'board'});
+const view=(name='Release',id='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'):SavedTaskView=>({id,name,archived:false,query:'release',project:'D:\\项目',filter:'attention',sort:'recent',layout:'board'});
 it('round-trips the entire named view without changing project paths or criteria',()=>{
  const saved=writeSavedTaskView([],view());
  expect(loadSavedTaskViews(JSON.stringify(saved))).toEqual({views:saved,invalid:false});

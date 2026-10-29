@@ -144,3 +144,9 @@
 .task-workspace .tw-saved-views p { flex: 1 0 100%; margin: 0; font-size: 11px; color: var(--tw-muted); }
 .task-workspace .tw-saved-views .tw-view-dirty { color: var(--accent); }
 @container (max-width: 550px) { .task-workspace .tw-saved-views > div { display: block; } .task-workspace .tw-saved-views small { display: block; margin-top: 4px; } }
+.task-workspace .tw-archive-switch, .task-workspace .tw-archive-undo { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 10px 0; margin-bottom: 8px; }
+.task-workspace .tw-archive-switch button { font-size: 12px; padding: 7px 10px; }
+.task-workspace .tw-archive-switch button[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); background: var(--tw-soft); }
+.task-workspace .tw-archive-switch small { color: var(--tw-muted); font-size: 11px; }
+.task-workspace .tw-archive-undo { padding: 11px; border: 1px solid var(--line); border-radius: 9px; color: var(--text); background: var(--tw-soft); font-size: 12px; }
+.task-workspace .tw-archive-undo > span { flex: 1; }

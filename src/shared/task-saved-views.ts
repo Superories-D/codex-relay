@@ -1,7 +1,7 @@
 import { z } from "zod";
 export const savedTaskViewKey = "relay.taskSavedViews.v1";
 const criteriaSchema = z.object({
-  query: z.string().max(500), project: z.string().max(4096),
+  archived:z.boolean().default(false), query: z.string().max(500), project: z.string().max(4096),
   filter: z.enum(["all", "active", "attention", "recovering", "paused", "completed"]),
   sort: z.enum(["priority", "recent", "oldest"]), layout: z.enum(["list", "board"]),
 }).strict();
@@ -23,5 +23,5 @@ export function writeSavedTaskView(views: SavedTaskView[], input: SavedTaskView)
   return [...views.filter(v=>v.id!==value.id),value];
 }
 export function sameTaskCriteria(a:SavedTaskCriteria,b:SavedTaskCriteria) {
-  return a.query===b.query&&a.project===b.project&&a.filter===b.filter&&a.sort===b.sort&&a.layout===b.layout;
+  return a.archived===b.archived&&a.query===b.query&&a.project===b.project&&a.filter===b.filter&&a.sort===b.sort&&a.layout===b.layout;
 }

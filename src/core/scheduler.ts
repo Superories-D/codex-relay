@@ -1,3 +1,4 @@
+import { bulkArchiveSchema, archiveEligibility, archiveErrors, type BulkArchiveInput, type BulkArchiveResult, type ArchiveResult } from "../shared/task-archive";
 import { bulkPrioritySchema, priorityRejection, priorityErrors, type BulkPriorityInput, type BulkPriorityResult, type PriorityResult } from "../shared/task-priority";
 import { dispatchHeld, projectKey, projectHasCapacity } from "../shared/dispatch";
 import {taskControlSignature} from "../shared/task-control";
@@ -1887,10 +1888,40 @@ export class Scheduler extends EventEmitter {
       const job=this.store.data.jobs.find(j=>j.id===id);
       if(!job || this.closing)throw Error("Task is unavailable");
       if(patch.archived && (this.familyActive(id)||job.recoveryRequired||job.autoRecovery||!["paused","completed","cancelled","needs_attention"].includes(job.state)))throw Error("Pause the task before archiving");
-      const previous={title:job.title,pinned:job.pinned,archived:job.archived};
+      const previous={title:job.title,pinned:job.pinned,archived:job.archived,archiveRevision:job.archiveRevision};
       Object.assign(job,patch);
+      if(patch.archived !== undefined)job.archiveRevision=(job.archiveRevision||0)+1;
       try{await this.store.save();}catch(error){Object.assign(job,previous);throw error;}
       this.changed();
+    });
+  }
+  archiveMany(input:BulkArchiveInput):Promise<BulkArchiveResult> {
+    const {entries,archived}=bulkArchiveSchema.parse(input);
+    return this.queueMaintenance(async()=>{
+      this.maintaining=true;
+      try {
+        await this.tickInFlight;
+        const accepted:{job:Job; archived:Job["archived"]; revision:Job["archiveRevision"]}[]=[];
+        const unique=[...new Map(entries.map(entry=>[entry.id,entry])).values()];
+        const results:ArchiveResult[]=unique.map(entry=>{
+          const job=this.store.data.jobs.find(item=>item.id===entry.id);
+          const code=this.closing?"closing":!job?"missing":(job.archiveRevision||0)!==entry.expectedArchiveRevision?"stale":archiveEligibility(job,archived)||(archived&&this.familyActive(job.id)?"active":undefined);
+          if(code)return {id:entry.id,ok:false,code,error:archiveErrors[code]};
+          accepted.push({job:job!,archived:job!.archived,revision:job!.archiveRevision});
+          return {id:entry.id,ok:true,revision:(job!.archiveRevision||0)+1};
+        });
+        if(!accepted.length)return {archived,results};
+        for(const item of accepted){item.job.archived=archived;item.job.archiveRevision=(item.job.archiveRevision||0)+1;}
+        try { await this.store.save(); }
+        catch {
+          for(const item of accepted){
+            if(item.archived===undefined)delete item.job.archived;else item.job.archived=item.archived;
+            if(item.revision===undefined)delete item.job.archiveRevision;else item.job.archiveRevision=item.revision;
+          }
+          for(const item of results)if(item.ok){item.ok=false;delete item.revision;item.code="save_failed";item.error=archiveErrors.save_failed;}
+        }
+        this.changed();return {archived,results};
+      } finally {this.maintaining=false;}
     });
   }
   priorityMany(input: BulkPriorityInput): Promise<BulkPriorityResult> {
