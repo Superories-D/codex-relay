@@ -14,6 +14,10 @@ it("runs remote help and a profile tunnel from only declared Windows resources",
     await fs.mkdir(resources);
     const pkg = JSON.parse(await fs.readFile("package.json", "utf8"));
     for (const resource of pkg.build.extraResources) {
+      // This test exercises the cross-platform JS clients. Windows native
+      // binaries are built and included only on Windows; Windows CI still
+      // copies them here and fails if the declared artifact is missing.
+      if (resource.from === "dist/native" && process.platform !== "win32") continue;
       await fs.cp(resource.from, path.join(resources, resource.to), { recursive: true });
     }
     const run = (file: string, args: string[] = []) => exec(process.execPath,

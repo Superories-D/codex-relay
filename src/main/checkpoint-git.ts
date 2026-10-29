@@ -3,10 +3,24 @@ import {promises as fs,createReadStream,createWriteStream} from "node:fs";
 import path from "node:path";
 import {randomUUID} from "node:crypto";
 import {pipeline} from "node:stream/promises";
+import type {Writable} from "node:stream";
 import {TextDecoder} from "node:util";
 import os from "node:os";
 import {resolveCli,terminateTree} from "../core/process";
 import {spawnWindowsDomain,releaseWindowsDomain,type DomainChild} from "../core/windows-domain";
+
+// index-pack can exit as soon as it reads the pack trailer, before Node emits
+// stdin's finish event. Await every write and the source EOF, not a pipe close
+// handshake that the successful child no longer needs. A closed pipe before
+// any remaining bytes have been written still rejects through write callbacks.
+async function writeInputFile(file:string,input:Writable){
+  for await(const chunk of createReadStream(file)){
+    await new Promise<void>((resolve,reject)=>{
+      input.write(chunk,error=>error?reject(error):resolve());
+    });
+  }
+  if(!input.destroyed)input.end();
+}
 
 export class CheckpointGitError extends Error {constructor(readonly args:string[],readonly code:number|null,readonly details:string){super(`Git 检查点操作未完成：${details||code}`);}}
 export class CheckpointGit {
@@ -32,7 +46,8 @@ export class CheckpointGit {
     child.stderr.on("data",data=>{stderr=(stderr+data.toString()).slice(-16000);});
     const closed=new Promise<number|null>((resolve,reject)=>{child.once("error",reject);child.once("close",resolve);if(child.exitCode!==null)resolve(child.exitCode);});
     const output=options.output?pipeline(child.stdout,createWriteStream(options.output,{flags:"wx",mode:0o600})):(async()=>{for await(const chunk of child.stdout){size+=chunk.length;if(size>limit)throw Error("检查点元数据过大，请使用完整流式读取");chunks.push(Buffer.from(chunk));}})();
-    const input=options.stdinFile?pipeline(createReadStream(options.stdinFile),child.stdin):new Promise<void>((resolve,reject)=>{child.stdin.on("error",reject);child.stdin.end(options.input??"",resolve);});
+    if(options.stdinFile)child.stdin.on("error",error=>{ioError=error;stopping();});
+    const input=options.stdinFile?writeInputFile(options.stdinFile,child.stdin):new Promise<void>((resolve,reject)=>{child.stdin.on("error",reject);child.stdin.end(options.input??"",resolve);});
     try{
       const outcomes=await Promise.allSettled([output.catch(error=>{ioError=error;stopping();throw error;}),input.catch(error=>{ioError=error;stopping();throw error;}),closed]);
       await stop;this.options.signal?.throwIfAborted();if(ioError)throw ioError;

@@ -10,7 +10,7 @@ export function WorkspaceHome({snapshot, cwd, projects, open, project, choose, t
   tasks: () => void; prompt: (value: string) => void;
 }) {
   const {recent, attention, active} = homeJobs(snapshot?.jobs || [], snapshot?.approvals || []);
-  const projectList = [...new Map([...projects, ...recent.map(j => ({cwd: j.projectCwd || j.cwd, name: projectShortName(j.projectCwd || j.cwd)}))].map(p => [p.cwd, p])).values()].slice(0, 6);
+  const projectList = [...new Map([...recent.map(j => ({cwd: j.projectCwd || j.cwd, name: projectShortName(j.projectCwd || j.cwd)})), ...projects].map(p => [snapshot?.platform === "win32" ? p.cwd.replace(/\\/g,"/").replace(/\/$/, "").toLowerCase() : p.cwd, p])).values()].slice(0, 6);
   return <section className="workspace-home" aria-label={t("工作台首页")}>
     <header className="workspace-home-heading"><div><span className="workspace-eyebrow">{t("你的工作空间")}</span><h1>{t("从这里，继续向前。")}</h1><p>{t("继续最近的工作，或把下一个想法变成成果。")}</p></div><span className="workspace-home-symbol"><Sparkles size={26}/></span></header>
     <div className="workspace-status-strip"><button onClick={tasks}><span className="workspace-live-dot"/><strong>{active.length}</strong>{t("进行中")}<ArrowUpRight size={14}/></button><button onClick={tasks} className={attention.length ? "has-attention" : ""}><CircleAlert size={15}/><strong>{attention.length}</strong>{t("等待你处理")}<ArrowUpRight size={14}/></button><button onClick={tasks}><ListTodo size={16}/>{t("打开任务工作台")}<ArrowRight size={14}/></button></div>

@@ -1,8 +1,13 @@
 import { t, useI18n, errorText } from "./i18n";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { DiffReview } from "./DiffReview";
+import { reviewReport, verifyReviewSession, reviewableDiff, reviewNote, diffFingerprint, fileReviewed, nextReviewFile, readReviewSession, reviewKey, reviewSides, reviewStorageKey, updateReviewMark, type ReviewSession } from "./review-session";
+import "./review-workspace.css";
 import {
   ArrowLeft,
+  ArrowRight,
+  CheckCheck,
+  Download,
   Check,
   ChevronDown,
   ChevronRight,
@@ -785,6 +790,7 @@ function Changes({
     [selected, setSelected] = useState(""),
     [diff, setDiff] = useState(""),
     [diffSnapshot, setDiffSnapshot] = useState<{
+      snapshot: GitChanges;
       revision: string;
       path: string;
       staged: boolean;
@@ -797,18 +803,71 @@ function Changes({
     [branches, setBranches] = useState(false),
     [confirmRestore, setConfirmRestore] = useState(false),
     [fileFilter, setFileFilter] = useState("");
+  const [reviewFilter, setReviewFilter] = useState("all");
+  const [session, setSession] = useState<{root: string; value: ReviewSession}>({root: "", value: {marks: [], notes: {}}});
+  const [verification, setVerification] = useState<{snapshot?: GitChanges; keys: Set<string>}>({keys: new Set()});
+  const [fingerprint, setFingerprint] = useState<{diff: string; hash: string}>();
+  const [reviewNotice, setReviewNotice] = useState("");
+  const verifyingReviews = useRef(false);
+  const [reviewChecking, setReviewChecking] = useState(false);
+  const reviewRoot = state?.root || cwd;
+  const currentSession = session.root === reviewRoot ? session.value : {marks: [], notes: {}};
+  const verified = verification.snapshot === state ? verification.keys : new Set<string>();
+  const changeSession = (change: (old: ReviewSession) => ReviewSession) => {
+    setSession(old => {
+      const value = change(old.root === reviewRoot ? old.value : {marks: [], notes: {}});
+      try { localStorage.setItem(reviewStorageKey(reviewRoot), JSON.stringify(value)); }
+      catch { setReviewNotice(t("审阅记录无法保存；本次会话仍可继续。")); }
+      return {root: reviewRoot, value};
+    });
+  };
+  useEffect(() => {
+    let value: ReviewSession;
+    try { value = readReviewSession(localStorage.getItem(reviewStorageKey(reviewRoot))); }
+    catch { value = {marks: [], notes: {}}; }
+    setSession({root: reviewRoot, value});
+    setReviewNotice("");
+  }, [reviewRoot]);
+  useEffect(() => {
+    let alive = true;
+    setFingerprint(undefined);
+    void diffFingerprint(diff).then(hash => { if (alive) setFingerprint({diff, hash}); }).catch(() => {});
+    return () => { alive = false; };
+  }, [diff]);
+  // Git status revisions omit unstaged bytes. Re-read every marked side before
+  // counting it as reviewed, including when the status revision is unchanged.
+  useEffect(() => {
+    if (!state || session.root !== reviewRoot) return;
+    let alive = true;
+    verifyingReviews.current = true;
+    setReviewChecking(true);
+    const marks = session.value.marks;
+    void verifyReviewSession(session.value, state, (path, staged) => call("workspace.diff", {cwd, path, staged}), () => alive).then(({verified: keys, stale}) => {
+      if (!alive) return;
+      verifyingReviews.current = false;
+      setReviewChecking(false);
+      setVerification({snapshot: state, keys});
+      if (stale.size) {
+        setReviewNotice(t("更改已更新，相关审阅标记已失效。"));
+        changeSession(old => ({...old, marks: old.marks.filter(mark => !stale.has(mark.key) || !marks.some(previous => previous.key === mark.key && previous.revision === mark.revision && previous.fingerprint === mark.fingerprint))}));
+      }
+    });
+    return () => { alive = false; verifyingReviews.current = false; };
+  }, [state, session.root, session.value.marks, reviewRoot, cwd]);
   const revision = useRef(0),
     mutating = useRef(false),
     refreshing = useRef(false);
   const refresh = async () => {
-    if (!cwd || mutating.current || refreshing.current) return;
+    if (!cwd || mutating.current || refreshing.current || verifyingReviews.current) return;
     refreshing.current = true;
     const request = ++revision.current;
     try {
       const result = await call("workspace.changes", { cwd });
       if (request === revision.current) setState(result);
     } catch (e) {
-      if (request === revision.current) setError(errorText(e));
+      if (request === revision.current) {
+        setError(errorText(e)); setDiffSnapshot(undefined); setVerification({keys: new Set()});
+      }
     } finally {
       refreshing.current = false;
     }
@@ -827,9 +886,11 @@ function Changes({
   const showingStaged = hasStaged && (!hasUnstaged || staged);
   const filteredFiles = useMemo(() => {
     const query = fileFilter.toLocaleLowerCase();
-    return state?.files.filter(file => file.path.toLocaleLowerCase().includes(query)) ?? [];
-  }, [state?.files, fileFilter]);
+    return state?.files.filter(file => file.path.toLocaleLowerCase().includes(query) &&
+      (reviewFilter === "all" || (reviewFilter === "reviewed" ? fileReviewed(file, verified) : reviewFilter === "unreviewed" ? !fileReviewed(file, verified) : gitConflict(file)))) ?? [];
+  }, [state?.files, fileFilter, reviewFilter, verification, state]);
   const diffReady = !!diffSnapshot &&
+    diffSnapshot.snapshot === state &&
     diffSnapshot.revision === state?.revision &&
     diffSnapshot.path === selected && diffSnapshot.staged === showingStaged;
   useEffect(() => {
@@ -852,6 +913,7 @@ function Changes({
           if (value !== diff) setConfirmRestore(false);
           setDiff(value);
           setDiffSnapshot({
+            snapshot: state!,
             revision: state!.revision,
             path: selected,
             staged: showingStaged,
@@ -869,6 +931,62 @@ function Changes({
       alive = false;
     };
   }, [cwd, selected, showingStaged, state]);
+  const selectFile = (file: GitChanges["files"][number]) => {
+    setSelected(file.path);
+    setStaged(gitStaged(file) && (!gitUnstaged(file) || !verified.has(reviewKey(file.path, true))));
+    setDiff(""); setDiffSnapshot(undefined); setError(""); setConfirmRestore(false);
+  };
+  const currentKey = reviewKey(selected, showingStaged);
+  const marked = verified.has(currentKey);
+  const textReviewable = !!entry && reviewableDiff(diff, entry);
+  const currentNote = reviewNote(currentSession, selected);
+  const reviewReady = textReviewable && diffReady && !!fingerprint && fingerprint.diff === diff && !!state?.revision && !busy && !gitConflict(entry || {path: "", index: " ", worktree: " "});
+  const reviewedCount = state?.files.filter(file => fileReviewed(file, verified)).length || 0;
+  const markReview = (advance = false) => {
+    if (!reviewReady || !fingerprint || !state) return;
+    changeSession(old => updateReviewMark(old, {key: currentKey, revision: state.revision, fingerprint: fingerprint.hash}, advance || !marked));
+    const nextKeys = new Set(verified);
+    if (advance || !marked) nextKeys.add(currentKey); else nextKeys.delete(currentKey);
+    setVerification({snapshot: state, keys: nextKeys});
+    if (advance && entry) {
+      const otherSide = reviewSides(entry).find(side => !nextKeys.has(reviewKey(selected, side)));
+      if (otherSide !== undefined) { setStaged(otherSide); setDiffSnapshot(undefined); }
+      else { const next = nextReviewFile(state.files, selected, nextKeys, true); if (next) selectFile(next); }
+    }
+  };
+  const navigationFiles = state?.files.filter(file => file.path.toLocaleLowerCase().includes(fileFilter.toLocaleLowerCase())) || [];
+  const navigate = (direction: number, unreviewed = false) => {
+    if (!state || busy) return;
+    const files = navigationFiles;
+    if (unreviewed) { const next = nextReviewFile(files, selected, verified, true); if (next) selectFile(next); return; }
+    const index = files.findIndex(file => file.path === selected);
+    const next = files[index + direction]; if (next) selectFile(next);
+  };
+  const exportReview = async () => {
+    if (busy || mutating.current || refreshing.current || verifyingReviews.current || !state || verification.snapshot !== state) return;
+    mutating.current = true;
+    const request = ++revision.current;
+    setBusy(true); setError("");
+    try {
+      const fresh: GitChanges = await call("workspace.changes", {cwd});
+      if (fresh.error || fresh.root !== reviewRoot) throw Error(t("无法读取 Git 状态"));
+      const result = await verifyReviewSession(currentSession, fresh, (path, staged) => call("workspace.diff", {cwd, path, staged}), () => request === revision.current);
+      const after: GitChanges = await call("workspace.changes", {cwd});
+      if (after.error || after.root !== fresh.root || after.branch !== fresh.branch || after.revision !== fresh.revision) throw Error(t("导出期间 Git 状态已变化，请重试。"));
+      if (request !== revision.current) return;
+      const content = reviewReport({state: fresh, session: currentSession, verified: result.verified, capturedAt: new Date().toISOString(), labels: {
+        title: t("代码审阅报告"), scope: t("这是导出时重新读取差异得到的审阅记录；后续更改需重新审阅。标记不代表测试通过或批准合并。"),
+        project: t("项目"), branch: t("分支"), revision: t("Git 状态指纹"), captured: t("记录时间"), summary: t("文件审阅进度"),
+        staged: t("已暂存"), working: t("未暂存"), reviewed: t("已审阅"), pending: t("未验证"), notes: t("文件审阅笔记"),
+      }});
+      const url = URL.createObjectURL(new Blob([content], {type: "text/markdown;charset=utf-8"}));
+      const link = document.createElement("a"); link.href = url; link.download = `codex-relay-review-${new Date().toISOString().slice(0, 10)}.md`; link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setState(fresh); setVerification({snapshot: fresh, keys: result.verified});
+      setReviewNotice(t("已导出审阅报告。"));
+    } catch (e) { if (request === revision.current) setError(errorText(e)); }
+    finally { mutating.current = false; if (request === revision.current) setBusy(false); }
+  };
   const action = async (
     kind: string,
     branch?: { ref: string; expectedHead: string; name?: string },
@@ -936,7 +1054,11 @@ function Changes({
   };
   if (!cwd) return <PanelEmpty text={t("选择项目以查看 Git 更改")} />;
   return (
-    <div className="changes-pane">
+    <div className="changes-pane" onKeyDown={event => {
+      if (event.altKey && !event.ctrlKey && !event.metaKey && ["ArrowUp", "ArrowDown"].includes(event.key) && !(event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement)) {
+        event.preventDefault(); navigate(event.key === "ArrowDown" ? 1 : -1);
+      }
+    }}>
       <div className="changes-heading">
         <GitBranch size={15} />
         <span>{state?.branch || "Git"}</span>
@@ -1018,6 +1140,16 @@ function Changes({
               </div>
             </div>
           )}
+          {!!state?.files.length && <section className="review-session-summary" aria-label={t("文件审阅进度")}>
+            <div><CheckCheck size={16}/><strong>{t("已审阅 {done} / {total} 个文件", {done: reviewedCount, total: state.files.length})}</strong></div>
+            <progress value={reviewedCount} max={state.files.length} aria-label={t("文件审阅进度")}/>
+            <small>{t("按当前差异记录；文件变化后需重新审阅。")}</small>
+            <div className="review-session-filters" role="group" aria-label={t("审阅筛选")}>
+              {[["all", "全部文件"], ["unreviewed", "待审阅"], ["reviewed", "已审阅"], ["conflicts", "合并冲突"]].map(([value, label]) => <button key={value} data-review-filter={value} aria-pressed={reviewFilter === value} onClick={() => setReviewFilter(value)}>{t(label)}</button>)}
+            </div>
+            <button className="review-export" data-review-export disabled={busy || reviewChecking || verification.snapshot !== state} onClick={() => void exportReview()}><Download size={13}/>{t("导出审阅报告")}</button>
+            {reviewNotice && <p role="status">{reviewNotice}</p>}
+          </section>}
           {!!state?.files.length && (
             <div className="review-file-filter">
               <Search size={13} aria-hidden="true" />
@@ -1045,15 +1177,10 @@ function Changes({
                     void refresh();
                     return;
                   }
-                  setSelected(f.path);
-                  setStaged(gitStaged(f) && !gitUnstaged(f));
-                  setDiff("");
-                  setDiffSnapshot(undefined);
-                  setError("");
-                  setConfirmRestore(false);
+                  selectFile(f);
                 }}
               >
-                <FileCode2 size={14} />
+                {fileReviewed(f, verified) ? <CheckCheck size={14} className="review-file-done" aria-label={t("已审阅")}/> : <FileCode2 size={14} />}
                 <span>{f.path}</span>
                 {gitConflict(f) ? (
                   <small title={t("合并冲突")}>!</small>
@@ -1080,6 +1207,12 @@ function Changes({
           </div>
           {entry && (
             <>
+              <div className="review-file-navigation" aria-label={t("文件审阅导航")}>
+                <button data-review-nav="previous" title={t("上一个文件（Alt+↑）")} aria-label={t("上一个文件（Alt+↑）")} disabled={busy || navigationFiles.findIndex(file => file.path === selected) <= 0} onClick={() => navigate(-1)}><ArrowLeft size={14}/></button>
+                <span title={selected}>{selected}</span>
+                <button data-review-nav="next" title={t("下一个文件（Alt+↓）")} aria-label={t("下一个文件（Alt+↓）")} disabled={busy || navigationFiles.findIndex(file => file.path === selected) >= navigationFiles.length - 1} onClick={() => navigate(1)}><ArrowRight size={14}/></button>
+                <button data-review-nav="unreviewed" disabled={busy || !nextReviewFile(navigationFiles, selected, verified, true)} onClick={() => navigate(1, true)}>{t("下一待审阅")}</button>
+              </div>
               <div className="diff-toolbar">
                 <button
                   title={t("打开文件")}
@@ -1146,6 +1279,17 @@ function Changes({
                   </button>
                 </div>
               )}
+              <div className="review-completion-actions">
+                <button data-review-mark="toggle" aria-pressed={marked} disabled={!reviewReady} onClick={() => markReview()}><Check size={14}/>{t(marked ? "已审阅此差异" : "标记已审阅")}</button>
+                <button data-review-mark="advance" disabled={!reviewReady} onClick={() => markReview(true)}>{t("审阅并继续")}<ArrowRight size={14}/></button>
+              </div>
+              {diffReady && !textReviewable && <p className="diff-note">{t("此文件没有可验证的文本差异，请在原应用中检查。")}</p>}
+              <details className="review-note-draft">
+                <summary>{t("文件审阅笔记")}{currentNote ? " •" : ""}</summary>
+                <textarea aria-label={t("文件审阅笔记")} placeholder={t("记录问题、风险或验证建议…")} maxLength={4000} value={currentNote || ""} onChange={event => { const value = event.target.value; changeSession(old => ({...old, notes: Object.fromEntries(Object.entries({...old.notes, [selected]: value}).slice(-500))})); }}/>
+                <button disabled={!currentNote?.trim()} onClick={() => comment(`${t("文件审阅笔记")} · ${selected}\n${currentNote}`)}>{t("将笔记加入聊天草稿")}</button>
+                <small>{t("笔记保存在本机，不会自动发送。")}</small>
+              </details>
               <DiffReview
                 key={`${selected}:${showingStaged}`}
                 diff={diff}

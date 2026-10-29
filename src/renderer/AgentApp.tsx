@@ -1,3 +1,4 @@
+import { recordWorkspaceRoute, workspaceHistoryTarget, type WorkspaceNavigation } from "./workspace-navigation";
 import { WorkspaceHome } from "./WorkspaceHome";
 import { CommandPalette } from "./CommandPalette";
 import { t, useI18n, setLanguage, errorText } from "./i18n";
@@ -485,6 +486,7 @@ export function AgentApp({
   useEffect(() => {
     if (!scroll.current || !transcript.current) return;
     const viewport = scroll.current;
+    if (!selected) { viewport.scrollTop = 0; setAwayFromLatest(false); return; }
     const position =
       lastScroll.current?.id === selected
         ? lastScroll.current
@@ -536,6 +538,24 @@ export function AgentApp({
       setMultiAgent(j.multiAgent !== false);
     }
   };
+  const [navigation, setNavigation] = useState<WorkspaceNavigation>({entries: [], index: -1});
+  useEffect(() => {
+    if (!snapshot) return;
+    setNavigation(previous => recordWorkspaceRoute(previous, {screen, manage, jobId: selected, cwd}));
+  }, [screen, manage, selected, cwd, !!snapshot]);
+  const availableNavigationJobs = new Set(snapshot?.jobs.map(item => item.id) || []);
+  const previousRoute = workspaceHistoryTarget(navigation, -1, availableNavigationJobs);
+  const nextRoute = workspaceHistoryTarget(navigation, 1, availableNavigationJobs);
+  function goToRoute(index: number) {
+    if (index < 0) return;
+    const route = navigation.entries[index];
+    const destination = snapshot?.jobs.find(item => item.id === route.jobId);
+    setNavigation(previous => ({...previous,index}));
+    select(destination);
+    setArchived(!!destination?.archived);
+    if (!destination) { setCwd(route.cwd); localStorage.setItem("relay.project", route.cwd); }
+    setScreen(route.screen); setManage(route.manage);
+  }
   selectAction.current = () => select();
   useEffect(() => {
     if (!snapshot || initialSelection.current) return;
@@ -774,18 +794,18 @@ export function AgentApp({
     <div className="desktop-titlebar">
       <div className="desktop-history">
         <button
-          title={t("返回新聊天")}
-          aria-label={t("返回新聊天")}
-          onClick={() => select()}
+          title={t("后退到上一个位置")}
+          aria-label={t("后退到上一个位置")}
+          disabled={previousRoute < 0}
+          onClick={() => goToRoute(previousRoute)}
         >
           <ArrowLeft size={17} />
         </button>
         <button
-          title={t("回到最近会话")}
-          onClick={() => {
-            const last = snapshot?.jobs[0];
-            if (last) select(last);
-          }}
+          title={t("前进到下一个位置")}
+          aria-label={t("前进到下一个位置")}
+          disabled={nextRoute < 0}
+          onClick={() => goToRoute(nextRoute)}
         >
           <ArrowRight size={17} />
         </button>

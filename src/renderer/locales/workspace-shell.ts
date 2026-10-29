@@ -1,4 +1,6 @@
 export const workspaceEnglish: Record<string,string> = {
+  "后退到上一个位置": "Go back",
+  "前进到下一个位置": "Go forward",
   "工作台首页": "Workspace home",
   "你的工作空间": "YOUR WORKSPACE",
   "从这里，继续向前。": "Pick up where you left off.",
@@ -26,6 +28,8 @@ export const workspaceEnglish: Record<string,string> = {
   "输入 > 只查找操作": "Type > to search commands only"
 };
 export const workspaceJapanese: Record<string,string> = {
+  "后退到上一个位置": "前の場所に戻る",
+  "前进到下一个位置": "次の場所に進む",
   "工作台首页": "ワークスペースホーム",
   "你的工作空间": "ワークスペース",
   "从这里，继续向前。": "ここから、続きを始めよう。",

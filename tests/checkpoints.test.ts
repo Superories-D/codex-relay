@@ -1,6 +1,8 @@
 import {beforeEach,afterEach,it,expect} from "vitest";
 import {promises as fs} from "node:fs";
 import path from "node:path";
+import os from "node:os";
+const fixtureParent=path.join(os.tmpdir(),"codex-relay-checkpoint-qa");
 import {createHash} from "node:crypto";
 import {spawn} from "node:child_process";
 import {CheckpointGit} from "../src/main/checkpoint-git";
@@ -11,10 +13,10 @@ import {reviewLinkedCheckpoint} from "../src/main/checkpoint-linked";
 let root:string,source:string,storage:string,git:CheckpointGit;
 const digest=(value:Buffer)=>createHash("sha256").update(value).digest("hex");
 async function write(name:string,body:string|Buffer){await fs.mkdir(path.dirname(path.join(source,name)),{recursive:true});await fs.writeFile(path.join(source,name),body);}
-beforeEach(async()=>{const parent="D:/cooperate/codex-relay-qa";await fs.mkdir(parent,{recursive:true});root=await fs.mkdtemp(path.join(parent,"checkpoint-test-"));source=path.join(root,"source");storage=path.join(root,"stage");await fs.mkdir(source);await fs.mkdir(storage);git=new CheckpointGit(path.join(root,"git"),{native:false});
+beforeEach(async()=>{const parent=fixtureParent;await fs.mkdir(parent,{recursive:true});root=await fs.mkdtemp(path.join(parent,"checkpoint-test-"));source=path.join(root,"source");storage=path.join(root,"stage");await fs.mkdir(source);await fs.mkdir(storage);git=new CheckpointGit(path.join(root,"git"),{native:false});
   await git.run(source,["init","-b","main"]);await git.run(source,["config","user.name","Relay QA"]);await git.run(source,["config","user.email","qa@invalid.local"]);await git.run(source,["config","core.autocrlf","false"]);
 });
-afterEach(async()=>{const actual=await fs.realpath(root),parent=await fs.realpath("D:/cooperate/codex-relay-qa");if(path.dirname(actual)!==parent||!path.basename(actual).startsWith("checkpoint-test-"))throw Error("Unsafe checkpoint fixture cleanup");await fs.rm(actual,{recursive:true,force:true});});
+afterEach(async()=>{const actual=await fs.realpath(root),parent=await fs.realpath(fixtureParent);if(path.dirname(actual)!==parent||!path.basename(actual).startsWith("checkpoint-test-"))throw Error("Unsafe checkpoint fixture cleanup");await fs.rm(actual,{recursive:true,force:true});});
 const options=()=>({root:storage,native:false});
 async function commit(){await git.run(source,["add","-A"]);await git.run(source,["commit","-m","Fixture"]);}
 it("captures raw working bytes and the separate index without modifying source state, and packs every staged object",async()=>{

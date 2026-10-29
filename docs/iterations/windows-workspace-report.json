@@ -1,0 +1,48 @@
+{
+  "syntheticIPC": true,
+  "modelRequests": 0,
+  "checks": [
+    "home starters append to draft; project-specific draft restores; project selection persists",
+    "home attention opens real task; command palette keyboard navigation and focus mode work",
+    "back/forward restores project draft and task screen; new navigation branches history; IME Enter does not execute",
+    "pending approvals appear in attention; other tasks and archived tasks excluded",
+    "board layout and sorting survive reload",
+    "recent and priority ordering; immediate priority updates; pause/resume; partial failure preserves only failed selections",
+    "bulk priority sends captured eligible IDs; successful changes update cards; failed rows remain selected",
+    "review report downloads current verified evidence and persisted notes",
+    "review progress and notes survive reload; next unreviewed navigation; same Git status revision with changed bytes invalidates marks; notes append to draft"
+  ],
+  "layouts": [
+    {
+      "view": "board",
+      "width": 1440,
+      "overflow": false
+    },
+    {
+      "view": "board",
+      "width": 1100,
+      "overflow": false
+    },
+    {
+      "view": "board",
+      "width": 900,
+      "overflow": false
+    },
+    {
+      "view": "home + board",
+      "theme": "light",
+      "language": "zh-CN",
+      "width": 1280,
+      "overflow": false
+    },
+    {
+      "view": "home + board",
+      "theme": "dark",
+      "language": "ja",
+      "width": 900,
+      "overflow": false
+    }
+  ],
+  "errors": [],
+  "status": "passed"
+}
