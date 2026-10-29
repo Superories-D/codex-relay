@@ -46,6 +46,7 @@ const codeLabels: Record<string, string> = {
   ioError: "文件暂时无法读取",
   cancelled: "验收已取消",
 };
+export function deliveryFindingMessage(code:string){return t(codeLabels[code]||"文件暂时无法读取");}
 type DraftCheck = DeliveryCheck & { jsonValue?: string };
 export function DeliveryDialog({
   job,
@@ -59,7 +60,7 @@ export function DeliveryDialog({
   job?: Job;
   initial?: DeliveryCheck[];
   call: (name: string, args?: unknown) => Promise<any>;
-  saveDraft?: (checks: DeliveryCheck[]) => void;
+  saveDraft?: (checks: DeliveryCheck[]) => void | Promise<void>;
   purpose?: "task" | "plan" | "existing";
   repair?: (text: string) => void;
   close: () => void;
@@ -154,6 +155,7 @@ export function DeliveryDialog({
           )}
         </p>
         {job && <code className="delivery-workspace">{job.cwd}</code>}
+        {job?.handoff&&<div className="delivery-help"><strong>{t("集成候选续接任务")}</strong><code>{job.handoff.commit}</code><p>{t("在当前续接任务中管理交付验收。")}</p></div>}
         {job?.checkpoint&&<div className="delivery-help"><strong>{t("检查点任务分支")}: {job.checkpoint.branch}</strong><p>{t("来源工作区")}: {job.checkpoint.sourceCwd}</p><code>SHA256 {job.checkpoint.manifestSha256}</code><p>{t("验收条件需要在当前分支重新验证。")}</p></div>}
         {error && <p role="alert">{error}</p>}
         {blocked && (
@@ -321,7 +323,7 @@ export function DeliveryDialog({
                   if (!parsed.success)
                     throw Error(t("请检查条件名称、相对路径和预期值"));
                   if (!job) {
-                    saveDraft?.(parsed.data);
+                    await saveDraft?.(parsed.data);
                     close();
                     return;
                   }

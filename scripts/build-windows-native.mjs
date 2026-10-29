@@ -6,6 +6,6 @@ export async function buildWindowsNative(){
   if(process.platform!=='win32')return;
   const output=path.resolve('dist/native');await mkdir(output,{recursive:true});
   const compiler=path.join(process.env.SystemRoot||'C:/Windows','Microsoft.NET/Framework64/v4.0.30319/csc.exe');
-  await promisify(execFile)(compiler,['/nologo','/optimize+','/target:exe','/platform:x64','/reference:System.Runtime.Serialization.dll',`/win32manifest:${path.resolve('src/native/RelayJobHost.manifest')}`,`/out:${path.join(output,'RelayJobHost.exe')}`,path.resolve('src/native/RelayJobHost.cs')],{windowsHide:true});
+  for(const component of ['RelayJobHost','RelayAdoptionHost','RelayRepositoryLeaseHost'])await promisify(execFile)(compiler,['/nologo','/optimize+','/target:exe','/platform:x64','/reference:System.Runtime.Serialization.dll',`/win32manifest:${path.resolve('src/native/RelayJobHost.manifest')}`,`/out:${path.join(output,component+'.exe')}`,path.resolve('src/native/'+component+'.cs')],{windowsHide:true});
 }
 if(process.argv[1]&&path.resolve(process.argv[1])===path.resolve('scripts/build-windows-native.mjs'))await buildWindowsNative();

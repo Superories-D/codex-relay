@@ -193,7 +193,12 @@ static class RelayJobHost {
       if(!UpdateProcThreadAttribute(attributes,0,new IntPtr(0x20002),handleList,new IntPtr(IntPtr.Size*3),IntPtr.Zero,IntPtr.Zero))throw new Win32Exception();
       var startup=new StartupEx();startup.Basic.Size=(uint)Marshal.SizeOf(typeof(StartupEx));startup.Basic.Flags=0x100;startup.Basic.Input=handles[0];startup.Basic.Output=handles[1];startup.Basic.Error=handles[2];startup.Attributes=attributes;
       string command=Quote(request.executable)+" "+String.Join(" ",request.args.Select(Quote).ToArray());
-      if(!CreateProcess(NativePath(request.executable),new StringBuilder(command),IntPtr.Zero,IntPtr.Zero,true,0x08080004,IntPtr.Zero,NativePath(request.home),ref startup,out child))throw new Win32Exception();
+      // Passing an extended-prefix module name for an ordinary short executable
+      // leaks that representation into the CLR application base/configuration.
+      // Retain explicit lpApplicationName and full long-path support when needed.
+      string application=Path.GetFullPath(request.executable);if(application.Length>=260)application=NativePath(application);
+      string currentDirectory=Path.GetFullPath(request.home);if(currentDirectory.Length>=260)currentDirectory=NativePath(currentDirectory);
+      if(!CreateProcess(application,new StringBuilder(command),IntPtr.Zero,IntPtr.Zero,true,0x08080004,IntPtr.Zero,currentDirectory,ref startup,out child))throw new Win32Exception();
       receipt.rootPid=(int)child.ProcessId;receipt.rootCreated=Created(child.Process);receipt.phase="running";Write(receiptFile,receipt);
       if(ResumeThread(child.Thread)==0xffffffff)throw new Win32Exception();
       while(WaitForSingleObject(child.Process,100)==258)if(WaitForSingleObject(parent,0)!=258)break;
